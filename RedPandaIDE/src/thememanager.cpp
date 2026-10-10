@@ -18,6 +18,9 @@
 #include <QApplication>
 #include <QDirIterator>
 #include <QFile>
+#include <QSaveFile>
+#include <QDateTime>
+#include <QLocale>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -74,14 +77,14 @@ bool ThemeManager::ThemeCompare::operator()(const PAppTheme &lhs, const PAppThem
 bool ThemeManager::tryLoadThemeFromDir(const QString &dir, AppTheme::ThemeCategory category, const QString &themeName, PAppTheme &theme)
 {
     for (const auto &[extension, type] : searchTypes) {
-        QString filename = QString("%2.%3").arg(themeName, extension);
+        QString filename = QString("%1.%2").arg(themeName, extension);
         QString fullPath = QString("%1/%2").arg(dir, filename);
         if (QFile::exists(fullPath)) {
             try {
-                theme = std::make_shared<AppTheme>(fullPath, type, category);
+                theme = loadCached(fullPath, type, category);
                 return true;
-            } catch(FileError e) {
-                //just skip it
+            } catch(const FileError &e) {
+                qWarning() << e.reason();
             }
 #ifdef ENABLE_LUA_ADDON
             catch(AddOn::LuaError e) {
@@ -102,10 +105,10 @@ void ThemeManager::loadThemesFromDir(const QString &dir, AppTheme::ThemeCategory
             QFileInfo fileInfo = it.fileInfo();
             if (fileInfo.suffix().compare(extension, PATH_SENSITIVITY) == 0) {
                 try {
-                    PAppTheme appTheme = std::make_shared<AppTheme>(fileInfo.absoluteFilePath(), type, category);
+                    PAppTheme appTheme = loadCached(fileInfo.absoluteFilePath(), type, category);
                     themes.insert(appTheme);
-                } catch(FileError e) {
-                    //just skip it
+                } catch(const FileError &e) {
+                    qWarning() << e.reason();
                 }
 #ifdef ENABLE_LUA_ADDON
                 catch(AddOn::LuaError e) {
@@ -186,6 +189,14 @@ QPalette AppTheme::palette() const
         }
     }
 
+    for (auto group : {QPalette::Active, QPalette::Inactive, QPalette::Disabled}) {
+        const QColor text = pal.color(group, QPalette::Text), base = pal.color(group, QPalette::Base);
+        const QColor placeholder(qRound(text.red() * .7 + base.red() * .3), qRound(text.green() * .7 + base.green() * .3), qRound(text.blue() * .7 + base.blue() * .3));
+        pal.setColor(group, QPalette::PlaceholderText, placeholder);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        pal.setColor(group, QPalette::Accent, pal.color(group, QPalette::Highlight));
+#endif
+    }
     return pal;
 }
 
@@ -200,9 +211,10 @@ AppTheme::AppTheme(const QString &filename, ThemeType type, ThemeCategory catego
                         .arg(filename));
     }
     if (file.open(QFile::ReadOnly)) {
-        QByteArray content = file.readAll().trimmed();
-        if (content.isEmpty())
-            return;
+        if (file.size() > 256 * 1024) throw FileError(tr("Theme file is too large (maximum 256 KB)."));
+        QByteArray content = file.read(256 * 1024 + 1).trimmed();
+        if (content.isEmpty() || content.size() > 256 * 1024 || file.error() != QFile::NoError)
+            throw FileError(tr("Invalid or unreadable theme file: %1").arg(filename));
         QJsonObject obj;
 
         switch (type) {
@@ -217,6 +229,7 @@ AppTheme::AppTheme(const QString &filename, ThemeType type, ThemeCategory catego
                                     .arg(error.offset)
                                     .arg(error.errorString()));
             }
+            if (!doc.isObject() || !doc.object().value("palette").isObject()) throw FileError(tr("Theme must contain a palette object."));
             obj = doc.object();
 
             // In Lua-based theme, the "style" key has replaced "isDark" and "useQtFusionStyle" keys.
@@ -233,7 +246,7 @@ AppTheme::AppTheme(const QString &filename, ThemeType type, ThemeCategory catego
 
             // In Lua-based theme, the script handles name localization.
             // The following part handles old "name_xx_XX" keys.
-            QString localeName = obj["name_"+pSettings->environment().language()].toString();
+            QString localeName = obj["name_"+(pSettings ? pSettings->environment().language() : QLocale::system().name())].toString();
             if (!localeName.isEmpty())
                 obj["name"] = localeName;
 
@@ -262,7 +275,9 @@ AppTheme::AppTheme(const QString &filename, ThemeType type, ThemeCategory catego
             const QString key = QLatin1String(e.key(i));
             if (colors.contains(key)) {
                 QString val=colors[key].toString();
-                mColors.insert(i, QColor(val));
+                QColor color(val);
+                if (!color.isValid()) throw FileError(tr("Invalid theme color: %1").arg(key));
+                mColors.insert(e.value(i), color);
             }
         }
 
@@ -334,21 +349,47 @@ const QString AppTheme::categoryIcon() const
     }
 }
 
+QString AppTheme::categoryLabel() const {
+    switch (mCategory) {
+    case ThemeCategory::FailSafe: return tr("Fallback");
+    case ThemeCategory::BuiltIn: return tr("Built-in");
+    case ThemeCategory::Custom: return tr("Custom");
+    case ThemeCategory::Shared: return tr("Shared");
+    }
+    return QString();
+}
+
+QJsonObject AppTheme::toJson() const
+{
+    QJsonObject colors;
+    const QMetaEnum roles = QMetaEnum::fromType<ColorRole>();
+    for (int i = 0; i < roles.keyCount(); ++i) {
+        const QColor value = color(static_cast<ColorRole>(roles.value(i)));
+        if (value.isValid()) colors.insert(QString::fromLatin1(roles.key(i)), value.name(QColor::HexArgb));
+    }
+    return {{"name", mDisplayName}, {"style", mStyle}, {"default scheme", mDefaultColorScheme}, {"default iconset", mDefaultIconSet}, {"palette", colors}};
+}
+
+void ThemeManager::invalidateCache() { mCache.clear(); }
+PAppTheme ThemeManager::loadCached(const QString &filename, AppTheme::ThemeType type, AppTheme::ThemeCategory category)
+{
+    const QFileInfo info(filename);
+    const QString language = pSettings ? pSettings->environment().language() : QLocale::system().name();
+    const QString key = filename + "|" + language + "|" + QString::number(info.size()) + "|" + QString::number(info.lastModified().toMSecsSinceEpoch());
+    if (mCache.contains(key)) return mCache.value(key);
+    auto theme = std::make_shared<AppTheme>(filename, type, category);
+    if (mCache.size() >= 64) mCache.clear();
+    mCache.insert(key, theme); return theme;
+}
+
 bool AppTheme::copyTo(const QString &targetFolder)
 {
-    QFileInfo fileInfo{mFilename};
-    QFile originFile{fileInfo.absoluteFilePath()};
-    QFile targetFile{QDir(targetFolder).absoluteFilePath(fileInfo.fileName())};
-    if (!originFile.open(QFile::ReadOnly))
-        return false;
-    if (!targetFile.open(QFile::WriteOnly))
-        return false;
-    QByteArray contents = originFile.readAll();
-    if (targetFile.write(contents)!=contents.length())
-        return false;
-    targetFile.close();
-    originFile.close();
-    return true;
+    QFile origin(mFilename);
+    if (!origin.open(QIODevice::ReadOnly)) return false;
+    const auto bytes = origin.read(256 * 1024 + 1);
+    if (bytes.size() > 256 * 1024 || origin.error() != QFile::NoError) return false;
+    QSaveFile target(QDir(targetFolder).filePath(QFileInfo(mFilename).fileName()));
+    return target.open(QIODevice::WriteOnly) && target.write(bytes) == bytes.size() && target.commit();
 }
 
 const QString &AppTheme::defaultIconSet() const

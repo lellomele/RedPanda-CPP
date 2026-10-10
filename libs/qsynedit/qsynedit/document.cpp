@@ -506,6 +506,10 @@ bool Document::tryLoadFileByEncoding(QByteArray encodingName, QFile& file) {
             break;
         }
         QByteArray line = file.readLine();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
         if (line.endsWith("\r\n")) {
             line.remove(line.length()-2,2);
         } else if (line.endsWith("\r")) {
@@ -530,6 +534,8 @@ void Document::loadUTF16BOMFile(QFile &file)
     file.reset();
     internalClear();
     QByteArray buf = file.readAll();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
     if (buf.length()<2)
         return;
     QString text = decoder.decodeUnchecked(buf.mid(2));
@@ -544,26 +550,32 @@ void Document::loadUTF32BOMFile(QFile &file)
     file.reset();
     internalClear();
     QByteArray buf = file.readAll();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
     if (buf.length()<4)
         return;
     QString text = decoder.decodeUnchecked(buf.mid(4));
     this->setText(text);
 }
 
-void Document::saveUTF16File(QFile &file, TextEncoder &encoder) const
+void Document::saveUTF16File(QFileDevice &file, TextEncoder &encoder) const
 {
     if (!encoder.isValid())
         return;
     QString text=getTextStr();
-    file.write(encoder.encodeUnchecked(text));
+    const QByteArray data = encoder.encodeUnchecked(text);
+    if (file.write(data) != data.size())
+        throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
 }
 
-void Document::saveUTF32File(QFile &file, TextEncoder &encoder) const
+void Document::saveUTF32File(QFileDevice &file, TextEncoder &encoder) const
 {
     if (!encoder.isValid())
         return;
     QString text=getTextStr();
-    file.write(encoder.encodeUnchecked(text));
+    const QByteArray data = encoder.encodeUnchecked(text);
+    if (file.write(data) != data.size())
+        throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
 }
 
 PDocumentLine Document::findLineBySeq(size_t lineSeq) const
@@ -597,6 +609,35 @@ QList<int> Document::getGlyphStartCharListForTest(int line)
 #endif
 void Document::loadFromFile(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding)
 {
+    Document candidate(QFont{});
+    QByteArray detectedEncoding;
+    candidate.loadFromFileInPlace(filename, encoding, detectedEncoding);
+    replaceWith(candidate);
+    realEncoding = detectedEncoding;
+}
+
+void Document::replaceWith(Document &source)
+{
+    if (&source == this)
+        return;
+    QMutexLocker locker(&mMutex);
+    QMutexLocker sourceLocker(&source.mMutex);
+    // Rebind lazy width calculation before transferring ownership of the lines.
+    for (const auto &line : source.mLines) {
+        line->mUpdateWidthFunc = mUpdateDocumentLineWidthFunc;
+        line->invalidateWidth();
+    }
+    beginUpdate();
+    auto cleanup = finally([this] { endUpdate(); });
+    mLines.swap(source.mLines);
+    mLineSeqIndice.swap(source.mLineSeqIndice);
+    mNewlineType = source.mNewlineType;
+    mIndexOfLongestLine = -1;
+    ensureHasLine();
+}
+
+void Document::loadFromFileInPlace(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding)
+{
     QMutexLocker locker(&mMutex);
     QFile file(filename);
     if (!file.open(QFile::ReadOnly))
@@ -614,6 +655,10 @@ void Document::loadFromFile(const QString& filename, const QByteArray& encoding,
             return;
         }
         QByteArray line = file.readLine();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
         std::optional<TextDecoder> decoder;
         bool needReread = false;
         bool allAscii = true;
@@ -674,6 +719,8 @@ void Document::loadFromFile(const QString& filename, const QByteArray& encoding,
                 break;
             }
             line = file.readLine();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
         }
         if (!needReread) {
             if (allAscii)
@@ -711,6 +758,8 @@ void Document::loadFromFile(const QString& filename, const QByteArray& encoding,
     }
     file.reset();
     QByteArray data = file.readAll();
+        if (file.error() != QFile::NoError)
+            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
     QString text;
     QTextStream textStream(&text);
     if (realEncoding == ENCODING_UTF8_BOM) {
@@ -737,7 +786,7 @@ void Document::loadFromFile(const QString& filename, const QByteArray& encoding,
 
 
 
-void Document::saveToFile(QFile &file, const QByteArray& encoding, QByteArray& realEncoding) const
+void Document::saveToFile(QFileDevice &file, const QByteArray& encoding, QByteArray& realEncoding) const
 {
     Q_ASSERT(encoding!=ENCODING_AUTO_DETECT);
     QMutexLocker locker(&mMutex);
@@ -762,7 +811,7 @@ void Document::saveToFile(QFile &file, const QByteArray& encoding, QByteArray& r
     if (!encoder.has_value() || !encoder->isValid())
         throw FileError(tr("Can't load codec '%1'!").arg(codecName));
 
-    if (!file.open(QFile::WriteOnly | QFile::Truncate))
+    if (!file.isOpen() && !file.open(QIODevice::WriteOnly))
         throw FileError(tr("Can't open file '%1' for save!").arg(file.fileName()));
     if (mLines.isEmpty())
         return;
@@ -773,9 +822,8 @@ void Document::saveToFile(QFile &file, const QByteArray& encoding, QByteArray& r
         saveUTF32File(file, encoder.value());
         return;
     } if (realEncoding == ENCODING_UTF8_BOM) {
-        file.putChar(0xEF);
-        file.putChar(0xBB);
-        file.putChar(0xBF);
+        if (!file.putChar(0xEF) || !file.putChar(0xBB) || !file.putChar(0xBF))
+            throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
     }
     bool allAscii = true;
     QByteArray data;

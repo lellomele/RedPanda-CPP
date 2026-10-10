@@ -406,7 +406,7 @@ public:
 
     CodeFoldingOptions & codeFolding();
 
-    void saveToFile(QFile &file, const QByteArray& encoding, QByteArray& realEncoding) const;
+    void saveToFile(QFileDevice &file, const QByteArray& encoding, QByteArray& realEncoding) const;
     QString displayLineText();
     QString lineText() const;
     QString lineText(int line) const;

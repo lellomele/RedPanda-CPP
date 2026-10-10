@@ -498,7 +498,8 @@ public:
     PDocumentLine findLineBySeq(size_t lineSeq) const;
 
     void loadFromFile(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding);
-    void saveToFile(QFile& file, const QByteArray& encoding, QByteArray& realEncoding) const;
+    void replaceWith(Document &source);
+    void saveToFile(QFileDevice& file, const QByteArray& encoding, QByteArray& realEncoding) const;
 
     QString glyph(int line, int glyphIdx) const;
     QString glyphAt(int line, int charPos) const;
@@ -629,6 +630,7 @@ protected:
     void addItem(const QString& s);
     void internalClear();
 private:
+    void loadFromFileInPlace(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding);
     void ensureHasLine();
     void invalidateAllLineWidth();
     bool lineWidthValid(int line);
@@ -646,8 +648,8 @@ private:
     bool tryLoadFileByEncoding(QByteArray encodingName, QFile& file);
     void loadUTF16BOMFile(QFile& file);
     void loadUTF32BOMFile(QFile& file);
-    void saveUTF16File(QFile& file, TextEncoder &encoder) const;
-    void saveUTF32File(QFile& file, TextEncoder &encoder) const;
+    void saveUTF16File(QFileDevice& file, TextEncoder &encoder) const;
+    void saveUTF32File(QFileDevice& file, TextEncoder &encoder) const;
 private:
     DocumentLines mLines;
     QMap<size_t,PDocumentLine> mLineSeqIndice;

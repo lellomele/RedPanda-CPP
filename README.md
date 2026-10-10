@@ -1,55 +1,61 @@
-# RedPanda C++
+# Red Panda C++
 
-Red Panda C++ (Old name: Red Panda Dev-C++ 7) is an fast ,lightweight, open source, and cross platform C/C++/GNU Assembly IDE.
+[Italiano](README.it.md) · [Features](docs/FEATURES.md) · [Fork changes](docs/FORK_CHANGES.md)
 
-Simplified Chinese Website: [http://royqh.net/redpandacpp](http://royqh.net/redpandacpp)
+<img src="docs/assets/redpanda-cpp.png" width="96" alt="Red Panda C++">
 
-English Website: [https://sourceforge.net/projects/redpanda-cpp](https://sourceforge.net/projects/redpanda-cpp)
+A C/C++ and GNU assembly IDE with compiler integration, code navigation and debugging. This fork adds a configurable Italian interface, coordinated light and dark themes, richer snippets, searchable preferences, local Italian GCC diagnostics and safer document persistence and recovery.
 
-[Donate to this project](https://ko-fi.com/royqh1979)
+Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/RedPanda-CPP). The original 3.4 reference and the upstream revision used for this fork are identified in [Fork changes](docs/FORK_CHANGES.md).
 
-**New Features (Compared with Red Panda Dev-C++ 6):**
+## Install
 
-* Cross Platform (Windows/Linux/MacOS)
-* Problem Set (run and test program against predefined input / expected output data)
-* Competitive Companion support ( It's an chrome/firefox extension that can fetch problems from OJ websites)
-* Edit/compile/run/debug Assembly language programs ( GNU Assember / NASM ).
-* Find symbol occurrences
-* Memory View for debugging
-* TODO View
-* Support SDCC Compiler
+Download the Windows packages from [GitHub Releases](https://github.com/lellomele/RedPanda-CPP/releases).
 
-**UI Improvements:**
+Windows x64 packages are available in three formats:
 
-* Full high-dpi support, including fonts and icons
-* Better dark theme support
-* Better editor color scheme support
-* Redesigned Find/Replace in Files UI
-* Redesigned bookmark UI
+- **Setup EXE:** installs for the current user and adds a Start menu entry; a desktop shortcut is optional.
+- **Portable ZIP:** extract the entire folder to a writable location.
+- **Portable self-extracting EXE:** extracts the same portable layout without registering an installed application.
 
-**Editing Improvements:**
+Start **`RedPandaIDE.exe` in the main folder**. The internal IDE is `app/RedPandaIDE-core.exe`; keep the complete `app` folder. Qt and its runtime dependencies are included. Configure **GCC/Clang** and **GDB/LLDB** separately to build and debug your programs.
 
-* Enhanced auto indent
-* Enhanced code completion
-* Better code folding support
+Setup and the portable extractor require an empty destination. To update an installed copy, uninstall it first; personal settings are retained. For a portable update, preserve `app/config` and restore it into a freshly extracted copy. Packages are unsigned. See [Windows installation and packaging](docs/WINDOWS_DISTRIBUTION.md).
 
-**Debugging Improvements:**
+## Use
 
-* Use gdb/mi interface
-* Enhanced watch
-* gdbserver mode
+Open a source or project, configure a compiler in **Tools > Options**, then compile, run or debug.
 
-**Code Intellisense Improvements:**
+- **Appearance:** select interface language, a coordinated theme and an icon family. Restart after changing language.
+- **Preferences:** use **Ctrl+F** to find a page; pending edits can be saved, discarded or left open by cancelling navigation.
+- **Snippets:** manage and filter snippets, import/export collections and expand a prefix with **Ctrl+Alt+Space**. The shortcut is configurable; Tab moves between placeholders.
+- **GCC diagnostics:** with the Italian interface, the Issues panel and tooltips share the local translation while keeping the original message. Unrecognised messages remain unchanged.
+- **Clean Build Artifacts:** preview known outputs and select what to move to the Recycle Bin. Custom Makefiles have a separate `clean` command.
+- **Recovery and resilience:** enable periodic recovery snapshots and open the recovery folder or diagnostic log.
 
-* Better support identifiers for complex expressions
-* Support UTF-8 identifiers
-* Support C++ 14 using type alias
-* Support C-Style enum variable definitions
-* Support MACRO with arguments
-* Support C++ lambdas
+See [Features and workflows](docs/FEATURES.md) for theme names, snippet syntax, diagnostic coverage and cleanup behaviour.
 
-And many other improvements and bug fixes. See NEWS.md for full information.
+## Configuration and limits
 
-## Acknowledgement
+Installed builds keep settings in the user profile; portable packages use `app/config`. Recovery restores text into new, unsaved documents without overwriting originals. Atomic source saves require write permission for a temporary file in the destination directory.
 
-[Lua](https://www.lua.org/) 5.4.6 ([source mirror](https://github.com/lua/lua/tree/v5.4.6)) is used as add-on runtime.
+Recovery is best-effort: native crashes, memory corruption, unavailable storage and power loss may require restarting and recovering the last valid snapshot. Save important work regularly. Cleanup covers recognised build outputs and requires operating-system Recycle Bin support. Italian diagnostic translation covers a finite catalog, not every compiler message. See [Recovery, reliability and operational limits](docs/FORK_CHANGES.md#robustness-and-error-resilience).
+
+## Build from source
+
+Requirements: C++17, CMake 3.19+, Qt 6.8+ or Qt 5.15, and matching compiler/Qt architecture. Qt modules: Core, Concurrent, Gui, Widgets, Network, PrintSupport, Svg, Xml, Test and LinguistTools. The Windows distributions use Qt 6.11.2 and MinGW-w64. Other platform/toolchain combinations require validation for this fork.
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake --build build --parallel
+cmake --build build --target all-test-targets --parallel
+ctest --test-dir build --output-on-failure
+```
+
+See [BUILD.md](BUILD.md) for upstream build routes and [Windows packaging](docs/WINDOWS_DISTRIBUTION.md#building-distributions) for this fork's installer and portable layout.
+
+## License and copyright
+
+GNU GPL version 3 or later: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Original authors and contributors retain their copyrights; third-party components retain their respective licenses.
+
+Fork attribution: **© 2006 Ing. prof. Raffaele Mele**, also shown in About beside the original credits.

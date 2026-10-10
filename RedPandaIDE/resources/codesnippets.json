@@ -75,5 +75,113 @@
         "description": "",
         "prefix": "",
         "section": 0
+    },
+    {
+        "caption": "Range for",
+        "prefix": "range_for",
+        "language": "cpp",
+        "code": "for (const auto& %REPL_BEGIN%value%REPL_END% : %REPL_BEGIN%container%REPL_END%) {\n\t%INSERT%\n}",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Lambda",
+        "prefix": "lambda",
+        "language": "cpp",
+        "code": "auto %REPL_BEGIN%fn%REPL_END% = [&] (%REPL_BEGIN%parameters%REPL_END%) {\n\t%INSERT%\n};",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Unique pointer",
+        "prefix": "unique_ptr",
+        "language": "cpp",
+        "code": "auto %REPL_BEGIN%item%REPL_END% = std::make_unique<%REPL_BEGIN%Type%REPL_END%>(%INSERT%);",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Vector",
+        "prefix": "vector",
+        "language": "cpp",
+        "code": "std::vector<%REPL_BEGIN%Type%REPL_END%> %REPL_BEGIN%values%REPL_END%;\n%INSERT%",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Structured binding",
+        "prefix": "binding",
+        "language": "cpp",
+        "code": "const auto& [%REPL_BEGIN%key%REPL_END%, %REPL_BEGIN%value%REPL_END%] = %REPL_BEGIN%pair%REPL_END%;",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Scoped enum",
+        "prefix": "enum_class",
+        "language": "cpp",
+        "code": "enum class %REPL_BEGIN%Name%REPL_END% {\n\t%INSERT%\n};",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "Namespace",
+        "prefix": "namespace",
+        "language": "cpp",
+        "code": "namespace %REPL_BEGIN%name%REPL_END% {\n\t%INSERT%\n}",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "C function",
+        "prefix": "c_function",
+        "language": "c",
+        "code": "%REPL_BEGIN%int%REPL_END% %REPL_BEGIN%function%REPL_END%(%REPL_BEGIN%void%REPL_END%) {\n\t%INSERT%\n}",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "C printf",
+        "prefix": "c_printf",
+        "language": "c",
+        "code": "printf(\"%REPL_BEGIN%message%REPL_END%\\n\");\n%INSERT%",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "C struct",
+        "prefix": "c_struct",
+        "language": "c",
+        "code": "typedef struct {\n\t%INSERT%\n} %REPL_BEGIN%Name%REPL_END%;",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "C++ main",
+        "prefix": "cpp_main",
+        "language": "cpp",
+        "code": "#include <iostream>\n\nint main() {\n\t%INSERT%\n\treturn 0;\n}",
+        "description": "",
+        "section": 1,
+        "enabled": true
+    },
+    {
+        "caption": "C main",
+        "prefix": "c_main",
+        "language": "c",
+        "code": "#include <stdio.h>\n\nint main(void) {\n\t%INSERT%\n\treturn 0;\n}",
+        "description": "",
+        "section": 1,
+        "enabled": true
     }
 ]

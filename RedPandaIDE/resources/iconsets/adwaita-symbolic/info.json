@@ -1,0 +1,9 @@
+{
+    "name": "Adwaita Color",
+    "name_it_IT": "Adwaita Color",
+    "version": "2.0",
+    "author": "Roy Qu; Red Panda C++ fork contributors",
+    "adaptive": true,
+    "license": "GPL-3.0-or-later",
+    "origin": "Color variants of repository New Look artwork; desktop-inspired palettes."
+}

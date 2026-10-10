@@ -995,15 +995,19 @@ void QSynEdit::setCaretAndSelection(const CharPos &posCaret, const CharPos &posS
 
 void QSynEdit::loadFromFile(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding)
 {
-    int oldCount = mDocument->count();
+    Document candidate(font());
+    QByteArray detectedEncoding;
+    candidate.loadFromFile(filename, encoding, detectedEncoding);
+    const int oldCount = mDocument->count();
     beginEditing();
+    auto cleanup = finally([this] { endEditing(); });
     internalClearAll();
-    mDocument->loadFromFile(filename, encoding, realEncoding);
+    mDocument->replaceWith(candidate);
+    realEncoding = detectedEncoding;
     reparseDocument();
     emit linesDeleted(0, oldCount);
     emit linesInserted(0, mDocument->count());
     updateVScrollbar();
-    endEditing();
 }
 
 void QSynEdit::setContent(const QString &text)
@@ -4969,7 +4973,7 @@ CodeFoldingOptions &QSynEdit::codeFolding()
     return mCodeFolding;
 }
 
-void QSynEdit::saveToFile(QFile &file, const QByteArray &encoding, QByteArray &realEncoding) const
+void QSynEdit::saveToFile(QFileDevice &file, const QByteArray &encoding, QByteArray &realEncoding) const
 {
     mDocument->saveToFile(file,encoding,realEncoding);
 }
@@ -6658,8 +6662,12 @@ void QSynEdit::dragEnterEvent(QDragEnterEvent *event)
         mDragCaretSave = caretXY();
         mDragSelBeginSave = selBegin();
         mDragSelEndSave = selEnd();
-        CharPos coord = displayToBufferPos(pixelsToNearestGlyphPos(event->pos().x(),
-                                                                        event->pos().y()));
+#if QT_VERSION_MAJOR >= 6
+        const QPoint pos = event->position().toPoint();
+#else
+        const QPoint pos = event->pos();
+#endif
+        CharPos coord = displayToBufferPos(pixelsToNearestGlyphPos(pos.x(), pos.y()));
         internalSetCaretXY(coord);
         internalSetSelBegin(mDragSelBeginSave);
         internalSetSelEnd(mDragSelEndSave);
@@ -6673,8 +6681,12 @@ void QSynEdit::dropEvent(QDropEvent *event)
 {
     //mScrollTimer->stop();
 
-    CharPos coord = displayToBufferPos(pixelsToNearestGlyphPos(event->pos().x(),
-                                                                    event->pos().y()));
+#if QT_VERSION_MAJOR >= 6
+    const QPoint pos = event->position().toPoint();
+#else
+    const QPoint pos = event->pos();
+#endif
+    CharPos coord = displayToBufferPos(pixelsToNearestGlyphPos(pos.x(), pos.y()));
     if (
             (event->proposedAction() == Qt::DropAction::CopyAction
              && coord>mDragSelBeginSave && coord<mDragSelEndSave)
@@ -6769,7 +6781,12 @@ void QSynEdit::dropEvent(QDropEvent *event)
 
 void QSynEdit::dragMoveEvent(QDragMoveEvent *event)
 {
-    if (event->keyboardModifiers() ==  Qt::ControlModifier) {
+#if QT_VERSION_MAJOR >= 6
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+#else
+    const Qt::KeyboardModifiers modifiers = event->keyboardModifiers();
+#endif
+    if (modifiers == Qt::ControlModifier) {
         event->setDropAction(Qt::CopyAction);
     } else {
         event->setDropAction(Qt::MoveAction);

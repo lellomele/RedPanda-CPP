@@ -25,6 +25,7 @@ target("RedPandaIDE")
     add_deps("redpanda_qt_utils", "qsynedit")
     add_frameworks(
         "QtGui",
+        "QtConcurrent",
         "QtNetwork",
         "QtPrintSupport",
         "QtSvg",
@@ -75,6 +76,12 @@ target("RedPandaIDE")
 
     add_files(
         "src/autolinkmanager.cpp",
+        "src/snippetsstorage.cpp",
+        "src/buildartifacts.cpp",
+        "src/diagnosticcatalog.cpp",
+        "src/sessionstore.cpp",
+        "src/diagnostics.cpp",
+        "test/interfacechecks.cpp",
         "src/colorscheme.cpp",
         "src/customfileiconprovider.cpp",
         "src/projectoptions.cpp",
@@ -128,6 +135,9 @@ target("RedPandaIDE")
         "src/editormanager",
         "src/iconsmanager",
         "src/main",
+        "src/resilientapplication",
+        "src/sessionrecovery",
+        "src/settingsdialog/environmentrecoverywidget",
         "src/project",
         "src/projecttemplate",
         "src/shortcutmanager",

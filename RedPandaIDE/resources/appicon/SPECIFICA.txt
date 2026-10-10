@@ -1,0 +1,5 @@
+App: Red Panda C++
+Source: redpanda-cpp-source.png (1280x1280, transparent RGBA)
+Distribution: PNG 512px, multi-resolution Windows ICO, Linux PNG sizes 16-512px and SVG containing the 512px PNG, macOS ICNS.
+Original character identity: geometric red panda, orange/cream face, navy badge, white C and cyan ++, coding braces.
+Generated with the built-in image generation tool; exported to distribution formats without changing the illustration.

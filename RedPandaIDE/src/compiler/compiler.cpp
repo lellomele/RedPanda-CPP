@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "compiler.h"
+#include <exception>
 #include "compilerinfo.h"
 #include "../utils.h"
 #include "../utils/escape.h"
@@ -90,8 +91,12 @@ void Compiler::run()
             log(tr("- Output Size: %1").arg(locale.formattedDataSize(QFileInfo(mOutputFile).size())));
         }
         log(tr("- Compilation Time: %1 secs").arg(timer.elapsed() / 1000.0));
-    } catch (CompileError e) {
+    } catch (const BaseError &e) {
+        ++mErrorCount;
         emit compileErrorOccured(e.reason());
+    } catch (const std::exception &e) {
+        ++mErrorCount;
+        emit compileErrorOccured(tr("Compilation task was cancelled: %1").arg(QString::fromUtf8(e.what())));
     }
 
 }
@@ -266,6 +271,8 @@ void Compiler::processOutput(QString &line)
     PCompileIssue issue = std::make_shared<CompileIssue>();
     issue->type = CompileIssueType::Other;
     issue->endColumn = -1;
+    const auto diagnosticCompiler = compilerSet();
+    issue->gccDiagnostic = diagnosticCompiler && diagnosticCompiler->compilerType() == CompilerType::GCC;
     if (line.startsWith(inFilePrefix)) {
         line.remove(0,inFilePrefix.length());
         issue->filename = getFileNameFromOutputLine(line);
@@ -321,11 +328,13 @@ void Compiler::processOutput(QString &line)
         mLastIssue.reset();
     }
 
+    QString originalDescription;
     // assume regular main.cpp:line:col: message
     issue->filename = getFileNameFromOutputLine(line);
     issue->line = getLineNumberFromOutputLine(line) - 1; // editor line starts from 0, gdb line starts from 1
     if (issue->line >= 0) {
         issue->column = getColunmnFromOutputLine(line) - 1; // editor ch starts from 0, gdb col starts from 1
+        originalDescription = line.trimmed();
         issue->type = getIssueTypeFromOutputLine(line);
         if (issue->column<=0 && issue->type == CompileIssueType::Other) {
             issue->type = CompileIssueType::Error; //linkage error
@@ -333,8 +342,10 @@ void Compiler::processOutput(QString &line)
         }
     } else {
         issue->column = -1;
+        originalDescription = line.trimmed();
         issue->type = getIssueTypeFromOutputLine(line);
     }
+    issue->originalDescription = originalDescription;
     issue->description = line.trimmed();
     if (issue->line<0 && (issue->filename=="ld" || issue->filename=="lld")) {
         mLastIssue = issue;

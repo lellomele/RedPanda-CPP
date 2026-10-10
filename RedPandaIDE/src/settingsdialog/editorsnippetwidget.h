@@ -26,6 +26,8 @@ class EditorSnippetWidget;
 }
 
 class ColorManager;
+class QSortFilterProxyModel;
+class QLineEdit;
 class EditorSnippetWidget : public SettingsWidget
 {
     Q_OBJECT
@@ -37,6 +39,13 @@ public:
 private:
     Ui::EditorSnippetWidget *ui;
     CodeSnippetsModel mModel;
+    QSortFilterProxyModel *mProxy;
+    QLineEdit *mSearch;
+    int currentSnippetRow() const;
+    void selectSnippet(const QModelIndex &source);
+    void importSnippets();
+    void exportSnippets();
+    void duplicateSnippet();
 private:
     bool mUpdatingCode;
     // SettingsWidget interface

@@ -1,0 +1,36 @@
+Red Panda C++ - modified distribution / distribuzione modificata
+
+Original project / Progetto originale:
+https://github.com/royqh1979/RedPanda-CPP
+Roy Qu and contributors / Roy Qu e contributori
+
+Fork attribution / Attribuzione del fork:
+© 2006 Ing. prof. Raffaele Mele
+
+English
+The initial reference is upstream v3.4 (2fff3c2584e99ccd5aafdf897120e00e9c036515).
+Implementation used the later upstream checkout cbe084d162987fb90867b12f279af94c7a1d6a38
+(3.5.0-beta.2). Upstream changes between these revisions are separate from the
+fork additions. See docs/FORK_CHANGES.md and docs/FEATURES.md.
+
+The fork adds Italian localization and local GCC diagnostic translation,
+coordinated themes and coloured icons, richer snippets and searchable preferences,
+selective artifact cleanup, stronger persistence/recovery and Windows packaging.
+The documentation explains the applicable limits; not every fault is recoverable.
+
+Italiano
+Il riferimento iniziale è upstream v3.4 (2fff3c2584e99ccd5aafdf897120e00e9c036515).
+L'implementazione usa il checkout upstream successivo cbe084d162987fb90867b12f279af94c7a1d6a38
+(3.5.0-beta.2). Gli sviluppi upstream fra queste revisioni sono distinti dalle
+aggiunte del fork. Consulta docs/MODIFICHE_FORK.md e docs/FUNZIONALITA.md.
+
+Il fork aggiunge interfaccia italiana e diagnostici GCC tradotti localmente,
+temi coordinati e icone a colori, snippet più completi e preferenze ricercabili,
+pulizia selettiva, protezione di persistenza/recupero e distribuzioni Windows.
+La documentazione descrive i limiti applicabili: non ogni guasto è recuperabile.
+
+GNU General Public License version 3 or later / versione 3 o successiva.
+Original copyright and license notices are retained; see LICENSE and source files.
+Copyright e licenze originali sono conservati; vedere LICENSE e file sorgenti.
+Third-party components retain their respective licenses.
+I componenti di terze parti mantengono le rispettive licenze.

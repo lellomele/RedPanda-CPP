@@ -30,7 +30,7 @@ public:
     virtual void init();
 
     void load();
-    void save();
+    bool save();
 signals:
     void settingsChanged(bool changed);
 public slots:

@@ -107,6 +107,7 @@ target_qt_plain_cpp(test-qsynedit
 target_moc_classes(test-qsynedit
     ${QSYNEDIT_MOC_CLASSES}
     test/test_charpos
+    test/test_keystrokes
     test/test_cppsyntaxer
     test/test_document
     test/test_qsynedit_base

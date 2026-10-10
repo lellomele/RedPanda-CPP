@@ -609,6 +609,7 @@ private slots:
     void on_actionView_Makefile_triggered();
 
     void on_actionMakeClean_triggered();
+    void on_actionMakefileClean_triggered();
 
     void on_actionProject_Open_Folder_In_Explorer_triggered();
 
@@ -873,6 +874,7 @@ private slots:
     void on_actionToggle_Bookmark_triggered();
 
     void on_actionCode_Completion_triggered();
+    void on_actionInsert_Complete_Snippet_triggered();
 
     void on_actionC_C_Header_triggered();
 

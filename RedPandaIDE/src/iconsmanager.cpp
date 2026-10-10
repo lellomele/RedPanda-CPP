@@ -31,6 +31,8 @@
 #include "settings.h"
 #include "widgets/customdisablediconengine.h"
 #include <QApplication>
+#include <QPalette>
+#include <algorithm>
 
 IconsManager::IconsManager(DirSettings *dirSettings, const QString& language, QObject *parent) : QObject(parent)
 {
@@ -240,7 +242,23 @@ void IconsManager::setIcon(QPushButton *btn, IconName iconName) const
 
 IconsManager::PPixmap IconsManager::createSVGIcon(const QString &filename, int width, int height)
 {
-    QSvgRenderer renderer(filename);
+    QFile file(filename);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 1024 * 1024)
+        return mDefaultIconPixmap;
+    QByteArray svg = file.read(1024 * 1024 + 1);
+    if (file.error() != QFile::NoError || svg.size() > 1024 * 1024)
+        return mDefaultIconPixmap;
+    if (svg.contains("data-redpanda-adaptive")) {
+        const QPalette palette = qApp->palette();
+        const bool dark = palette.color(QPalette::Window).lightnessF() < .5;
+        svg.replace("#334155", palette.color(QPalette::WindowText).name().toUtf8());
+        svg.replace("#e7eef7", dark ? "#364659" : "#e7eef7");
+        svg.replace("#2478c5", dark ? "#82baff" : "#2478c5");
+        svg.replace("#19855a", dark ? "#76d5a6" : "#19855a");
+        svg.replace("#c74747", dark ? "#ff9797" : "#c74747");
+        svg.replace("#c98527", dark ? "#f0c270" : "#a26c14");
+    }
+    QSvgRenderer renderer(svg);
     if (!renderer.isValid())
         return mDefaultIconPixmap;
     qreal dpr=qApp->devicePixelRatio();
@@ -313,14 +331,13 @@ QList<PIconSet> IconsManager::listIconSets()
             pSet->displayName = pSet->name;
             QFile infoFile(includeTrailingPathDelimiter(fileInfo.absoluteFilePath())+"info.json");
             if (infoFile.exists() && infoFile.open(QFile::ReadOnly)) {
-                QByteArray content = infoFile.readAll().trimmed();
-                if (content.isEmpty())
-                    return result;
+                QByteArray content = infoFile.read(64 * 1024 + 1).trimmed();
+                if (content.size() > 64 * 1024) content.clear();
                 QJsonParseError error;
                 QJsonDocument doc(QJsonDocument::fromJson(content,&error));
                 if (error.error  == QJsonParseError::NoError) {
                     QJsonObject obj=doc.object();
-                    pSet->displayName = obj["name"].toString();
+                    if (!obj["name"].toString().isEmpty()) pSet->displayName = obj["name"].toString();
                     QString localeName = obj["name_"+mLanguage].toString();
                     if (!localeName.isEmpty())
                         pSet->displayName = localeName;
@@ -329,6 +346,7 @@ QList<PIconSet> IconsManager::listIconSets()
             result.append(pSet);
         }
     }
+    std::sort(result.begin(), result.end(), [](const PIconSet &a, const PIconSet &b) { return a->displayName.localeAwareCompare(b->displayName) < 0; });
     return result;
 }
 

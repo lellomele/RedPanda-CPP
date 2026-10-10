@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (C) 2020-2022 Roy Qu (royqh1979@gmail.com)
  *
  * This program is free software: you can redistribute it and/or modify
@@ -15,6 +15,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "editor.h"
+#include <QSaveFile>
+#include "snippetsstorage.h"
 
 #include <QtCore/QFileInfo>
 #include <QFont>
@@ -252,9 +254,16 @@ void Editor::loadFile(QString filename, bool parse) {
 void Editor::saveFile(QString filename) {
     Q_ASSERT(mEditorEncoding!=ENCODING_AUTO_DETECT);
     Q_ASSERT(mEditorEncoding!=ENCODING_PROJECT);
-    QFile file(filename);
-    QByteArray oldFileEncoding = mFileEncoding;
-    saveToFile(file, mEditorEncoding, mFileEncoding);
+    QSaveFile file(filename);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly))
+        throw FileError(tr("Cannot save '%1': %2").arg(filename, file.errorString()));
+    const QByteArray oldFileEncoding = mFileEncoding;
+    QByteArray detectedEncoding;
+    saveToFile(file, mEditorEncoding, detectedEncoding);
+    if (!file.commit())
+        throw FileError(tr("Cannot save '%1': %2").arg(filename, file.errorString()));
+    mFileEncoding = detectedEncoding;
     if (oldFileEncoding != mFileEncoding)
         emit fileEncodingChanged(this);
 }
@@ -612,9 +621,11 @@ void Editor::keyPressEvent(QKeyEvent *event)
             ) {
         //setMouseTracking(true);
         handled=true;
+        const QPoint globalPos = QCursor::pos();
         QMouseEvent mouseEvent{
             QEvent::MouseMove,
-                    mapFromGlobal(QCursor::pos()),
+                    mapFromGlobal(globalPos),
+                    globalPos,
                     Qt::NoButton,
                     Qt::NoButton,
                     Qt::ControlModifier};
@@ -2987,6 +2998,44 @@ void Editor::insertString(const QString &value, bool moveCursor)
     }
 }
 
+QString Editor::snippetPrefix() const
+{
+    if (selAvail()) {
+        const QString selected = selText();
+        if (mCodeSnippetsManager) for (const auto &snippet : mCodeSnippetsManager->snippetsForLanguage(SnippetStorage::languageForFileType(fileType())))
+            if (snippet->prefix == selected) return selected;
+        for (const QChar character : selected) if (!character.isLetterOrNumber() && character != '_') return {};
+        return selected;
+    }
+    const QString left = lineText().left(caretX());
+    QString longest;
+    if (mCodeSnippetsManager) {
+        for (const auto &snippet : mCodeSnippetsManager->snippetsForLanguage(SnippetStorage::languageForFileType(fileType()))) {
+            if (snippet->prefix.isEmpty() || snippet->prefix.size() <= longest.size() || !left.endsWith(snippet->prefix)) continue;
+            const int boundary = left.size() - snippet->prefix.size();
+            if (boundary > 0 && (left[boundary - 1].isLetterOrNumber() || left[boundary - 1] == '_')) continue;
+            longest = snippet->prefix;
+        }
+    }
+    if (!longest.isEmpty()) return longest;
+    int begin = left.size();
+    while (begin > 0 && (left[begin - 1].isLetterOrNumber() || left[begin - 1] == '_')) --begin;
+    return left.mid(begin);
+}
+
+bool Editor::expandCodeSnippet(const PCodeSnippet &snippet, const QString &expectedPrefix)
+{
+    if (readOnly() || !SnippetStorage::matches(snippet, SnippetStorage::languageForFileType(fileType())) || snippetPrefix() != expectedPrefix) return false;
+    beginEditing();
+    auto action = finally([this] { endEditing(); });
+    if (!selAvail() && !expectedPrefix.isEmpty()) {
+        const QSynedit::CharPos end = caretXY();
+        setSelBeginEnd({end.ch - int(expectedPrefix.size()), end.line}, end);
+    }
+    insertCodeSnippet(snippet->code);
+    return true;
+}
+
 void Editor::insertCodeSnippet(const QString &code)
 {
     clearUserCodeInTabStops();
@@ -3350,7 +3399,7 @@ void Editor::showCompletion(const QString& preWord,bool autoComplete, CodeComple
     } else {
         mCompletionPopup->setShowCodeSnippets(mCodeCompletionSettings->showCodeIns());
         if (mCodeCompletionSettings->showCodeIns() && mCodeSnippetsManager) {
-            mCompletionPopup->setCodeSnippets(mCodeSnippetsManager->snippets());
+            mCompletionPopup->setCodeSnippets(mCodeSnippetsManager->snippetsForLanguage(SnippetStorage::languageForFileType(fileType())));
         }
     }
     mCompletionPopup->setHideSymbolsStartWithUnderline(mCodeCompletionSettings->hideSymbolsStartsWithUnderLine());
@@ -3529,8 +3578,11 @@ void Editor::saveAutoBackup()
     if (mBackupFile) {
         mBackupFile->reset();
         mBackupTime=QDateTime::currentDateTime();
-        mBackupFile->write(text().toUtf8());
-        mBackupFile->flush();
+        const QByteArray content = text().toUtf8();
+        if (mBackupFile->write(content) != content.size() || !mBackupFile->resize(content.size()) || !mBackupFile->flush()) {
+            mAutoBackupTimer.stop();
+            qWarning() << "Editor backup failed:" << mBackupFile->errorString();
+        }
         //qDebug()<<mBackupTime<<mBackupFile->size()<<mBackupFile->fileName();
     }
 }

@@ -17,6 +17,7 @@
 #ifndef THEMEMANAGER_H
 #define THEMEMANAGER_H
 #include <QPalette>
+#include <QJsonObject>
 #include <QHash>
 #include <QColor>
 #include <memory>
@@ -115,7 +116,9 @@ public:
     const QString& filename() const;
 
     const QString categoryIcon() const;
+    QString categoryLabel() const;
 
+    QJsonObject toJson() const;
     bool copyTo(const QString& targetFolder);
 
 public:
@@ -147,6 +150,7 @@ public:
     explicit ThemeManager(QObject *parent = nullptr);
     PAppTheme theme(const QString& themeName);
     QList<PAppTheme> getThemes();
+    static void invalidateCache();
 
 private:
     struct ThemeCompare {
@@ -154,6 +158,8 @@ private:
     };
 
 private:
+    PAppTheme loadCached(const QString &filename, AppTheme::ThemeType type, AppTheme::ThemeCategory category);
+    inline static QHash<QString, PAppTheme> mCache;
     bool tryLoadThemeFromDir(const QString &dir, AppTheme::ThemeCategory category, const QString &themeName, PAppTheme &theme);
     void loadThemesFromDir(const QString &dir, AppTheme::ThemeCategory category, std::set<PAppTheme, ThemeCompare> &themes);
 

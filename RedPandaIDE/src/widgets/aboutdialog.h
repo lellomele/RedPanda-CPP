@@ -31,8 +31,15 @@ public:
     explicit AboutDialog(QWidget *parent = nullptr);
     ~AboutDialog();
 
+protected:
+    bool event(QEvent *event) override;
+    void changeEvent(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
+    void updateForkFlag();
     Ui::AboutDialog *ui;
+    bool mUiReady = false;
 };
 
 #endif // ABOUTDIALOG_H

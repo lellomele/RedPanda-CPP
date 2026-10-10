@@ -21,6 +21,10 @@
 #include <QDialog>
 #include <QStandardItemModel>
 #include <memory>
+#include <functional>
+#include <QSet>
+class QSortFilterProxyModel;
+class QLineEdit;
 #include "src/iconsmanager.h"
 
 class SettingsWidget;
@@ -37,13 +41,16 @@ class SettingsDialog : public QDialog
 
 public:
     enum {
-        GetWidgetIndexRole = Qt::UserRole + 1
+        GetWidgetIndexRole = Qt::UserRole + 1, OriginalGroupRole, SearchKeywordsRole
     };
     explicit SettingsDialog(QWidget *parent = nullptr);
     ~SettingsDialog();
 
     void addWidget(SettingsWidget* pWidget);
+    void addPage(const QString &name, const QString &group, std::function<SettingsWidget *()> factory, const QString &keywords = QString());
 
+    int createdPageCount() const;
+    int pageCount() const { return mSettingWidgets.size(); }
     void selectFirstWidget();
 
     static PSettingsDialog optionDialog(ColorManager *colorManager, IconsManager *iconsManager, QWidget *parent);
@@ -55,7 +62,7 @@ public:
 
 private slots:
     void closeAndQuit();
-    void showWidget(const QModelIndex &index);
+    bool showWidget(const QModelIndex &index);
 
     void widget_settings_changed(bool value);
 
@@ -67,11 +74,15 @@ private slots:
 
     void on_btnOk_pressed();
 private:
-    void saveCurrentPageSettings(bool confirm);
+    bool saveCurrentPageSettings(bool confirm);
 private:
     Ui::SettingsDialog *ui;
     QList<SettingsWidget*> mSettingWidgets;
     QStandardItemModel model;
+    QSortFilterProxyModel *mFilter;
+    QLineEdit *mSearch;
+    QVector<std::function<SettingsWidget *()>> mFactories;
+    QSet<SettingsWidget *> mInitialized;
     bool mAppShouldQuit;
 
 //    CompilerSetOptionWidget *pCompilerSetOptionWidget;

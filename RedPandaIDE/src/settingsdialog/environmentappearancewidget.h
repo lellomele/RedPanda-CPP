@@ -18,12 +18,15 @@
 #define ENVIRONMENTAPPEARANCEWIDGET_H
 
 #include <QWidget>
+#include <QJsonObject>
 #include "settingswidget.h"
 
 namespace Ui {
+class QFrame;
 class EnvironmentAppearanceWidget;
 }
 
+class QFrame;
 class EnvironmentAppearanceWidget : public SettingsWidget
 {
     Q_OBJECT
@@ -34,6 +37,11 @@ public:
 
 private:
     Ui::EnvironmentAppearanceWidget *ui;
+    QFrame *mPreview;
+    void importTheme();
+    void exportTheme();
+    void editPalette();
+    bool saveCustomTheme(QJsonObject object);
 
     // SettingsWidget interface
 protected:

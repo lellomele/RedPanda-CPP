@@ -40,6 +40,8 @@ EnvironmentSettings::EnvironmentSettings(SettingsPersistor *persistor, DirSettin
 void EnvironmentSettings::doLoad()
 {
     //Appearance
+    mRecoveryEnabled = boolValue("recovery_enabled", true);
+    mRecoveryInterval = qBound(10, intValue("recovery_interval", 20), 300);
     mTheme = stringValue("theme","dark");
     mInterfaceFont = stringValue("interface_font", defaultUiFont());
     mInterfaceFontSize = intValue("interface_font_size",11);
@@ -374,6 +376,8 @@ void EnvironmentSettings::doSave()
     QString astylePath = replacePrefix(mAStylePath, mDirSettings->appLibexecDir(), "%*APP_LIBEXEC_DIR*%");
 
     //Appearance
+    saveValue("recovery_enabled", mRecoveryEnabled);
+    saveValue("recovery_interval", mRecoveryInterval);
     saveValue("theme", mTheme);
     saveValue("interface_font", mInterfaceFont);
     saveValue("interface_font_size", mInterfaceFontSize);

@@ -6830,7 +6830,7 @@
     </message>
     <message>
         <location filename="../src/mainwindow.cpp" line="8115"/>
-        <source>Current Compiler set has the following critical error: 
+        <source>Current Compiler set has the following critical error:
 
 </source>
         <translation>Текущий набор компиляторов имеет следующую критическую ошибку:  </translation>

@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <QGuiApplication>
 #include "test_charpos.h"
+#include "test_keystrokes.h"
 #include "test_cppsyntaxer.h"
 #include "test_document.h"
 #include "test_qsynedit_cpp.h"
@@ -13,6 +14,10 @@ int main(int argc, char *argv[]) {
     QTest::setMainSourcePath(__FILE__, QT_TESTCASE_BUILDDIR); // Optional: for source path resolution
 
     QApplication app(argc,argv);
+    {
+        QSynedit::TestKeyStrokes tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
     //CharPos Test
     {
         QSynedit::TestCharPos tc;

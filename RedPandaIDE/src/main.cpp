@@ -15,6 +15,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "main.h"
+#include "appidentity.h"
+#include "widgets/startupsplash.h"
+#include "resilientapplication.h"
+#include "sessionrecovery.h"
+#include "diagnostics.h"
+#include <QAbstractButton>
+#include "test/interfacechecks.h"
 #include "utils/os.h"
 #include <QIcon>
 
@@ -43,10 +50,10 @@ BOOL CALLBACK GetPreviousInstanceCallback(HWND hwnd, LPARAM param){
         return result;
 
     // Get its module filename
-    if (GetModuleFileNameExW(hWindowProcess, hWindowModule, buffer, sizeof(buffer)) == 0)
+    auto closeProcess = finally([hWindowProcess] { CloseHandle(hWindowProcess); });
+    const DWORD copied = GetModuleFileNameExW(hWindowProcess, hWindowModule, buffer, 4098);
+    if (copied == 0 || copied >= 4098)
         return TRUE;
-
-    CloseHandle(hWindowProcess); // not needed anymore
     WCHAR * compareFilename=(WCHAR*)param;
     QString s1=QString::fromWCharArray(compareFilename);
     QString s2=QString::fromWCharArray(buffer);
@@ -65,7 +72,7 @@ HWND getPreviousInstance() {
     WCHAR buffer[4098];
     //ShowMessage('ERROR_ALREADY_EXISTS');
     // Store our own module filename
-    if (GetModuleFileNameW(GetModuleHandle(NULL), buffer, sizeof(buffer)) == 0)
+    if (GetModuleFileNameW(GetModuleHandle(NULL), buffer, 4098) == 0)
         return NULL;
 
     // If that's the case, walk all top level windows and find the previous instance
@@ -117,11 +124,22 @@ bool WindowLogoutEventFilter::nativeEventFilter(const QByteArray & /*eventType*/
             QBuffer buffer;
             QDataStream in(&buffer);
             QStringList files;
-            sharedMemory.lock();
-            buffer.setData((char*)sharedMemory.constData(), sharedMemory.size());
-            buffer.open(QBuffer::ReadOnly);
-            in >> files;
+            if (sharedMemory.size() <= 0 || sharedMemory.size() > 1024 * 1024 || !sharedMemory.lock()) {
+                sharedMemory.detach(); qWarning() << "Invalid local open-file message"; return true;
+            }
+            buffer.setData(static_cast<const char *>(sharedMemory.constData()), sharedMemory.size());
             sharedMemory.unlock();
+            buffer.open(QBuffer::ReadOnly);
+            quint32 count = 0; in >> count;
+            bool valid = count <= 128;
+            for (quint32 i = 0; valid && i < count; ++i) {
+                const qint64 start = buffer.pos(); quint32 bytes = 0; in >> bytes;
+                if (in.status() != QDataStream::Ok || bytes > 8192 || bytes % 2 || bytes > static_cast<quint32>(buffer.bytesAvailable())) { valid = false; break; }
+                buffer.seek(start); QString path; in >> path;
+                if (in.status() != QDataStream::Ok || path.isEmpty()) valid = false;
+                else files.append(path);
+            }
+            if (!valid || in.status() != QDataStream::Ok) { sharedMemory.detach(); qWarning() << "Invalid local open-file payload"; return true; }
             if (pMainWindow->isMinimized()) {
                 pMainWindow->showNormal();
             }
@@ -180,7 +198,9 @@ bool BlockWheelEventFiler::eventFilter(QObject *watched, QEvent *event)
 
 QString getSettingFilename(const QString& filepath, bool& firstRun) {
     QString filename;
-    if (filepath.isEmpty()) {
+    if (qApp->property("uiTestConfigPath").isValid()) {
+        filename = qApp->property("uiTestConfigPath").toString();
+    } else if (filepath.isEmpty()) {
         if (usePortableConfigPath()) {
             filename = includeTrailingPathDelimiter(QApplication::applicationDirPath()) +
                     "config/"  + APP_SETTSINGS_FILENAME;
@@ -194,7 +214,7 @@ QString getSettingFilename(const QString& filepath, bool& firstRun) {
     }
 
     QFileInfo fileInfo(filename);
-    firstRun = !fileInfo.exists();
+    firstRun = !fileInfo.exists() && !qApp->property("uiTestConfigPath").isValid();
     QDir dir(fileInfo.absoluteDir());
     if (!dir.exists()) {
         if (!dir.mkpath(dir.absolutePath())) {
@@ -257,14 +277,26 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    QApplication app(argc, argv);
+    ResilientApplication app(argc, argv);
+    QCoreApplication::setApplicationName(AppIdentity::internalName());
+    QGuiApplication::setApplicationDisplayName(AppIdentity::displayName());
+    // Startup dialogs must not post an application quit before the main window exists.
+    app.setQuitOnLastWindowClosed(false);
+    QString uiTestOutput;
+    const int uiTestArgument = app.arguments().indexOf("--ui-test-output");
+    if (uiTestArgument >= 0 && uiTestArgument + 1 < app.arguments().size()) {
+        uiTestOutput = QFileInfo(app.arguments().at(uiTestArgument + 1)).absoluteFilePath();
+        QDir().mkpath(uiTestOutput + "/profile");
+        app.setProperty("uiTestConfigPath", uiTestOutput + "/profile/redpandacpp.ini");
+        QDir::setCurrent(uiTestOutput);
+    }
 #if QT_VERSION_MAJOR >= 6
     app.setAttribute(Qt::AA_DontUseNativeDialogs);
 #endif
 #if QT_VERSION_MAJOR < 6
     app.setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
-    app.setWindowIcon(QIcon(":/icons/images/devcpp.ico"));
+    app.setWindowIcon(QIcon(AppIdentity::iconResource()));
     QDir startupDir = QDir::current();
     ExternalResource resource;
 
@@ -321,13 +353,19 @@ int main(int argc, char *argv[])
         languageSetting.beginGroup(SETTING_ENVIRONMENT);
         language = languageSetting.value("language",QLocale::system().name()).toString();
 
+        app.setProperty("interfaceLanguage", QStringLiteral("en"));
         if (trans.load("RedPandaIDE_"+language,":/i18n/")) {
             app.installTranslator(&trans);
+            app.setProperty("interfaceLanguage", language);
         }
         if (transUtils.load("qt_utils_"+language,":/i18n/")) {
             app.installTranslator(&transUtils);
         }
+#if QT_VERSION_MAJOR >= 6
+        QString translationsPath(QLibraryInfo::path(QLibraryInfo::TranslationsPath));
+#else
         QString translationsPath(QLibraryInfo::location(QLibraryInfo::TranslationsPath));
+#endif
         if (
             // since Qt 5.15.3, `qt_xx.qm` is a wrapper for `qtbase_xx.qm` and other (unused) `qm`s.
             // first, try loading `qt_xx.qm` from standard location (dynamic build) so that it works on Debian 11 (with Qt 5.15.2),
@@ -362,7 +400,13 @@ int main(int argc, char *argv[])
             pSettings->compilerSets().findSets(true);
             pSettings->compilerSets().saveSets();
         }
+        if (!uiTestOutput.isEmpty()) QTimer::singleShot(0, &app, [] {
+            for (auto *widget : QApplication::topLevelWidgets()) if (auto *message = qobject_cast<QMessageBox *>(widget))
+                if (!message->parentWidget() && message->standardButtons().testFlag(QMessageBox::No) && message->button(QMessageBox::No)) message->button(QMessageBox::No)->click();
+        });
         pSettings->load();
+        Diagnostics::install(QDir(pSettings->dirs().config()).filePath("diagnostics.log"));
+        auto restoreMessageHandler = finally([] { Diagnostics::uninstall(); });
         if (firstRun) {
             //set theme
             ChooseThemeDialog themeDialog;
@@ -412,14 +456,27 @@ int main(int argc, char *argv[])
 
         QDir::setCurrent(pSettings->environment().defaultOpenFolder());
 
+        StartupSplash splash;
+        splash.show();
+        app.processEvents(QEventLoop::ExcludeUserInputEvents);
+        if (!uiTestOutput.isEmpty()) splash.grab().save(uiTestOutput + "/startup.png");
         MainWindow mainWindow;
         pMainWindow = &mainWindow;
+        SessionRecovery recovery(&mainWindow);
+        QObject::connect(&app, &ResilientApplication::recoverableError, &mainWindow, [&mainWindow, &recovery](const QString &reason) {
+            recovery.checkpoint();
+            auto *message = new QMessageBox(QMessageBox::Warning, QObject::tr("Operation could not be completed"),
+                QObject::tr("The current operation was cancelled. Your open documents are still available.\n%1").arg(reason), QMessageBox::Ok, &mainWindow);
+            message->setAttribute(Qt::WA_DeleteOnClose); message->open();
+        });
         if (mainWindow.screen())
             setScreenDPI(mainWindow.screen()->logicalDotsPerInch());
 
         mainWindow.show();
+        // Nonblocking: the IDE is already usable; clicking also dismisses the splash.
+        QTimer::singleShot(uiTestOutput.isEmpty() ? 700 : 0, &splash, [&splash, &mainWindow] { splash.finish(&mainWindow); });
 
-        QStringList filesToOpen = app.arguments();
+        QStringList filesToOpen = uiTestOutput.isEmpty() ? app.arguments() : QStringList{app.applicationFilePath()};
         filesToOpen.pop_front();
         if (!filesToOpen.isEmpty()) {
             QStringList absoluteFiles;
@@ -441,6 +498,8 @@ int main(int argc, char *argv[])
             mainWindow.newEditor();
         }
 
+        recovery.restorePreviousSessions();
+
         //reset default open folder
         mainWindow.setFilesViewRoot(pSettings->environment().currentFolder());
 
@@ -456,7 +515,17 @@ int main(int argc, char *argv[])
             lockFile.unlock();
         }
 
+        if (uiTestOutput.isEmpty()) app.setQuitOnLastWindowClosed(true);
+        else QTimer::singleShot(0, &mainWindow, [&] {
+            const int result = runUiChecks(mainWindow, recovery, uiTestOutput);
+            auto *closing = new QTimer(&mainWindow); closing->setInterval(25);
+            QObject::connect(closing, &QTimer::timeout, &mainWindow, [&, closing, result] {
+                if (mainWindow.close()) { closing->stop(); app.exit(result); }
+            });
+            closing->start();
+        });
         int retCode = app.exec();
+        recovery.finishCleanly();
         if (mainWindow.shouldRemoveAllSettings()) {
             QString configDir = pSettings->dirs().config();
             settings.release();

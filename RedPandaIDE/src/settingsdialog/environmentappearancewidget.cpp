@@ -20,6 +20,20 @@
 #include <QApplication>
 #include <QMessageBox>
 #include <QStyleFactory>
+#include <QFrame>
+#include <QPushButton>
+#include <QLabel>
+#include <QLineEdit>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QSaveFile>
+#include <QJsonDocument>
+#include <QInputDialog>
+#include <QUuid>
+#include "../widgets/coloredit.h"
 #include "../settings.h"
 #include "../mainwindow.h"
 #include "../thememanager.h"
@@ -30,6 +44,19 @@ EnvironmentAppearanceWidget::EnvironmentAppearanceWidget(const QString& name, co
     ui(new Ui::EnvironmentAppearanceWidget)
 {
     ui->setupUi(this);
+    const int row = ui->gridLayout->rowCount();
+    auto *tools = new QHBoxLayout;
+    auto add = [this, tools](const QString &text, auto action) { auto *button = new QPushButton(text, this); tools->addWidget(button); connect(button, &QPushButton::clicked, this, action); };
+    add(tr("Import theme..."), [this] { importTheme(); });
+    add(tr("Export theme..."), [this] { exportTheme(); });
+    add(tr("Edit palette..."), [this] { editPalette(); });
+    tools->addStretch(); ui->gridLayout->addLayout(tools, row, 0, 1, 2);
+    mPreview = new QFrame(this); mPreview->setObjectName("themePreview"); mPreview->setAutoFillBackground(true);
+    auto *previewLayout = new QVBoxLayout(mPreview);
+    previewLayout->addWidget(new QLabel(tr("Theme preview"), mPreview));
+    auto *sample = new QLineEdit("int main() { return 0; }", mPreview); sample->setReadOnly(true); previewLayout->addWidget(sample);
+    auto *selected = new QLabel(tr("Selected text"), mPreview); selected->setBackgroundRole(QPalette::Highlight); selected->setForegroundRole(QPalette::HighlightedText); selected->setAutoFillBackground(true); previewLayout->addWidget(selected);
+    ui->gridLayout->addWidget(mPreview, row + 1, 0, 1, 2);
 }
 
 EnvironmentAppearanceWidget::~EnvironmentAppearanceWidget()
@@ -67,6 +94,7 @@ void EnvironmentAppearanceWidget::doLoad()
 
 void EnvironmentAppearanceWidget::doSave()
 {
+    const bool languageChanged = pSettings->environment().language() != ui->cbLanguage->currentData().toString();
     if (pSettings->environment().theme()!=ui->cbTheme->currentData().toString()) {
         ThemeManager themeManager;
         PAppTheme appTheme = themeManager.theme(ui->cbTheme->currentData().toString());
@@ -87,7 +115,9 @@ void EnvironmentAppearanceWidget::doSave()
     pSettings->environment().setComboboxWheel(ui->chkComboboxWheel->isChecked());
 
     pSettings->environment().save();
+    ThemeManager::invalidateCache();
     pMainWindow->applySettings();
+    if (languageChanged) QMessageBox::information(this, tr("Restart required"), tr("Restart the IDE to apply the new interface language."));
 }
 
 void EnvironmentAppearanceWidget::updateIcons(const QSize & size)
@@ -104,9 +134,10 @@ void EnvironmentAppearanceWidget::init()
     ThemeManager themeManager;
     QList<PAppTheme> appThemes = themeManager.getThemes();
     foreach(const PAppTheme& appTheme, appThemes) {
-        ui->cbTheme->addItem(appTheme->categoryIcon() + " " + appTheme->displayName(), appTheme->name());
+        ui->cbTheme->addItem(appTheme->categoryLabel() + " " + appTheme->displayName(), appTheme->name());
     }
     ui->cbLanguage->addItem(tr("English"),"en");
+    ui->cbLanguage->addItem(tr("Italian"),"it_IT");
     ui->cbLanguage->addItem(tr("Portuguese"),"pt_BR");
     ui->cbLanguage->addItem(tr("Simplified Chinese"),"zh_CN");
     ui->cbLanguage->addItem(tr("Traditional Chinese"),"zh_TW");
@@ -122,6 +153,7 @@ void EnvironmentAppearanceWidget::on_cbTheme_currentIndexChanged(int /* index */
 {
     ThemeManager themeManager;
     PAppTheme appTheme = themeManager.theme(ui->cbTheme->currentData().toString());
+    mPreview->setPalette(appTheme->palette());
     ui->btnCustomize->setVisible(appTheme->category() == AppTheme::ThemeCategory::BuiltIn);
     ui->btnOpenCustomThemeFolder->setVisible(appTheme->category() == AppTheme::ThemeCategory::Custom);
     ui->btnRemoveCustomTheme->setVisible(appTheme->category() == AppTheme::ThemeCategory::Custom);
@@ -147,7 +179,8 @@ void EnvironmentAppearanceWidget::on_btnCustomize_clicked()
     if (!dir.exists()) {
         dir.mkpath(customThemeFolder);
     }
-    appTheme->copyTo(customThemeFolder);
+    if (!appTheme->copyTo(customThemeFolder)) { QMessageBox::warning(this, tr("Theme"), tr("Could not save the custom theme.")); return; }
+    ThemeManager::invalidateCache();
     refreshThemeList(appTheme->name());
 }
 
@@ -165,7 +198,7 @@ void EnvironmentAppearanceWidget::refreshThemeList(const QString &currentThemeNa
     QList<PAppTheme> appThemes = themeManager.getThemes();
     for (int i=0; i<appThemes.count();i++) {
         const PAppTheme& appTheme =appThemes[i];
-        ui->cbTheme->addItem(appTheme->categoryIcon() + " " + appTheme->displayName(), appTheme->name());
+        ui->cbTheme->addItem(appTheme->categoryLabel() + " " + appTheme->displayName(), appTheme->name());
         if (appTheme->name() == currentThemeName)
             ui->cbTheme->setCurrentIndex(i);
     }
@@ -178,7 +211,8 @@ void EnvironmentAppearanceWidget::on_btnRemoveCustomTheme_clicked()
     PAppTheme appTheme = themeManager.theme(ui->cbTheme->currentData().toString());
     if (appTheme->category() != AppTheme::ThemeCategory::Custom)
         return;
-    QFile::remove(appTheme->filename());
+    if (!QFile::remove(appTheme->filename())) { QMessageBox::warning(this, tr("Theme"), tr("Could not remove the custom theme.")); return; }
+    ThemeManager::invalidateCache();
     refreshThemeList(appTheme->name());
 }
 
@@ -187,6 +221,55 @@ void EnvironmentAppearanceWidget::on_btnReload_clicked()
 {
     if (ui->cbTheme->currentData().toString() != pSettings->environment().theme())
         return;
+    ThemeManager::invalidateCache();
     pMainWindow->applySettings();
 }
 
+
+bool EnvironmentAppearanceWidget::saveCustomTheme(QJsonObject object)
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Custom theme"), tr("Theme name"), QLineEdit::Normal, object.value("name").toString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) return false;
+    object.insert("name", name);
+    for (const QString &key : object.keys()) if (key.startsWith("name_")) object.remove(key);
+    const QString folder = pSettings->dirs().config(DirSettings::DataType::Theme);
+    if (!QDir().mkpath(folder)) { QMessageBox::warning(this, tr("Theme"), tr("Could not create the custom theme folder.")); return false; }
+    const QString id = "custom-" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QSaveFile file(QDir(folder).filePath(id + ".json")); const auto bytes = QJsonDocument(object).toJson();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) { QMessageBox::warning(this, tr("Theme"), file.errorString()); return false; }
+    ThemeManager::invalidateCache(); refreshThemeList(id); setSettingsChanged(); return true;
+}
+void EnvironmentAppearanceWidget::importTheme()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("Import theme"), QString(), tr("JSON files (*.json)"));
+    if (path.isEmpty()) return;
+    try { AppTheme theme(path, AppTheme::ThemeType::JSON, AppTheme::ThemeCategory::Custom); saveCustomTheme(theme.toJson()); }
+    catch (const FileError &error) { QMessageBox::warning(this, tr("Theme"), error.reason()); }
+}
+void EnvironmentAppearanceWidget::exportTheme()
+{
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export theme"), "theme.json", tr("JSON files (*.json)"));
+    if (path.isEmpty()) return;
+    ThemeManager manager; auto theme = manager.theme(ui->cbTheme->currentData().toString());
+    QSaveFile file(path); const auto bytes = QJsonDocument(theme->toJson()).toJson();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) QMessageBox::warning(this, tr("Theme"), file.errorString());
+}
+void EnvironmentAppearanceWidget::editPalette()
+{
+    ThemeManager manager; auto theme = manager.theme(ui->cbTheme->currentData().toString());
+    QJsonObject object = theme->toJson(); QJsonObject colors = object.value("palette").toObject();
+    QDialog dialog(this); dialog.setWindowTitle(tr("Edit palette")); auto *layout = new QFormLayout(&dialog);
+    QMap<QString, ColorEdit *> controls;
+    const QList<QPair<QString, QString>> roles = {{"PaletteWindow", tr("Window background")}, {"PaletteWindowText", tr("Window text")},
+        {"PaletteBase", tr("Editor background")}, {"PaletteText", tr("Editor text")}, {"PaletteButton", tr("Button background")},
+        {"PaletteButtonText", tr("Button text")}, {"PaletteHighlight", tr("Selection background")}, {"PaletteHighlightedText", tr("Selection text")},
+        {"PaletteToolTipBase", tr("Tooltip background")}, {"PaletteToolTipText", tr("Tooltip text")}, {"PaletteLink", tr("Links")}};
+    for (const auto &role : roles) { auto *control = new ColorEdit(&dialog); control->setColor(QColor(colors.value(role.first).toString())); controls.insert(role.first, control); layout->addRow(role.second, control); }
+    auto *help = new QLabel(tr("This changes interface colors. Customize syntax colors in Editor > Color."), &dialog); help->setWordWrap(true); layout->addRow(help);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) return;
+    for (auto it = controls.cbegin(); it != controls.cend(); ++it) { if (!it.value()->color().isValid()) { QMessageBox::warning(this, tr("Theme"), tr("All palette colors must be valid.")); return; } colors.insert(it.key(), it.value()->color().name(QColor::HexArgb)); }
+    object.insert("palette", colors); saveCustomTheme(object);
+}

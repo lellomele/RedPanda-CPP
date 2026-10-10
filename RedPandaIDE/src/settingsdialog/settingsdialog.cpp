@@ -65,6 +65,22 @@
 #include <QDebug>
 #include <QMessageBox>
 #include <QModelIndex>
+#include <QSortFilterProxyModel>
+#include <QLineEdit>
+#include <QTimer>
+#include <QShortcut>
+#include <QSignalBlocker>
+#include "environmentrecoverywidget.h"
+
+class PreferencesFilter : public QSortFilterProxyModel {
+public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override {
+        if (parent.isValid() && parent.data(SettingsDialog::SearchKeywordsRole).toString().contains(filterRegularExpression())) return true;
+        return QSortFilterProxyModel::filterAcceptsRow(row, parent);
+    }
+};
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
     QDialog(parent),
@@ -74,7 +90,22 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     ui->setupUi(this);
 
     QItemSelectionModel *m=ui->widgetsView->selectionModel();
-    ui->widgetsView->setModel(&model);
+    mFilter = new PreferencesFilter(this);
+    mFilter->setSourceModel(&model); mFilter->setRecursiveFilteringEnabled(true);
+    mFilter->setFilterRole(SearchKeywordsRole); mFilter->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    ui->widgetsView->setModel(mFilter);
+    ui->widgetsView->setMinimumWidth(240);
+    ui->widgetsView->setTextElideMode(Qt::ElideNone);
+    mSearch = new QLineEdit(this); mSearch->setClearButtonEnabled(true);
+    mSearch->setPlaceholderText(tr("Search preferences (Ctrl+F)"));
+    mSearch->setAccessibleName(tr("Search preferences"));
+    mSearch->setObjectName("preferencesSearch");
+    ui->verticalLayout->insertWidget(0, mSearch);
+    auto *delay = new QTimer(this); delay->setSingleShot(true); delay->setInterval(80);
+    connect(mSearch, &QLineEdit::textChanged, delay, [delay] { delay->start(); });
+    connect(delay, &QTimer::timeout, this, [this] { const QSignalBlocker selection(ui->widgetsView->selectionModel()); mFilter->setFilterFixedString(mSearch->text().trimmed()); ui->widgetsView->expandAll(); });
+    auto *find = new QShortcut(QKeySequence::Find, this);
+    connect(find, &QShortcut::activated, mSearch, qOverload<>(&QWidget::setFocus));
     delete m;
 
     connect(ui->widgetsView->selectionModel(), &QItemSelectionModel::currentChanged,
@@ -88,7 +119,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     resize(pSettings->ui().settingsDialogWidth(),pSettings->ui().settingsDialogHeight());
 
     QList<int> sizes = ui->splitter->sizes();
-    int tabWidth = pSettings->ui().settingsDialogSplitterPos();
+    int tabWidth = qMax(260, pSettings->ui().settingsDialogSplitterPos());
     int totalSize = sizes[0] + sizes[1];
     sizes[0] = tabWidth;
     sizes[1] = std::max(1,totalSize - sizes[0]);
@@ -98,31 +129,38 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
 SettingsDialog::~SettingsDialog()
 {
     foreach (SettingsWidget* p, mSettingWidgets) {
-        p->setParent(nullptr);
-        delete p;
+        if (p) { p->setParent(nullptr); delete p; }
     }
     delete ui;
 }
 
-void SettingsDialog::addWidget(SettingsWidget *pWidget)
+void SettingsDialog::addWidget(SettingsWidget *widget)
 {
-    pWidget->init();
-    QList<QStandardItem*> items = model.findItems(pWidget->group());
-    QStandardItem* pGroupItem;
-    if (items.count() == 0 ) {
-        pGroupItem = new QStandardItem(pWidget->group());
-        pGroupItem->setData(-1, GetWidgetIndexRole);
-        model.appendRow(pGroupItem);
-    } else {
-        pGroupItem = items[0];
-    }
-    mSettingWidgets.append(pWidget);
-    QStandardItem* pWidgetItem = new QStandardItem(pWidget->name());
-    pWidgetItem->setData(mSettingWidgets.count()-1, GetWidgetIndexRole);
-    pGroupItem->appendRow(pWidgetItem);
-    connect(pWidget, &SettingsWidget::settingsChanged,
-            this , &SettingsDialog::widget_settings_changed);
+    addPage(widget->name(), widget->group(), [widget] { return widget; });
+    mSettingWidgets.last() = widget;
 }
+
+void SettingsDialog::addPage(const QString &name, const QString &group, std::function<SettingsWidget *()> factory, const QString &keywords)
+{
+    QStandardItem *groupItem = nullptr;
+    for (int i = 0; i < model.rowCount(); ++i)
+        if (model.item(i)->data(OriginalGroupRole).toString() == group) groupItem = model.item(i);
+    if (!groupItem) {
+        QString label = group;
+        if (group == tr("Environment")) label = tr("Interface and workspace");
+        if (group == tr("Editor")) label = tr("Editor and snippets");
+        if (group == tr("Compiler")) label = tr("Build and toolchains");
+        if (group == tr("Program Runner")) label = tr("Run and testing");
+        groupItem = new QStandardItem(label); groupItem->setData(-1, GetWidgetIndexRole);
+        groupItem->setData(group, OriginalGroupRole); groupItem->setData(group + " " + label, SearchKeywordsRole);
+        model.appendRow(groupItem);
+    }
+    mSettingWidgets.append(nullptr); mFactories.append(std::move(factory));
+    auto *item = new QStandardItem(name); item->setToolTip(group + " > " + name); item->setData(mSettingWidgets.size() - 1, GetWidgetIndexRole);
+    item->setData(name + " " + group + " " + keywords, SearchKeywordsRole); groupItem->appendRow(item);
+}
+
+int SettingsDialog::createdPageCount() const { int count = 0; for (auto *widget : mSettingWidgets) if (widget) ++count; return count; }
 
 void SettingsDialog::selectFirstWidget()
 {
@@ -134,7 +172,6 @@ void SettingsDialog::selectFirstWidget()
                 widgetIndex,
                 QItemSelectionModel::Select
                 );
-    showWidget(widgetIndex);
 }
 
 PSettingsDialog SettingsDialog::optionDialog(ColorManager *colorManager, IconsManager *iconsManager, QWidget *parent)
@@ -143,106 +180,78 @@ PSettingsDialog SettingsDialog::optionDialog(ColorManager *colorManager, IconsMa
 
     dialog->setWindowTitle(tr("Options"));
 
-    SettingsWidget* widget;
-    widget = new EnvironmentAppearanceWidget(tr("Appearance"),tr("Environment"),iconsManager);
-    dialog->addWidget(widget);
+
+    dialog->addPage(tr("Appearance"), tr("Environment"), [colorManager, iconsManager] { return new EnvironmentAppearanceWidget(tr("Appearance"),tr("Environment"),iconsManager); }, "theme light dark colors language themes tema colori lingua chiaro scuro italiano english font");
 
 #ifdef Q_OS_WIN
-    widget = new EnvironmentFileAssociationWidget(tr("File Association"),tr("Environment"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("File Association"), tr("Environment"), [colorManager, iconsManager] { return new EnvironmentFileAssociationWidget(tr("File Association"),tr("Environment"),iconsManager); }, "");
 #endif
 
-    widget = new EnvironmentShortcutWidget(tr("Shortcuts"),tr("Environment"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Shortcuts"), tr("Environment"), [colorManager, iconsManager] { return new EnvironmentShortcutWidget(tr("Shortcuts"),tr("Environment"),iconsManager); }, "shortcuts keyboard tastiera scorciatoie");
 
-    widget = new EnvironmentProgramsWidget(tr("Terminal"),tr("Environment"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Terminal"), tr("Environment"), [colorManager, iconsManager] { return new EnvironmentProgramsWidget(tr("Terminal"),tr("Environment"),iconsManager); }, "");
 
-    widget = new EnvironmentPerformanceWidget(tr("Performance"),tr("Environment"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Performance"), tr("Environment"), [colorManager, iconsManager] { return new EnvironmentPerformanceWidget(tr("Performance"),tr("Environment"),iconsManager); }, "performance memory parser cache velocità memoria prestazioni");
 
-    widget = new EnvironmentFoldersWidget(tr("Folders / Restore Default Settings"),tr("Environment"),iconsManager);
-    connect((EnvironmentFoldersWidget*)widget,
-            &EnvironmentFoldersWidget::shouldQuitApp,
-            dialog.get(),
-            &SettingsDialog::closeAndQuit);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Folders / Restore Default Settings"), tr("Environment"), [iconsManager, owner = dialog.get()] {
+        auto *widget = new EnvironmentFoldersWidget(tr("Folders / Restore Default Settings"), tr("Environment"), iconsManager);
+        connect(widget, &EnvironmentFoldersWidget::shouldQuitApp, owner, &SettingsDialog::closeAndQuit);
+        return widget;
+    }, "folders cartelle reset ripristino");
 
-    widget = new CompilerSetOptionWidget(tr("Compiler Set"),tr("Compiler"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Compiler Set"), tr("Compiler"), [colorManager, iconsManager] { return new CompilerSetOptionWidget(tr("Compiler Set"),tr("Compiler"),iconsManager); }, "compiler gcc clang msvc toolchain compilatore");
 
-    widget = new CompilerAutolinkWidget(tr("Auto Link"),tr("Compiler"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Auto Link"), tr("Compiler"), [colorManager, iconsManager] { return new CompilerAutolinkWidget(tr("Auto Link"),tr("Compiler"),iconsManager); }, "");
 
-    widget = new CompilerGASWidget(tr("GNU Assembler"),tr("Compiler"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("GNU Assembler"), tr("Compiler"), [colorManager, iconsManager] { return new CompilerGASWidget(tr("GNU Assembler"),tr("Compiler"),iconsManager); }, "");
 
-    widget = new CompilerNASMWidget(tr("NASM"),tr("Compiler"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("NASM"), tr("Compiler"), [colorManager, iconsManager] { return new CompilerNASMWidget(tr("NASM"),tr("Compiler"),iconsManager); }, "");
 
-    widget = new EditorGeneralWidget(tr("General"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("General"), tr("Editor"), [colorManager, iconsManager] { return new EditorGeneralWidget(tr("General"),tr("Editor"),iconsManager); }, "general encoding codifica indent tabs tabulazioni");
 
-    widget = new EditorFontWidget(tr("Font"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Font"), tr("Editor"), [colorManager, iconsManager] { return new EditorFontWidget(tr("Font"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorClipboardWidget(colorManager, tr("Copy & Export"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Copy & Export"), tr("Editor"), [colorManager, iconsManager] { return new EditorClipboardWidget(colorManager, tr("Copy & Export"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorColorSchemeWidget(colorManager, tr("Color"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Color"), tr("Editor"), [colorManager, iconsManager] { return new EditorColorSchemeWidget(colorManager, tr("Color"),tr("Editor"),iconsManager); }, "colors schemes palette colori evidenziazione");
 
-    widget = new EditorCodeCompletionWidget(tr("Code Completion"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Code Completion"), tr("Editor"), [colorManager, iconsManager] { return new EditorCodeCompletionWidget(tr("Code Completion"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorSymbolCompletionWidget(tr("Symbol Completion"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Symbol Completion"), tr("Editor"), [colorManager, iconsManager] { return new EditorSymbolCompletionWidget(tr("Symbol Completion"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorSnippetWidget(colorManager, tr("Snippet"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Snippet"), tr("Editor"), [colorManager, iconsManager] { return new EditorSnippetWidget(colorManager, tr("Snippet"),tr("Editor"),iconsManager); }, "snippets templates code import export frammenti modelli codice");
 
-    widget = new EditorSyntaxCheckWidget(tr("Auto Syntax Checking"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Auto Syntax Checking"), tr("Editor"), [colorManager, iconsManager] { return new EditorSyntaxCheckWidget(tr("Auto Syntax Checking"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorTooltipsWidget(tr("Tooltips"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Tooltips"), tr("Editor"), [colorManager, iconsManager] { return new EditorTooltipsWidget(tr("Tooltips"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorAutoSaveWidget(tr("Auto save"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Auto save"), tr("Editor"), [colorManager, iconsManager] { return new EditorAutoSaveWidget(tr("Auto save"),tr("Editor"),iconsManager); }, "save recovery backup crash salvataggio recupero");
 
-    widget = new EditorMiscWidget(tr("Misc"),tr("Editor"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Misc"), tr("Editor"), [colorManager, iconsManager] { return new EditorMiscWidget(tr("Misc"),tr("Editor"),iconsManager); }, "");
 
-    widget = new EditorCustomCTypeKeywordsWidget(tr("Custom C/C++ Keywords"),tr("Languages"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Custom C/C++ Keywords"), tr("Languages"), [colorManager, iconsManager] { return new EditorCustomCTypeKeywordsWidget(tr("Custom C/C++ Keywords"),tr("Languages"),iconsManager); }, "");
 
 //    widget = new LanguageCFormatWidget(tr("C/C++ Format"),tr("Languages"),iconsManager);
 //    dialog->addWidget(widget);
-    widget = new LanguageAsmGenerationWidget(tr("ASM Generation"),tr("Languages"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("ASM Generation"), tr("Languages"), [colorManager, iconsManager] { return new LanguageAsmGenerationWidget(tr("ASM Generation"),tr("Languages"),iconsManager); }, "");
 
-    widget = new ExecutorGeneralWidget(tr("General"),tr("Program Runner"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("General"), tr("Program Runner"), [colorManager, iconsManager] { return new ExecutorGeneralWidget(tr("General"),tr("Program Runner"),iconsManager); }, "general encoding codifica indent tabs tabulazioni");
 
-    widget = new ExecutorProblemSetWidget(tr("Problem Set"),tr("Program Runner"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Problem Set"), tr("Program Runner"), [colorManager, iconsManager] { return new ExecutorProblemSetWidget(tr("Problem Set"),tr("Program Runner"),iconsManager); }, "");
 
-    widget = new DebugGeneralWidget(tr("General"),tr("Debugger"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("General"), tr("Debugger"), [colorManager, iconsManager] { return new DebugGeneralWidget(tr("General"),tr("Debugger"),iconsManager); }, "general encoding codifica indent tabs tabulazioni");
 
-    widget = new FormatterGeneralWidget(colorManager, tr("General"),tr("Code Formatter"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("General"), tr("Code Formatter"), [colorManager, iconsManager] { return new FormatterGeneralWidget(colorManager, tr("General"),tr("Code Formatter"),iconsManager); }, "general encoding codifica indent tabs tabulazioni");
 
-    widget = new FormatterPathWidget(tr("Program"),tr("Code Formatter"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Program"), tr("Code Formatter"), [colorManager, iconsManager] { return new FormatterPathWidget(tr("Program"),tr("Code Formatter"),iconsManager); }, "");
 
-    widget = new ToolsGeneralWidget(tr("General"),tr("Tools"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("General"), tr("Tools"), [colorManager, iconsManager] { return new ToolsGeneralWidget(tr("General"),tr("Tools"),iconsManager); }, "general encoding codifica indent tabs tabulazioni");
 
 #ifdef ENABLE_VCS
-    widget = new ToolsGitWidget(tr("Git"),tr("Tools"),iconsManager);
-    dialog->addWidget(widget);
+    dialog->addPage(tr("Git"), tr("Tools"), [colorManager, iconsManager] { return new ToolsGitWidget(tr("Git"),tr("Tools"),iconsManager); }, "");
 #endif
+
+    dialog->addPage(tr("Recovery and resilience"), tr("Environment"), [iconsManager] { return new EnvironmentRecoveryWidget(tr("Recovery and resilience"), tr("Environment"), iconsManager); }, "recovery backup crash recover recupero resilienza salvataggio");
 
     dialog->selectFirstWidget();
 
@@ -308,16 +317,13 @@ PSettingsDialog SettingsDialog::projectOptionDialog(IconsManager *iconsManager, 
 
 bool SettingsDialog::setCurrentWidget(const QString &widgetName, const QString &groupName)
 {
-    QList<QStandardItem*> items = model.findItems(groupName);
-    if (items.isEmpty())
-        return false;
-    QStandardItem* pGroupItem = items[0];
-    for (int i=0;i<pGroupItem->rowCount();i++) {
-        QStandardItem* pWidgetItem = pGroupItem->child(i);
-        if (pWidgetItem->text() == widgetName) {
-            ui->widgetsView->setCurrentIndex(pWidgetItem->index());
-            showWidget(pWidgetItem->index());
-            return true;
+    { const QSignalBlocker selection(ui->widgetsView->selectionModel()); mSearch->clear(); mFilter->setFilterFixedString(QString()); }
+    for (int row = 0; row < model.rowCount(); ++row) {
+        auto *group = model.item(row);
+        if (group->data(OriginalGroupRole).toString() != groupName) continue;
+        for (int i = 0; i < group->rowCount(); ++i) {
+            auto *item = group->child(i);
+            if (item->text() == widgetName) { ui->widgetsView->setCurrentIndex(mFilter->mapFromSource(item->index())); return true; }
         }
     }
     return false;
@@ -328,9 +334,12 @@ void SettingsDialog::widget_settings_changed(bool value)
     ui->btnApply->setEnabled(value);
 }
 
-void SettingsDialog::onWidgetsViewCurrentChanged(const QModelIndex &index, const QModelIndex &/*previous*/)
+void SettingsDialog::onWidgetsViewCurrentChanged(const QModelIndex &index, const QModelIndex &previous)
 {
-    showWidget(index);
+    if (!showWidget(index)) {
+        const QSignalBlocker blocked(ui->widgetsView->selectionModel());
+        ui->widgetsView->setCurrentIndex(previous);
+    }
 }
 
 void SettingsDialog::on_btnCancel_pressed()
@@ -345,25 +354,26 @@ void SettingsDialog::on_btnApply_pressed()
 
 void SettingsDialog::on_btnOk_pressed()
 {
-    saveCurrentPageSettings(false);
-    this->close();
+    if (saveCurrentPageSettings(false)) this->close();
 }
 
-void SettingsDialog::saveCurrentPageSettings(bool confirm)
+bool SettingsDialog::saveCurrentPageSettings(bool confirm)
 {
-    if (ui->scrollArea->widget()==ui->scrollAreaWidgetContents)
-        return;
-    SettingsWidget* pWidget = (SettingsWidget*) ui->scrollArea->widget();
-    if (!pWidget->isSettingsChanged())
-        return;
+    auto *widget = qobject_cast<SettingsWidget *>(ui->scrollArea->widget());
+    if (!widget || !widget->isSettingsChanged()) return true;
     if (confirm) {
-        if (QMessageBox::warning(this,tr("Save Changes"),
-               tr("There are changes in the settings, do you want to save them before swtich to other page?"),
-               QMessageBox::Yes, QMessageBox::No)!=QMessageBox::Yes) {
-            return;
-        }
+        const auto choice = QMessageBox::question(this, tr("Save Changes"), tr("Save changes before switching to another preference page?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (choice == QMessageBox::Cancel) return false;
+        if (choice == QMessageBox::Discard) { widget->load(); return true; }
     }
-    pWidget->save();
+    if (!widget->save()) return false;
+    if (pSettings->sync() != QSettings::NoError) {
+        widget->setSettingsChanged();
+        QMessageBox::warning(this, tr("Save Error"), tr("Preferences could not be written to disk. Your changes are still available; check the configuration folder permissions and retry."));
+        return false;
+    }
+    return true;
 }
 
 void SettingsDialog::closeEvent(QCloseEvent *event)
@@ -388,25 +398,35 @@ void SettingsDialog::closeAndQuit()
     close();
 }
 
-void SettingsDialog::showWidget(const QModelIndex &index)
+bool SettingsDialog::showWidget(const QModelIndex &index)
 {
-    if (!index.isValid())
-        return;
-    int i = index.data(GetWidgetIndexRole).toInt();
-    if (i>=0) {
-        saveCurrentPageSettings(true);
-        SettingsWidget* pWidget = mSettingWidgets[i];
-        if (ui->scrollArea->widget()!=nullptr) {
-            QWidget* w = ui->scrollArea->takeWidget();
-            w->setParent(nullptr);
-        }
-        ui->scrollArea->setWidget(pWidget);
-        ui->lblWidgetCaption->setText(QString("%1 > %2").arg(pWidget->group()).arg(pWidget->name()));
-
-        ui->btnApply->setEnabled(false);
-    } else if (model.hasChildren(index)) {
+    if (!index.isValid()) return true;
+    const auto source = mFilter->mapToSource(index);
+    const int i = source.data(GetWidgetIndexRole).toInt();
+    if (i < 0) {
         ui->widgetsView->expand(index);
-        QModelIndex childIndex = this->model.index(0,0,index);
-        emit ui->widgetsView->clicked(childIndex);
+        const auto child = mFilter->index(0, 0, index);
+        if (child.isValid()) ui->widgetsView->setCurrentIndex(child);
+        return true;
+    }
+    if (i >= mSettingWidgets.size() || ui->scrollArea->widget() == mSettingWidgets[i]) return true;
+    if (!saveCurrentPageSettings(true)) return false;
+    try {
+        if (!mSettingWidgets[i]) mSettingWidgets[i] = mFactories[i]();
+        auto *widget = mSettingWidgets[i];
+        if (!mInitialized.contains(widget)) {
+            widget->init(); mInitialized.insert(widget);
+            connect(widget, &SettingsWidget::settingsChanged, this, &SettingsDialog::widget_settings_changed);
+        }
+        if (auto *old = ui->scrollArea->takeWidget()) {
+            if (old == ui->scrollAreaWidgetContents) { delete old; ui->scrollAreaWidgetContents = nullptr; }
+            else old->setParent(nullptr);
+        }
+        ui->scrollArea->setWidget(widget);
+        ui->lblWidgetCaption->setText(QString("%1 > %2").arg(widget->group(), widget->name()));
+        ui->btnApply->setEnabled(false);
+        return true;
+    } catch (const FileError &error) {
+        QMessageBox::warning(this, tr("Load Error"), error.reason()); return false;
     }
 }

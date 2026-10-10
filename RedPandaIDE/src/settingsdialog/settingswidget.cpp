@@ -53,9 +53,9 @@ void SettingsWidget::load()
 {
     try {
         disconnectInputs();
+        auto reconnect = finally([this] { connectInputs(); });
         doLoad();
         clearSettingsChanged();
-        connectInputs();
         onLoaded();
     } catch (FileError & e) {
         QMessageBox::warning(nullptr,
@@ -64,15 +64,17 @@ void SettingsWidget::load()
     }
 }
 
-void SettingsWidget::save()
+bool SettingsWidget::save()
 {
     try {
         doSave();
         clearSettingsChanged();
+        return true;
     } catch (FileError & e) {
         QMessageBox::warning(nullptr,
                          tr("Save Error"),
                          e.reason());
+        return false;
     }
 }
 
@@ -143,7 +145,7 @@ void SettingsWidget::disconnectInputs()
         disconnect(p, &QLineEdit::textChanged, this, &SettingsWidget::setSettingsChanged);
     }
     for (QCheckBox* p:findChildren<QCheckBox*>()) {
-        disconnect(p, &QCheckBox::stateChanged, this, &SettingsWidget::setSettingsChanged);
+        disconnect(p, &QCheckBox::toggled, this, &SettingsWidget::setSettingsChanged);
     }
     for (QRadioButton* p:findChildren<QRadioButton*>()) {
         disconnect(p, &QRadioButton::toggled, this, &SettingsWidget::setSettingsChanged);
@@ -194,6 +196,7 @@ bool SettingsWidget::isSettingsChanged()
 
 void SettingsWidget::setSettingsChanged()
 {
+    if (mSettingsChanged) return;
     mSettingsChanged = true;
     emit settingsChanged(true);
 }

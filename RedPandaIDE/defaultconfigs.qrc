@@ -5,5 +5,7 @@
         <file alias="autolink-xdg.json">resources/autolink-xdg.json</file>
         <file alias="terminal-windows.json">resources/terminal-windows.json</file>
         <file alias="terminal-unix.json">resources/terminal-unix.json</file>
+        <file alias="gcc-it-diagnostics.json">resources/diagnostics/gcc-it.json</file>
+        <file alias="gcc-diagnostic-samples.json">test/gcc_diagnostic_samples.json</file>
     </qresource>
 </RCC>

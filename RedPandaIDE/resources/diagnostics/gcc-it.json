@@ -1,0 +1,1822 @@
+{
+  "schemaVersion": 1,
+  "language": "it",
+  "engine": "gcc",
+  "revision": "2026-10-10",
+  "rules": [
+    {
+      "id": "undeclared-suggestion",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) was not declared in this scope; did you mean (['‘`][^'’\\r\\n]+['’])\\?$",
+      "italian": "{1} non è stato dichiarato in questo ambito. Intendevi {2}?",
+      "examples": [
+        {
+          "original": "'cout' was not declared in this scope; did you mean 'std::cout'?",
+          "italian": "'cout' non è stato dichiarato in questo ambito. Intendevi 'std::cout'?"
+        }
+      ]
+    },
+    {
+      "id": "undeclared-scope",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) was not declared in this scope$",
+      "italian": "{1} non è stato dichiarato in questo ambito.",
+      "examples": [
+        {
+          "original": "'numero' was not declared in this scope",
+          "italian": "'numero' non è stato dichiarato in questo ambito."
+        }
+      ]
+    },
+    {
+      "id": "undeclared-c",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) undeclared \\(first use in this function\\)$",
+      "italian": "{1} non è stato dichiarato: questo è il primo uso nella funzione.",
+      "examples": [
+        {
+          "original": "'valore' undeclared (first use in this function)",
+          "italian": "'valore' non è stato dichiarato: questo è il primo uso nella funzione."
+        }
+      ]
+    },
+    {
+      "id": "missing-file",
+      "pattern": "^([^\\r\\n]+): No such file or directory$",
+      "italian": "File o cartella non trovato: {1}.",
+      "examples": [
+        {
+          "original": "mio_header.h: No such file or directory",
+          "italian": "File o cartella non trovato: mio_header.h."
+        }
+      ]
+    },
+    {
+      "id": "expected-before",
+      "pattern": "^expected (['‘`][^'’\\r\\n]+['’]) before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "Manca {1} prima di {2}.",
+      "examples": [
+        {
+          "original": "expected ';' before '}' token",
+          "italian": "Manca ';' prima di '}'."
+        }
+      ]
+    },
+    {
+      "id": "expected-end",
+      "pattern": "^expected (['‘`][^'’\\r\\n]+['’]) at end of input$",
+      "italian": "Manca {1} alla fine del file.",
+      "examples": [
+        {
+          "original": "expected '}' at end of input",
+          "italian": "Manca '}' alla fine del file."
+        }
+      ]
+    },
+    {
+      "id": "expected-unqualified",
+      "pattern": "^expected unqualified-id before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "È richiesto un identificatore non qualificato prima di {1}.",
+      "examples": [
+        {
+          "original": "expected unqualified-id before ')' token",
+          "italian": "È richiesto un identificatore non qualificato prima di ')'."
+        }
+      ]
+    },
+    {
+      "id": "expected-expression",
+      "pattern": "^expected primary-expression before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "È richiesta un’espressione prima di {1}.",
+      "examples": [
+        {
+          "original": "expected primary-expression before ';' token",
+          "italian": "È richiesta un’espressione prima di ';'."
+        }
+      ]
+    },
+    {
+      "id": "expected-identifier",
+      "pattern": "^expected identifier before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "È richiesto un identificatore prima di {1}.",
+      "examples": [
+        {
+          "original": "expected identifier before '}' token",
+          "italian": "È richiesto un identificatore prima di '}'."
+        }
+      ]
+    },
+    {
+      "id": "expected-initializer",
+      "pattern": "^expected initializer before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "È richiesta un’inizializzazione prima di {1}.",
+      "examples": [
+        {
+          "original": "expected initializer before 'int'",
+          "italian": "È richiesta un’inizializzazione prima di 'int'."
+        }
+      ]
+    },
+    {
+      "id": "expected-declaration",
+      "pattern": "^expected declaration before (['‘`][^'’\\r\\n]+['’])(?: token)?$",
+      "italian": "È richiesta una dichiarazione prima di {1}.",
+      "examples": [
+        {
+          "original": "expected declaration before '}' token",
+          "italian": "È richiesta una dichiarazione prima di '}'."
+        }
+      ]
+    },
+    {
+      "id": "type-suggestion",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) does not name a type; did you mean (['‘`][^'’\\r\\n]+['’])\\?$",
+      "italian": "{1} non identifica un tipo. Intendevi {2}?",
+      "examples": [
+        {
+          "original": "'string' does not name a type; did you mean 'stdin'?",
+          "italian": "'string' non identifica un tipo. Intendevi 'stdin'?"
+        }
+      ]
+    },
+    {
+      "id": "not-type",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) does not name a type$",
+      "italian": "{1} non identifica un tipo.",
+      "examples": [
+        {
+          "original": "'Widget' does not name a type",
+          "italian": "'Widget' non identifica un tipo."
+        }
+      ]
+    },
+    {
+      "id": "unknown-type",
+      "pattern": "^unknown type name (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Tipo sconosciuto: {1}.",
+      "examples": [
+        {
+          "original": "unknown type name 'Widget'",
+          "italian": "Tipo sconosciuto: 'Widget'."
+        }
+      ]
+    },
+    {
+      "id": "redefinition",
+      "pattern": "^redefinition of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} è stato definito più di una volta.",
+      "examples": [
+        {
+          "original": "redefinition of 'int totale'",
+          "italian": "'int totale' è stato definito più di una volta."
+        }
+      ]
+    },
+    {
+      "id": "conflicting-types-have",
+      "pattern": "^conflicting types for (['‘`][^'’\\r\\n]+['’]); have (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Dichiarazioni con tipi incompatibili per {1}; il tipo di questa dichiarazione è {2}.",
+      "examples": [
+        {
+          "original": "conflicting types for 'calcola'; have 'void(int)'",
+          "italian": "Dichiarazioni con tipi incompatibili per 'calcola'; il tipo di questa dichiarazione è 'void(int)'."
+        }
+      ]
+    },
+    {
+      "id": "conflicting-types",
+      "pattern": "^conflicting types for (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Dichiarazioni con tipi incompatibili per {1}.",
+      "examples": [
+        {
+          "original": "conflicting types for 'calcola'",
+          "italian": "Dichiarazioni con tipi incompatibili per 'calcola'."
+        }
+      ]
+    },
+    {
+      "id": "invalid-conversion",
+      "pattern": "^invalid conversion from (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Conversione non valida da {1} a {2}.",
+      "examples": [
+        {
+          "original": "invalid conversion from 'const char*' to 'int'",
+          "italian": "Conversione non valida da 'const char*' a 'int'."
+        }
+      ]
+    },
+    {
+      "id": "cannot-convert-initialization",
+      "pattern": "^cannot convert (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’]) in initialization$",
+      "italian": "Impossibile convertire {1} in {2} durante l’inizializzazione.",
+      "examples": [
+        {
+          "original": "cannot convert 'const char*' to 'int' in initialization",
+          "italian": "Impossibile convertire 'const char*' in 'int' durante l’inizializzazione."
+        }
+      ]
+    },
+    {
+      "id": "cannot-convert-return",
+      "pattern": "^cannot convert (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’]) in return$",
+      "italian": "Impossibile convertire {1} in {2} nel valore restituito.",
+      "examples": [
+        {
+          "original": "cannot convert 'const char*' to 'int' in return",
+          "italian": "Impossibile convertire 'const char*' in 'int' nel valore restituito."
+        }
+      ]
+    },
+    {
+      "id": "invalid-binary-operands",
+      "pattern": "^invalid operands of types (['‘`][^'’\\r\\n]+['’]) and (['‘`][^'’\\r\\n]+['’]) to binary (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’operatore binario {3} non può essere applicato ai tipi {1} e {2}.",
+      "examples": [
+        {
+          "original": "invalid operands of types 'int' and 'double' to binary 'operator%'",
+          "italian": "L’operatore binario 'operator%' non può essere applicato ai tipi 'int' e 'double'."
+        }
+      ]
+    },
+    {
+      "id": "no-matching-function",
+      "pattern": "^no matching function for call to (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Nessuna funzione compatibile con la chiamata {1}.",
+      "examples": [
+        {
+          "original": "no matching function for call to 'calcola(int)'",
+          "italian": "Nessuna funzione compatibile con la chiamata 'calcola(int)'."
+        }
+      ]
+    },
+    {
+      "id": "too-many-arguments",
+      "pattern": "^too many arguments to function (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Troppi argomenti nella chiamata alla funzione {1}.",
+      "examples": [
+        {
+          "original": "too many arguments to function 'void aggiorna()'",
+          "italian": "Troppi argomenti nella chiamata alla funzione 'void aggiorna()'."
+        }
+      ]
+    },
+    {
+      "id": "too-few-arguments",
+      "pattern": "^too few arguments to function (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Mancano argomenti nella chiamata alla funzione {1}.",
+      "examples": [
+        {
+          "original": "too few arguments to function 'void aggiorna(int)'",
+          "italian": "Mancano argomenti nella chiamata alla funzione 'void aggiorna(int)'."
+        }
+      ]
+    },
+    {
+      "id": "assignment-lvalue",
+      "pattern": "^lvalue required as left operand of assignment$",
+      "italian": "Il lato sinistro dell’assegnazione deve essere un lvalue modificabile.",
+      "examples": [
+        {
+          "original": "lvalue required as left operand of assignment",
+          "italian": "Il lato sinistro dell’assegnazione deve essere un lvalue modificabile."
+        }
+      ]
+    },
+    {
+      "id": "readonly-assignment",
+      "pattern": "^assignment of read-only variable (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Non è possibile assegnare un valore alla variabile di sola lettura {1}.",
+      "examples": [
+        {
+          "original": "assignment of read-only variable 'limite'",
+          "italian": "Non è possibile assegnare un valore alla variabile di sola lettura 'limite'."
+        }
+      ]
+    },
+    {
+      "id": "member-nonclass",
+      "pattern": "^request for member (['‘`][^'’\\r\\n]+['’]) in (['‘`][^'’\\r\\n]+['’]), which is of non-class type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il membro {1} è richiesto su {2}, ma il suo tipo {3} non è una classe o una struttura.",
+      "examples": [
+        {
+          "original": "request for member 'size' in 'numero', which is of non-class type 'int'",
+          "italian": "Il membro 'size' è richiesto su 'numero', ma il suo tipo 'int' non è una classe o una struttura."
+        }
+      ]
+    },
+    {
+      "id": "missing-member",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) has no member named (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il tipo {1} non ha un membro chiamato {2}.",
+      "examples": [
+        {
+          "original": "'struct Punto' has no member named 'z'",
+          "italian": "Il tipo 'struct Punto' non ha un membro chiamato 'z'."
+        }
+      ]
+    },
+    {
+      "id": "abstract-variable",
+      "pattern": "^cannot declare variable (['‘`][^'’\\r\\n]+['’]) to be of abstract type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Impossibile dichiarare la variabile {1}: il tipo {2} è astratto.",
+      "examples": [
+        {
+          "original": "cannot declare variable 'forma' to be of abstract type 'Forma'",
+          "italian": "Impossibile dichiarare la variabile 'forma': il tipo 'Forma' è astratto."
+        }
+      ]
+    },
+    {
+      "id": "static-assert-reason",
+      "pattern": "^static assertion failed: ([^\\r\\n]+)$",
+      "italian": "Verifica static_assert non soddisfatta: {1}.",
+      "examples": [
+        {
+          "original": "static assertion failed: Dimensione non valida",
+          "italian": "Verifica static_assert non soddisfatta: Dimensione non valida."
+        }
+      ]
+    },
+    {
+      "id": "static-assert",
+      "pattern": "^static assertion failed$",
+      "italian": "Verifica static_assert non soddisfatta.",
+      "examples": [
+        {
+          "original": "static assertion failed",
+          "italian": "Verifica static_assert non soddisfatta."
+        }
+      ]
+    },
+    {
+      "id": "undefined-reference",
+      "pattern": "^undefined reference to (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il linker non trova una definizione del simbolo {1}.",
+      "examples": [
+        {
+          "original": "undefined reference to `calcola(int)'",
+          "italian": "Il linker non trova una definizione del simbolo `calcola(int)'."
+        }
+      ]
+    },
+    {
+      "id": "multiple-definition",
+      "pattern": "^multiple definition of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il linker ha trovato più definizioni del simbolo {1}.",
+      "examples": [
+        {
+          "original": "multiple definition of `totale'",
+          "italian": "Il linker ha trovato più definizioni del simbolo `totale'."
+        }
+      ]
+    },
+    {
+      "id": "unused-variable",
+      "pattern": "^unused variable (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La variabile {1} non viene usata.",
+      "examples": [
+        {
+          "original": "unused variable 'risultato'",
+          "italian": "La variabile 'risultato' non viene usata."
+        }
+      ]
+    },
+    {
+      "id": "unused-parameter",
+      "pattern": "^unused parameter (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il parametro {1} non viene usato.",
+      "examples": [
+        {
+          "original": "unused parameter 'argc'",
+          "italian": "Il parametro 'argc' non viene usato."
+        }
+      ]
+    },
+    {
+      "id": "unused-function",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) defined but not used$",
+      "italian": "{1} è stato definito ma non viene usato.",
+      "examples": [
+        {
+          "original": "'void helper()' defined but not used",
+          "italian": "'void helper()' è stato definito ma non viene usato."
+        }
+      ]
+    },
+    {
+      "id": "set-unused-variable",
+      "pattern": "^variable (['‘`][^'’\\r\\n]+['’]) set but not used$",
+      "italian": "Alla variabile {1} viene assegnato un valore, che poi non viene usato.",
+      "examples": [
+        {
+          "original": "variable 'risultato' set but not used",
+          "italian": "Alla variabile 'risultato' viene assegnato un valore, che poi non viene usato."
+        }
+      ]
+    },
+    {
+      "id": "signedness-comparison",
+      "pattern": "^comparison of integer expressions of different signedness: (['‘`][^'’\\r\\n]+['’]) and (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Confronto tra interi con segno diverso: {1} e {2}.",
+      "examples": [
+        {
+          "original": "comparison of integer expressions of different signedness: 'int' and 'unsigned int'",
+          "italian": "Confronto tra interi con segno diverso: 'int' e 'unsigned int'."
+        }
+      ]
+    },
+    {
+      "id": "implicit-function",
+      "pattern": "^implicit declaration of function (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La funzione {1} viene usata senza una dichiarazione precedente.",
+      "examples": [
+        {
+          "original": "implicit declaration of function 'calcola'",
+          "italian": "La funzione 'calcola' viene usata senza una dichiarazione precedente."
+        }
+      ]
+    },
+    {
+      "id": "nonvoid-end",
+      "pattern": "^control reaches end of non-void function$",
+      "italian": "Una funzione con valore di ritorno può terminare senza restituire un valore.",
+      "examples": [
+        {
+          "original": "control reaches end of non-void function",
+          "italian": "Una funzione con valore di ritorno può terminare senza restituire un valore."
+        }
+      ]
+    },
+    {
+      "id": "missing-return",
+      "pattern": "^no return statement in function returning non-void$",
+      "italian": "Manca un’istruzione return in una funzione che deve restituire un valore.",
+      "examples": [
+        {
+          "original": "no return statement in function returning non-void",
+          "italian": "Manca un’istruzione return in una funzione che deve restituire un valore."
+        }
+      ]
+    },
+    {
+      "id": "return-no-value-cpp",
+      "pattern": "^return-statement with no value, in function returning (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’istruzione return deve restituire un valore di tipo {1}.",
+      "examples": [
+        {
+          "original": "return-statement with no value, in function returning 'int'",
+          "italian": "L’istruzione return deve restituire un valore di tipo 'int'."
+        },
+        {
+          "original": "return-statement with no value, in function returning ‘std::pair<int, long int>’",
+          "italian": "L’istruzione return deve restituire un valore di tipo ‘std::pair<int, long int>’."
+        }
+      ]
+    },
+    {
+      "id": "return-no-value-c",
+      "pattern": "^(?:return|['‘`]return['’]) with no value, in function returning non-void$",
+      "italian": "L’istruzione return deve restituire un valore: la funzione non è di tipo void.",
+      "examples": [
+        {
+          "original": "'return' with no value, in function returning non-void",
+          "italian": "L’istruzione return deve restituire un valore: la funzione non è di tipo void."
+        },
+        {
+          "original": "return with no value, in function returning non-void",
+          "italian": "L’istruzione return deve restituire un valore: la funzione non è di tipo void."
+        }
+      ]
+    },
+    {
+      "id": "deprecated-reason",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is deprecated: ([^\\r\\n]+)$",
+      "italian": "{1} è deprecato: {2}.",
+      "examples": [
+        {
+          "original": "'void vecchia()' is deprecated: use nuova()",
+          "italian": "'void vecchia()' è deprecato: use nuova()."
+        }
+      ]
+    },
+    {
+      "id": "deprecated",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is deprecated$",
+      "italian": "{1} è deprecato.",
+      "examples": [
+        {
+          "original": "'void vecchia()' is deprecated",
+          "italian": "'void vecchia()' è deprecato."
+        }
+      ]
+    },
+    {
+      "id": "no-effect",
+      "pattern": "^statement has no effect$",
+      "italian": "Questa istruzione non produce alcun effetto.",
+      "examples": [
+        {
+          "original": "statement has no effect",
+          "italian": "Questa istruzione non produce alcun effetto."
+        }
+      ]
+    },
+    {
+      "id": "misleading-indentation",
+      "pattern": "^this (['‘`][^'’\\r\\n]+['’]) clause does not guard(?:\\.\\.\\.|…)$",
+      "italian": "Il rientro è fuorviante: le istruzioni successive non sono tutte controllate da {1}.",
+      "examples": [
+        {
+          "original": "this 'if' clause does not guard...",
+          "italian": "Il rientro è fuorviante: le istruzioni successive non sono tutte controllate da 'if'."
+        }
+      ]
+    },
+    {
+      "id": "assignment-condition",
+      "pattern": "^suggest parentheses around assignment used as truth value$",
+      "italian": "Un’assegnazione viene usata come condizione: racchiudila tra parentesi se è intenzionale.",
+      "examples": [
+        {
+          "original": "suggest parentheses around assignment used as truth value",
+          "italian": "Un’assegnazione viene usata come condizione: racchiudila tra parentesi se è intenzionale."
+        }
+      ]
+    },
+    {
+      "id": "maybe-uninitialized",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) may be used uninitialized$",
+      "italian": "{1} potrebbe essere usato prima di essere inizializzato.",
+      "examples": [
+        {
+          "original": "'valore' may be used uninitialized",
+          "italian": "'valore' potrebbe essere usato prima di essere inizializzato."
+        }
+      ]
+    },
+    {
+      "id": "uninitialized",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is used uninitialized$",
+      "italian": "{1} viene usato prima di essere inizializzato.",
+      "examples": [
+        {
+          "original": "'valore' is used uninitialized",
+          "italian": "'valore' viene usato prima di essere inizializzato."
+        }
+      ]
+    },
+    {
+      "id": "expected-after-struct",
+      "pattern": "^expected (['‘`][^'’\\r\\n]+['’]) after struct definition$",
+      "italian": "Manca {1} dopo la definizione della struct.",
+      "examples": [
+        {
+          "original": "expected ';' after struct definition",
+          "italian": "Manca ';' dopo la definizione della struct."
+        }
+      ]
+    },
+    {
+      "id": "else-without-if",
+      "pattern": "^['‘`]else['’] without a previous ['‘`]if['’]$",
+      "italian": "else deve essere associato a un if precedente.",
+      "examples": [
+        {
+          "original": "'else' without a previous 'if'",
+          "italian": "else deve essere associato a un if precedente."
+        }
+      ]
+    },
+    {
+      "id": "break-outside",
+      "pattern": "^break statement not within loop or switch$",
+      "italian": "break può essere usato soltanto dentro un ciclo o uno switch.",
+      "examples": [
+        {
+          "original": "break statement not within loop or switch",
+          "italian": "break può essere usato soltanto dentro un ciclo o uno switch."
+        }
+      ]
+    },
+    {
+      "id": "continue-outside",
+      "pattern": "^continue statement not within a loop$",
+      "italian": "continue può essere usato soltanto dentro un ciclo.",
+      "examples": [
+        {
+          "original": "continue statement not within a loop",
+          "italian": "continue può essere usato soltanto dentro un ciclo."
+        }
+      ]
+    },
+    {
+      "id": "case-outside-value",
+      "pattern": "^case label (['‘`][^'’\\r\\n]+['’]) not within a switch statement$",
+      "italian": "L’etichetta case {1} deve trovarsi dentro uno switch.",
+      "examples": [
+        {
+          "original": "case label '1' not within a switch statement",
+          "italian": "L’etichetta case '1' deve trovarsi dentro uno switch."
+        }
+      ]
+    },
+    {
+      "id": "case-outside",
+      "pattern": "^case label not within a switch statement$",
+      "italian": "Un’etichetta case o default deve trovarsi dentro uno switch.",
+      "examples": [
+        {
+          "original": "case label not within a switch statement",
+          "italian": "Un’etichetta case o default deve trovarsi dentro uno switch."
+        }
+      ]
+    },
+    {
+      "id": "duplicate-case",
+      "pattern": "^duplicate case value$",
+      "italian": "Lo stesso valore compare in più etichette case dello switch.",
+      "examples": [
+        {
+          "original": "duplicate case value",
+          "italian": "Lo stesso valore compare in più etichette case dello switch."
+        }
+      ]
+    },
+    {
+      "id": "duplicate-default",
+      "pattern": "^multiple default labels in one switch$",
+      "italian": "Uno switch può contenere una sola etichetta default.",
+      "examples": [
+        {
+          "original": "multiple default labels in one switch",
+          "italian": "Uno switch può contenere una sola etichetta default."
+        }
+      ]
+    },
+    {
+      "id": "jump-to-case",
+      "pattern": "^jump to case label$",
+      "italian": "Il salto all’etichetta case non è consentito in questo punto.",
+      "examples": [
+        {
+          "original": "jump to case label",
+          "italian": "Il salto all’etichetta case non è consentito in questo punto."
+        }
+      ]
+    },
+    {
+      "id": "undefined-label",
+      "pattern": "^label (['‘`][^'’\\r\\n]+['’]) used but not defined$",
+      "italian": "L’etichetta {1} viene usata ma non è stata definita.",
+      "examples": [
+        {
+          "original": "label 'fine' used but not defined",
+          "italian": "L’etichetta 'fine' viene usata ma non è stata definita."
+        }
+      ]
+    },
+    {
+      "id": "duplicate-label",
+      "pattern": "^duplicate label (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’etichetta {1} è stata definita più volte.",
+      "examples": [
+        {
+          "original": "duplicate label 'fine'",
+          "italian": "L’etichetta 'fine' è stata definita più volte."
+        }
+      ]
+    },
+    {
+      "id": "return-value-void-cpp",
+      "pattern": "^return-statement with a value, in function returning (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’istruzione return contiene un valore, ma la funzione restituisce {1}.",
+      "examples": [
+        {
+          "original": "return-statement with a value, in function returning 'void'",
+          "italian": "L’istruzione return contiene un valore, ma la funzione restituisce 'void'."
+        }
+      ]
+    },
+    {
+      "id": "return-value-void-c",
+      "pattern": "^(?:return|['‘`]return['’]) with a value, in function returning void$",
+      "italian": "Una funzione void non può restituire un valore con return.",
+      "examples": [
+        {
+          "original": "'return' with a value, in function returning void",
+          "italian": "Una funzione void non può restituire un valore con return."
+        }
+      ]
+    },
+    {
+      "id": "main-return-type",
+      "pattern": "^['‘`]::main['’] must return ['‘`]int['’]$",
+      "italian": "La funzione main deve restituire un valore di tipo int.",
+      "examples": [
+        {
+          "original": "'::main' must return 'int'",
+          "italian": "La funzione main deve restituire un valore di tipo int."
+        }
+      ]
+    },
+    {
+      "id": "namespace-member-suggestion",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is not a member of (['‘`][^'’\\r\\n]+['’]); did you mean (['‘`][^'’\\r\\n]+['’])\\?$",
+      "italian": "{1} non è un membro di {2}. Intendevi {3}?",
+      "examples": [
+        {
+          "original": "'cotu' is not a member of 'std'; did you mean 'cout'?",
+          "italian": "'cotu' non è un membro di 'std'. Intendevi 'cout'?"
+        }
+      ]
+    },
+    {
+      "id": "namespace-member",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is not a member of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} non è un membro di {2}.",
+      "examples": [
+        {
+          "original": "'cout' is not a member of 'std'",
+          "italian": "'cout' non è un membro di 'std'."
+        }
+      ]
+    },
+    {
+      "id": "member-suggestion",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) has no member named (['‘`][^'’\\r\\n]+['’]); did you mean (['‘`][^'’\\r\\n]+['’])\\?$",
+      "italian": "{1} non ha un membro chiamato {2}. Intendevi {3}?",
+      "examples": [
+        {
+          "original": "'std::string' {aka 'class std::__cxx11::basic_string<char>'} has no member named 'lenght'; did you mean 'length'?",
+          "italian": "'std::string' {aka 'class std::__cxx11::basic_string<char>'} non ha un membro chiamato 'lenght'. Intendevi 'length'?"
+        }
+      ]
+    },
+    {
+      "id": "missing-member-alias",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) has no member named (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} non ha un membro chiamato {2}.",
+      "examples": [
+        {
+          "original": "'std::string' {aka 'class std::__cxx11::basic_string<char>'} has no member named 'numero'",
+          "italian": "'std::string' {aka 'class std::__cxx11::basic_string<char>'} non ha un membro chiamato 'numero'."
+        }
+      ]
+    },
+    {
+      "id": "private-member",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is private within this context$",
+      "italian": "{1} è privato e non è accessibile in questo punto.",
+      "examples": [
+        {
+          "original": "'int Punto::x' is private within this context",
+          "italian": "'int Punto::x' è privato e non è accessibile in questo punto."
+        }
+      ]
+    },
+    {
+      "id": "protected-member",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is protected within this context$",
+      "italian": "{1} è protetto e non è accessibile in questo punto.",
+      "examples": [
+        {
+          "original": "'int Punto::x' is protected within this context",
+          "italian": "'int Punto::x' è protetto e non è accessibile in questo punto."
+        }
+      ]
+    },
+    {
+      "id": "deleted-function",
+      "pattern": "^use of deleted function (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La funzione {1} non può essere usata perché è stata eliminata, esplicitamente o dal compilatore.",
+      "examples": [
+        {
+          "original": "use of deleted function 'S::S(const S&)'",
+          "italian": "La funzione 'S::S(const S&)' non può essere usata perché è stata eliminata, esplicitamente o dal compilatore."
+        }
+      ]
+    },
+    {
+      "id": "incomplete-variable",
+      "pattern": "^aggregate (['‘`][^'’\\r\\n]+['’]) has incomplete type and cannot be defined$",
+      "italian": "Impossibile definire {1}: il suo tipo è incompleto.",
+      "examples": [
+        {
+          "original": "aggregate 'S valore' has incomplete type and cannot be defined",
+          "italian": "Impossibile definire 'S valore': il suo tipo è incompleto."
+        }
+      ]
+    },
+    {
+      "id": "incomplete-type-use",
+      "pattern": "^invalid use of incomplete type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il tipo {1} è incompleto e non può essere usato in questo modo.",
+      "examples": [
+        {
+          "original": "invalid use of incomplete type 'class S'",
+          "italian": "Il tipo 'class S' è incompleto e non può essere usato in questo modo."
+        }
+      ]
+    },
+    {
+      "id": "incomplete-sizeof",
+      "pattern": "^invalid application of (['‘`][^'’\\r\\n]+['’]) to incomplete type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Impossibile applicare {1} al tipo incompleto {2}.",
+      "examples": [
+        {
+          "original": "invalid application of 'sizeof' to incomplete type 'S'",
+          "italian": "Impossibile applicare 'sizeof' al tipo incompleto 'S'."
+        }
+      ]
+    },
+    {
+      "id": "reference-rvalue",
+      "pattern": "^cannot bind non-const lvalue reference of type (['‘`][^'’\\r\\n]+['’]) to an rvalue of type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Un riferimento lvalue non const di tipo {1} non può riferirsi a un valore temporaneo di tipo {2}.",
+      "examples": [
+        {
+          "original": "cannot bind non-const lvalue reference of type 'int&' to an rvalue of type 'int'",
+          "italian": "Un riferimento lvalue non const di tipo 'int&' non può riferirsi a un valore temporaneo di tipo 'int'."
+        }
+      ]
+    },
+    {
+      "id": "reference-discards-qualifiers",
+      "pattern": "^binding reference of type (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’]) discards qualifiers$",
+      "italian": "Associare il riferimento di tipo {1} a {2} elimina qualificatori come const.",
+      "examples": [
+        {
+          "original": "binding reference of type 'int&' to 'const int' discards qualifiers",
+          "italian": "Associare il riferimento di tipo 'int&' a 'const int' elimina qualificatori come const."
+        }
+      ]
+    },
+    {
+      "id": "this-discards-qualifiers",
+      "pattern": "^passing (['‘`][^'’\\r\\n]+['’]) as (['‘`][^'’\\r\\n]+['’]) argument discards qualifiers$",
+      "italian": "Usare {1} come argomento {2} elimina qualificatori come const.",
+      "examples": [
+        {
+          "original": "passing 'const S' as 'this' argument discards qualifiers",
+          "italian": "Usare 'const S' come argomento 'this' elimina qualificatori come const."
+        }
+      ]
+    },
+    {
+      "id": "ambiguous-call",
+      "pattern": "^call of overloaded (['‘`][^'’\\r\\n]+['’]) is ambiguous$",
+      "italian": "La chiamata a {1} è ambigua: più overload risultano applicabili.",
+      "examples": [
+        {
+          "original": "call of overloaded 'f(int)' is ambiguous",
+          "italian": "La chiamata a 'f(int)' è ambigua: più overload risultano applicabili."
+        }
+      ]
+    },
+    {
+      "id": "narrowing",
+      "pattern": "^narrowing conversion of (['‘`][^'’\\r\\n]+['’]) from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) to (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)$",
+      "italian": "La conversione di {1} da {2} a {3} può perdere informazioni e non è ammessa in questa inizializzazione.",
+      "examples": [
+        {
+          "original": "narrowing conversion of '2.5e+0' from 'double' to 'int'",
+          "italian": "La conversione di '2.5e+0' da 'double' a 'int' può perdere informazioni e non è ammessa in questa inizializzazione."
+        },
+        {
+          "original": "narrowing conversion of '-2' from 'int' to 'long long unsigned int'",
+          "italian": "La conversione di '-2' da 'int' a 'long long unsigned int' può perdere informazioni e non è ammessa in questa inizializzazione."
+        }
+      ]
+    },
+    {
+      "id": "nonstatic-member",
+      "pattern": "^invalid use of non-static data member (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il membro {1} non è static e deve essere usato tramite un oggetto.",
+      "examples": [
+        {
+          "original": "invalid use of non-static data member 'S::x'",
+          "italian": "Il membro 'S::x' non è static e deve essere usato tramite un oggetto."
+        }
+      ]
+    },
+    {
+      "id": "method-without-object",
+      "pattern": "^cannot call member function (['‘`][^'’\\r\\n]+['’]) without object$",
+      "italian": "La funzione membro {1} richiede un oggetto su cui essere chiamata.",
+      "examples": [
+        {
+          "original": "cannot call member function 'int S::f()' without object",
+          "italian": "La funzione membro 'int S::f()' richiede un oggetto su cui essere chiamata."
+        }
+      ]
+    },
+    {
+      "id": "this-outside-member",
+      "pattern": "^invalid use of ['‘`]this['’] in non-member function$",
+      "italian": "this può essere usato soltanto in una funzione membro non static.",
+      "examples": [
+        {
+          "original": "invalid use of 'this' in non-member function",
+          "italian": "this può essere usato soltanto in una funzione membro non static."
+        }
+      ]
+    },
+    {
+      "id": "const-uninitialized",
+      "pattern": "^uninitialized (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} deve essere inizializzato alla dichiarazione.",
+      "examples": [
+        {
+          "original": "uninitialized 'const n'",
+          "italian": "'const n' deve essere inizializzato alla dichiarazione."
+        }
+      ]
+    },
+    {
+      "id": "reference-uninitialized",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) declared as reference but not initialized$",
+      "italian": "Il riferimento {1} deve essere inizializzato alla dichiarazione.",
+      "examples": [
+        {
+          "original": "'r' declared as reference but not initialized",
+          "italian": "Il riferimento 'r' deve essere inizializzato alla dichiarazione."
+        }
+      ]
+    },
+    {
+      "id": "too-many-initializers",
+      "pattern": "^too many initializers for (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)$",
+      "italian": "Sono stati forniti troppi valori di inizializzazione per {1}.",
+      "examples": [
+        {
+          "original": "too many initializers for 'int [2]'",
+          "italian": "Sono stati forniti troppi valori di inizializzazione per 'int [2]'."
+        }
+      ]
+    },
+    {
+      "id": "string-initializer-long",
+      "pattern": "^initializer-string for (['‘`][^'’\\r\\n]+['’]) is too long$",
+      "italian": "La stringa di inizializzazione è troppo lunga per {1}.",
+      "examples": [
+        {
+          "original": "initializer-string for 'char [2]' is too long",
+          "italian": "La stringa di inizializzazione è troppo lunga per 'char [2]'."
+        }
+      ]
+    },
+    {
+      "id": "array-not-constant",
+      "pattern": "^size of array (['‘`][^'’\\r\\n]+['’]) is not an integral constant-expression$",
+      "italian": "La dimensione dell’array {1} deve essere una costante intera.",
+      "examples": [
+        {
+          "original": "size of array 'dati' is not an integral constant-expression",
+          "italian": "La dimensione dell’array 'dati' deve essere una costante intera."
+        }
+      ]
+    },
+    {
+      "id": "negative-array-size",
+      "pattern": "^size (['‘`][^'’\\r\\n]+['’]) of array (['‘`][^'’\\r\\n]+['’]) is negative$",
+      "italian": "La dimensione {1} dell’array {2} è negativa.",
+      "examples": [
+        {
+          "original": "size '-2' of array 'dati' is negative",
+          "italian": "La dimensione '-2' dell’array 'dati' è negativa."
+        }
+      ]
+    },
+    {
+      "id": "variable-length-array",
+      "pattern": "^ISO C\\+\\+ forbids variable length array (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’array {1} ha una dimensione variabile, non ammessa dallo standard C++.",
+      "examples": [
+        {
+          "original": "ISO C++ forbids variable length array 'dati'",
+          "italian": "L’array 'dati' ha una dimensione variabile, non ammessa dallo standard C++."
+        }
+      ]
+    },
+    {
+      "id": "division-by-zero",
+      "pattern": "^division by zero$",
+      "italian": "Divisione per zero.",
+      "examples": [
+        {
+          "original": "division by zero",
+          "italian": "Divisione per zero."
+        }
+      ]
+    },
+    {
+      "id": "array-subscript-bounds",
+      "pattern": "^array subscript (\\d+) is above array bounds of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’indice {1} supera i limiti dell’array di tipo {2}.",
+      "examples": [
+        {
+          "original": "array subscript 4 is above array bounds of 'int [2]'",
+          "italian": "L’indice 4 supera i limiti dell’array di tipo 'int [2]'."
+        }
+      ]
+    },
+    {
+      "id": "infinite-recursion",
+      "pattern": "^infinite recursion detected$",
+      "italian": "Rilevata una possibile ricorsione infinita.",
+      "examples": [
+        {
+          "original": "infinite recursion detected",
+          "italian": "Rilevata una possibile ricorsione infinita."
+        }
+      ]
+    },
+    {
+      "id": "logical-parentheses",
+      "pattern": "^suggest parentheses around (['‘`][^'’\\r\\n]+['’]) within (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Aggiungi parentesi attorno all’espressione con {1} usata insieme a {2}, per rendere chiaro l’ordine di valutazione.",
+      "examples": [
+        {
+          "original": "suggest parentheses around '&&' within '||'",
+          "italian": "Aggiungi parentesi attorno all’espressione con '&&' usata insieme a '||', per rendere chiaro l’ordine di valutazione."
+        }
+      ]
+    },
+    {
+      "id": "dangling-else",
+      "pattern": "^suggest explicit braces to avoid ambiguous ['‘`]else['’]$",
+      "italian": "Aggiungi parentesi graffe per chiarire a quale if appartiene else.",
+      "examples": [
+        {
+          "original": "suggest explicit braces to avoid ambiguous 'else'",
+          "italian": "Aggiungi parentesi graffe per chiarire a quale if appartiene else."
+        }
+      ]
+    },
+    {
+      "id": "missing-field-initializer",
+      "pattern": "^missing initializer for member (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Manca un valore di inizializzazione esplicito per il membro {1}.",
+      "examples": [
+        {
+          "original": "missing initializer for member 'S::y'",
+          "italian": "Manca un valore di inizializzazione esplicito per il membro 'S::y'."
+        }
+      ]
+    },
+    {
+      "id": "conversion-value",
+      "pattern": "^conversion from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) to (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) may change value$",
+      "italian": "La conversione da {1} a {2} può alterare il valore.",
+      "examples": [
+        {
+          "original": "conversion from 'size_t' {aka 'long long unsigned int'} to 'unsigned int' may change value",
+          "italian": "La conversione da 'size_t' {aka 'long long unsigned int'} a 'unsigned int' può alterare il valore."
+        },
+        {
+          "original": "conversion from 'double' to 'int' may change value",
+          "italian": "La conversione da 'double' a 'int' può alterare il valore."
+        },
+        {
+          "original": "conversion from 'int' to 'short int' may change value",
+          "italian": "La conversione da 'int' a 'short int' può alterare il valore."
+        }
+      ]
+    },
+    {
+      "id": "sign-conversion",
+      "pattern": "^conversion to (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) may change the sign of the result$",
+      "italian": "La conversione da {2} a {1} può cambiare il segno del risultato.",
+      "examples": [
+        {
+          "original": "conversion to 'long long unsigned int' from 'int' may change the sign of the result",
+          "italian": "La conversione da 'int' a 'long long unsigned int' può cambiare il segno del risultato."
+        },
+        {
+          "original": "conversion to 'unsigned int' from 'int' may change the sign of the result",
+          "italian": "La conversione da 'int' a 'unsigned int' può cambiare il segno del risultato."
+        }
+      ]
+    },
+    {
+      "id": "shadow-parameter",
+      "pattern": "^declaration of (['‘`][^'’\\r\\n]+['’]) shadows a parameter$",
+      "italian": "La dichiarazione di {1} nasconde un parametro con lo stesso nome.",
+      "examples": [
+        {
+          "original": "declaration of 'int x' shadows a parameter",
+          "italian": "La dichiarazione di 'int x' nasconde un parametro con lo stesso nome."
+        }
+      ]
+    },
+    {
+      "id": "shadow-member",
+      "pattern": "^declaration of (['‘`][^'’\\r\\n]+['’]) shadows a member of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La dichiarazione di {1} nasconde un membro di {2} con lo stesso nome.",
+      "examples": [
+        {
+          "original": "declaration of 'x' shadows a member of 'S'",
+          "italian": "La dichiarazione di 'x' nasconde un membro di 'S' con lo stesso nome."
+        }
+      ]
+    },
+    {
+      "id": "shadow-local",
+      "pattern": "^declaration of (['‘`][^'’\\r\\n]+['’]) shadows a previous local$",
+      "italian": "La dichiarazione di {1} nasconde una variabile locale dichiarata in precedenza.",
+      "examples": [
+        {
+          "original": "declaration of 'x' shadows a previous local",
+          "italian": "La dichiarazione di 'x' nasconde una variabile locale dichiarata in precedenza."
+        }
+      ]
+    },
+    {
+      "id": "format-type",
+      "pattern": "^format (['‘`][^'’\\r\\n]+['’]) expects argument of type (['‘`][^'’\\r\\n]+['’]), but argument (\\d+) has type (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)$",
+      "italian": "Il formato {1} richiede un argomento di tipo {2}, ma l’argomento {3} è di tipo {4}.",
+      "examples": [
+        {
+          "original": "format '%d' expects argument of type 'int', but argument 2 has type 'char *'",
+          "italian": "Il formato '%d' richiede un argomento di tipo 'int', ma l’argomento 2 è di tipo 'char *'."
+        }
+      ]
+    },
+    {
+      "id": "format-missing-argument",
+      "pattern": "^format (['‘`][^'’\\r\\n]+['’]) expects a matching (['‘`][^'’\\r\\n]+['’]) argument$",
+      "italian": "Il formato {1} richiede un argomento di tipo {2} che non è stato fornito.",
+      "examples": [
+        {
+          "original": "format '%d' expects a matching 'int' argument",
+          "italian": "Il formato '%d' richiede un argomento di tipo 'int' che non è stato fornito."
+        }
+      ]
+    },
+    {
+      "id": "format-extra-argument",
+      "pattern": "^too many arguments for format$",
+      "italian": "Sono stati forniti più argomenti di quanti ne richieda la stringa di formato.",
+      "examples": [
+        {
+          "original": "too many arguments for format",
+          "italian": "Sono stati forniti più argomenti di quanti ne richieda la stringa di formato."
+        }
+      ]
+    },
+    {
+      "id": "format-unsupported-modifier",
+      "pattern": "^ISO C does not support the (['‘`][^'’\\r\\n]+['’]) gnu_printf length modifier$",
+      "italian": "Il modificatore di lunghezza {1} di gnu_printf non è previsto dallo standard C.",
+      "examples": [
+        {
+          "original": "ISO C does not support the 'q' gnu_printf length modifier",
+          "italian": "Il modificatore di lunghezza 'q' di gnu_printf non è previsto dallo standard C."
+        }
+      ]
+    },
+    {
+      "id": "format-missing-type",
+      "pattern": "^conversion lacks type at end of format$",
+      "italian": "La specifica di conversione alla fine della stringa di formato non indica il tipo.",
+      "examples": [
+        {
+          "original": "conversion lacks type at end of format",
+          "italian": "La specifica di conversione alla fine della stringa di formato non indica il tipo."
+        }
+      ]
+    },
+    {
+      "id": "format-unknown-character",
+      "pattern": "^unknown conversion type character (['‘`][^'’\\r\\n]+['’]) in format$",
+      "italian": "Il carattere {1} non identifica una conversione valida nella stringa di formato.",
+      "examples": [
+        {
+          "original": "unknown conversion type character 'Q' in format",
+          "italian": "Il carattere 'Q' non identifica una conversione valida nella stringa di formato."
+        }
+      ]
+    },
+    {
+      "id": "ignored-nodiscard",
+      "pattern": "^ignoring return value of (['‘`][^'’\\r\\n]+['’]), declared with attribute (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il valore restituito da {1} viene ignorato, nonostante l’attributo {2}.",
+      "examples": [
+        {
+          "original": "ignoring return value of 'int risultato()', declared with attribute 'nodiscard'",
+          "italian": "Il valore restituito da 'int risultato()' viene ignorato, nonostante l’attributo 'nodiscard'."
+        }
+      ]
+    },
+    {
+      "id": "return-local-address",
+      "pattern": "^address of local variable (['‘`][^'’\\r\\n]+['’]) returned$",
+      "italian": "Viene restituito l’indirizzo della variabile locale {1}, che cessa di esistere all’uscita dalla funzione.",
+      "examples": [
+        {
+          "original": "address of local variable 'locale' returned",
+          "italian": "Viene restituito l’indirizzo della variabile locale 'locale', che cessa di esistere all’uscita dalla funzione."
+        }
+      ]
+    },
+    {
+      "id": "return-local-reference",
+      "pattern": "^reference to local variable (['‘`][^'’\\r\\n]+['’]) returned$",
+      "italian": "Viene restituito un riferimento alla variabile locale {1}, che cessa di esistere all’uscita dalla funzione.",
+      "examples": [
+        {
+          "original": "reference to local variable 'n' returned",
+          "italian": "Viene restituito un riferimento alla variabile locale 'n', che cessa di esistere all’uscita dalla funzione."
+        }
+      ]
+    },
+    {
+      "id": "use-after-free",
+      "pattern": "^pointer (['‘`][^'’\\r\\n]+['’]) used after (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Il puntatore {1} viene usato dopo che la memoria è stata liberata con {2}.",
+      "examples": [
+        {
+          "original": "pointer 'p' used after 'free'",
+          "italian": "Il puntatore 'p' viene usato dopo che la memoria è stata liberata con 'free'."
+        }
+      ]
+    },
+    {
+      "id": "memcpy-overlap",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) accessing (\\d+) bytes at offsets (\\d+) and (\\d+) overlaps (\\d+) bytes at offset (\\d+)$",
+      "italian": "{1} accede a {2} byte alle posizioni {3} e {4}, con una sovrapposizione di {5} byte alla posizione {6}.",
+      "examples": [
+        {
+          "original": "'memcpy' accessing 8 bytes at offsets 0 and 1 overlaps 7 bytes at offset 1",
+          "italian": "'memcpy' accede a 8 byte alle posizioni 0 e 1, con una sovrapposizione di 7 byte alla posizione 1."
+        }
+      ]
+    },
+    {
+      "id": "object-range-bounds",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) forming offset (\\[[0-9, -]+\\]) is out of the bounds (\\[[0-9, -]+\\]) of object (['‘`][^'’\\r\\n]+['’]) with type (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} accede all’intervallo {2}, fuori dai limiti {3} dell’oggetto {4} di tipo {5}.",
+      "examples": [
+        {
+          "original": "'__builtin_memcpy' forming offset [2, 3] is out of the bounds [0, 2] of object 'dati' with type 'char[2]'",
+          "italian": "'__builtin_memcpy' accede all’intervallo [2, 3], fuori dai limiti [0, 2] dell’oggetto 'dati' di tipo 'char[2]'."
+        }
+      ]
+    },
+    {
+      "id": "null-argument-because",
+      "pattern": "^argument (\\d+) null where non-null expected because argument (\\d+) is nonzero$",
+      "italian": "L’argomento {1} è nullo, ma deve essere valido perché l’argomento {2} è diverso da zero.",
+      "examples": [
+        {
+          "original": "argument 1 null where non-null expected because argument 3 is nonzero",
+          "italian": "L’argomento 1 è nullo, ma deve essere valido perché l’argomento 3 è diverso da zero."
+        }
+      ]
+    },
+    {
+      "id": "null-argument",
+      "pattern": "^argument (\\d+) null where non-null expected$",
+      "italian": "L’argomento {1} è nullo, ma la funzione richiede un valore non nullo.",
+      "examples": [
+        {
+          "original": "argument 1 null where non-null expected",
+          "italian": "L’argomento 1 è nullo, ma la funzione richiede un valore non nullo."
+        }
+      ]
+    },
+    {
+      "id": "integer-overflow",
+      "pattern": "^integer overflow in expression of type (['‘`][^'’\\r\\n]+['’]) results in (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "L’espressione di tipo {1} supera l’intervallo rappresentabile e produce {2}.",
+      "examples": [
+        {
+          "original": "integer overflow in expression of type 'int' results in '-2147483648'",
+          "italian": "L’espressione di tipo 'int' supera l’intervallo rappresentabile e produce '-2147483648'."
+        }
+      ]
+    },
+    {
+      "id": "unsigned-value-overflow",
+      "pattern": "^unsigned conversion from (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’]) changes value from (['‘`][^'’\\r\\n]+['’]) to (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La conversione senza segno da {1} a {2} cambia il valore da {3} a {4}.",
+      "examples": [
+        {
+          "original": "unsigned conversion from 'int' to 'unsigned char' changes value from '300' to '44'",
+          "italian": "La conversione senza segno da 'int' a 'unsigned char' cambia il valore da '300' a '44'."
+        }
+      ]
+    },
+    {
+      "id": "shift-count-negative",
+      "pattern": "^left shift count is negative$",
+      "italian": "Il numero di posizioni dello shift a sinistra è negativo.",
+      "examples": [
+        {
+          "original": "left shift count is negative",
+          "italian": "Il numero di posizioni dello shift a sinistra è negativo."
+        }
+      ]
+    },
+    {
+      "id": "shift-count-overflow",
+      "pattern": "^left shift count >= width of type$",
+      "italian": "Il numero di posizioni dello shift a sinistra è maggiore o uguale al numero di bit del tipo.",
+      "examples": [
+        {
+          "original": "left shift count >= width of type",
+          "italian": "Il numero di posizioni dello shift a sinistra è maggiore o uguale al numero di bit del tipo."
+        }
+      ]
+    },
+    {
+      "id": "shift-negative-value",
+      "pattern": "^left shift of negative value$",
+      "italian": "Lo shift a sinistra è applicato a un valore negativo.",
+      "examples": [
+        {
+          "original": "left shift of negative value",
+          "italian": "Lo shift a sinistra è applicato a un valore negativo."
+        }
+      ]
+    },
+    {
+      "id": "set-unused-parameter",
+      "pattern": "^parameter (['‘`][^'’\\r\\n]+['’]) set but not used$",
+      "italian": "Il parametro {1} viene modificato, ma il suo valore non viene usato.",
+      "examples": [
+        {
+          "original": "parameter 's' set but not used",
+          "italian": "Il parametro 's' viene modificato, ma il suo valore non viene usato."
+        },
+        {
+          "original": "parameter 'x' set but not used",
+          "italian": "Il parametro 'x' viene modificato, ma il suo valore non viene usato."
+        }
+      ]
+    },
+    {
+      "id": "multicharacter",
+      "pattern": "^multi-character character constant$",
+      "italian": "Una costante carattere contiene più di un carattere.",
+      "examples": [
+        {
+          "original": "multi-character character constant",
+          "italian": "Una costante carattere contiene più di un carattere."
+        }
+      ]
+    },
+    {
+      "id": "character-too-long",
+      "pattern": "^multi-character literal with (\\d+) characters exceeds (['‘`][^'’\\r\\n]+['’]) size of (\\d+) bytes$",
+      "italian": "La costante con {1} caratteri supera i {3} byte disponibili nel tipo {2}.",
+      "examples": [
+        {
+          "original": "multi-character literal with 6 characters exceeds 'int' size of 4 bytes",
+          "italian": "La costante con 6 caratteri supera i 4 byte disponibili nel tipo 'int'."
+        }
+      ]
+    },
+    {
+      "id": "missing-quote",
+      "pattern": "^missing terminating (['\"]) character$",
+      "italian": "Manca la chiusura {1} della stringa o della costante carattere.",
+      "examples": [
+        {
+          "original": "missing terminating \" character",
+          "italian": "Manca la chiusura \" della stringa o della costante carattere."
+        }
+      ]
+    },
+    {
+      "id": "expected-expression-end",
+      "pattern": "^expected primary-expression at end of input$",
+      "italian": "Manca un’espressione prima della fine del file.",
+      "examples": [
+        {
+          "original": "expected primary-expression at end of input",
+          "italian": "Manca un’espressione prima della fine del file."
+        }
+      ]
+    },
+    {
+      "id": "unterminated-comment",
+      "pattern": "^unterminated comment$",
+      "italian": "Il commento non è stato chiuso.",
+      "examples": [
+        {
+          "original": "unterminated comment",
+          "italian": "Il commento non è stato chiuso."
+        }
+      ]
+    },
+    {
+      "id": "stray-character",
+      "pattern": "^stray (['‘`][^'’\\r\\n]+['’]) in program$",
+      "italian": "Il carattere {1} non è valido in questo punto del programma.",
+      "examples": [
+        {
+          "original": "stray '@' in program",
+          "italian": "Il carattere '@' non è valido in questo punto del programma."
+        }
+      ]
+    },
+    {
+      "id": "implicit-fallthrough",
+      "pattern": "^this statement may fall through$",
+      "italian": "L’esecuzione può proseguire nel case successivo senza break, return o un’indicazione esplicita di fallthrough.",
+      "examples": [
+        {
+          "original": "this statement may fall through",
+          "italian": "L’esecuzione può proseguire nel case successivo senza break, return o un’indicazione esplicita di fallthrough."
+        }
+      ]
+    },
+    {
+      "id": "incompatible-pointer-initialization",
+      "pattern": "^initialization of (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from incompatible pointer type (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)$",
+      "italian": "Un valore di tipo {2} viene usato per inizializzare {1}, ma i tipi dei puntatori sono incompatibili.",
+      "examples": [
+        {
+          "original": "initialization of 'void (*)(void)' from incompatible pointer type 'int (*)(void)'",
+          "italian": "Un valore di tipo 'int (*)(void)' viene usato per inizializzare 'void (*)(void)', ma i tipi dei puntatori sono incompatibili."
+        },
+        {
+          "original": "initialization of 'int *' from incompatible pointer type 'char *'",
+          "italian": "Un valore di tipo 'char *' viene usato per inizializzare 'int *', ma i tipi dei puntatori sono incompatibili."
+        }
+      ]
+    },
+    {
+      "id": "return-pointer-from-int",
+      "pattern": "^returning (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from a function with return type (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) makes pointer from integer without a cast$",
+      "italian": "Restituire {1} da una funzione con tipo di ritorno {2} converte un intero in puntatore senza un cast.",
+      "examples": [
+        {
+          "original": "returning 'int' from a function with return type 'int *' makes pointer from integer without a cast",
+          "italian": "Restituire 'int' da una funzione con tipo di ritorno 'int *' converte un intero in puntatore senza un cast."
+        }
+      ]
+    },
+    {
+      "id": "return-int-from-pointer",
+      "pattern": "^returning (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from a function with return type (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) makes integer from pointer without a cast$",
+      "italian": "Restituire {1} da una funzione con tipo di ritorno {2} converte un puntatore in intero senza un cast.",
+      "examples": [
+        {
+          "original": "returning 'char *' from a function with return type 'int' makes integer from pointer without a cast",
+          "italian": "Restituire 'char *' da una funzione con tipo di ritorno 'int' converte un puntatore in intero senza un cast."
+        }
+      ]
+    },
+    {
+      "id": "initialize-int-from-pointer",
+      "pattern": "^initialization of (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) makes integer from pointer without a cast$",
+      "italian": "Inizializzare {1} con {2} converte un puntatore in intero senza un cast.",
+      "examples": [
+        {
+          "original": "initialization of 'int' from 'char *' makes integer from pointer without a cast",
+          "italian": "Inizializzare 'int' con 'char *' converte un puntatore in intero senza un cast."
+        }
+      ]
+    },
+    {
+      "id": "initialize-pointer-from-int",
+      "pattern": "^initialization of (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) makes pointer from integer without a cast$",
+      "italian": "Inizializzare {1} con {2} converte un intero in puntatore senza un cast.",
+      "examples": [
+        {
+          "original": "initialization of 'int *' from 'int' makes pointer from integer without a cast",
+          "italian": "Inizializzare 'int *' con 'int' converte un intero in puntatore senza un cast."
+        }
+      ]
+    },
+    {
+      "id": "enum-switch",
+      "pattern": "^enumeration value (['‘`][^'’\\r\\n]+['’]) not handled in switch$",
+      "italian": "Lo switch non gestisce il valore {1} dell’enumerazione.",
+      "examples": [
+        {
+          "original": "enumeration value 'B' not handled in switch",
+          "italian": "Lo switch non gestisce il valore 'B' dell’enumerazione."
+        }
+      ]
+    },
+    {
+      "id": "format-security",
+      "pattern": "^format not a string literal and no format arguments$",
+      "italian": "La stringa di formato non è un letterale e non sono stati forniti argomenti: eventuali specifiche di formato potrebbero essere interpretate.",
+      "examples": [
+        {
+          "original": "format not a string literal and no format arguments",
+          "italian": "La stringa di formato non è un letterale e non sono stati forniti argomenti: eventuali specifiche di formato potrebbero essere interpretate."
+        }
+      ]
+    },
+    {
+      "id": "format-nonliteral",
+      "pattern": "^format not a string literal, argument types not checked$",
+      "italian": "La stringa di formato non è un letterale: il compilatore non può controllare i tipi degli argomenti.",
+      "examples": [
+        {
+          "original": "format not a string literal, argument types not checked",
+          "italian": "La stringa di formato non è un letterale: il compilatore non può controllare i tipi degli argomenti."
+        }
+      ]
+    },
+    {
+      "id": "unsigned-comparison-false",
+      "pattern": "^comparison of unsigned expression in (['‘`][^'’\\r\\n]+['’]) is always false$",
+      "italian": "Il confronto {1} applicato a un’espressione senza segno è sempre falso.",
+      "examples": [
+        {
+          "original": "comparison of unsigned expression in '< 0' is always false",
+          "italian": "Il confronto '< 0' applicato a un’espressione senza segno è sempre falso."
+        }
+      ]
+    },
+    {
+      "id": "sizeof-array-parameter",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) on array function parameter (['‘`][^'’\\r\\n]+['’]) will return size of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "{1} sul parametro array {2} restituisce la dimensione del puntatore {3}, non quella dell’array.",
+      "examples": [
+        {
+          "original": "'sizeof' on array function parameter 'dati' will return size of 'int*'",
+          "italian": "'sizeof' sul parametro array 'dati' restituisce la dimensione del puntatore 'int*', non quella dell’array."
+        }
+      ]
+    },
+    {
+      "id": "empty-if-body",
+      "pattern": "^suggest braces around empty body in an ['‘`]if['’] statement$",
+      "italian": "Il corpo dell’if è vuoto: usa parentesi graffe per rendere esplicita questa scelta.",
+      "examples": [
+        {
+          "original": "suggest braces around empty body in an 'if' statement",
+          "italian": "Il corpo dell’if è vuoto: usa parentesi graffe per rendere esplicita questa scelta."
+        }
+      ]
+    },
+    {
+      "id": "write-strings",
+      "pattern": "^ISO C\\+\\+ forbids converting a string constant to (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Lo standard C++ non permette di convertire una stringa costante nel tipo {1}.",
+      "examples": [
+        {
+          "original": "ISO C++ forbids converting a string constant to 'char*'",
+          "italian": "Lo standard C++ non permette di convertire una stringa costante nel tipo 'char*'."
+        }
+      ]
+    },
+    {
+      "id": "default-argument-missing",
+      "pattern": "^default argument missing for parameter (\\d+) of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "Manca il valore predefinito per il parametro {1} di {2}.",
+      "examples": [
+        {
+          "original": "default argument missing for parameter 2 of 'int f(int, int)'",
+          "italian": "Manca il valore predefinito per il parametro 2 di 'int f(int, int)'."
+        }
+      ]
+    },
+    {
+      "id": "ambiguous-declaration",
+      "pattern": "^ambiguating new declaration of (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La nuova dichiarazione {1} è ambigua rispetto a una dichiarazione precedente.",
+      "examples": [
+        {
+          "original": "ambiguating new declaration of 'double f()'",
+          "italian": "La nuova dichiarazione 'double f()' è ambigua rispetto a una dichiarazione precedente."
+        }
+      ]
+    },
+    {
+      "id": "invalid-unary-operator",
+      "pattern": "^no match for (['‘`][^'’\\r\\n]+['’]) \\(operand type is (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)\\)$",
+      "italian": "L’operatore {1} non è applicabile a un operando di tipo {2}.",
+      "examples": [
+        {
+          "original": "no match for 'operator-' (operand type is 'S')",
+          "italian": "L’operatore 'operator-' non è applicabile a un operando di tipo 'S'."
+        }
+      ]
+    },
+    {
+      "id": "invalid-array-subscript",
+      "pattern": "^invalid types (['‘`][^'’\\r\\n]+['’]) for array subscript$",
+      "italian": "I tipi {1} non consentono l’accesso tramite indice.",
+      "examples": [
+        {
+          "original": "invalid types 'int[int]' for array subscript",
+          "italian": "I tipi 'int[int]' non consentono l’accesso tramite indice."
+        }
+      ]
+    },
+    {
+      "id": "invalid-indirection",
+      "pattern": "^invalid type argument of unary (['‘`][^'’\\r\\n]+['’]) \\(have (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)\\)$",
+      "italian": "L’operatore unario {1} non è applicabile al tipo {2}.",
+      "examples": [
+        {
+          "original": "invalid type argument of unary '*' (have 'int')",
+          "italian": "L’operatore unario '*' non è applicabile al tipo 'int'."
+        }
+      ]
+    },
+    {
+      "id": "distinct-pointer-comparison",
+      "pattern": "^comparison between distinct pointer types (['‘`][^'’\\r\\n]+['’]) and (['‘`][^'’\\r\\n]+['’]) lacks a cast$",
+      "italian": "Il confronto tra puntatori di tipo {1} e {2} richiede tipi compatibili o un cast appropriato.",
+      "examples": [
+        {
+          "original": "comparison between distinct pointer types 'int*' and 'char*' lacks a cast",
+          "italian": "Il confronto tra puntatori di tipo 'int*' e 'char*' richiede tipi compatibili o un cast appropriato."
+        }
+      ]
+    },
+    {
+      "id": "override-mismatch",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) marked ['‘`]override['’], but does not override$",
+      "italian": "La funzione {1} è dichiarata override, ma non ridefinisce una funzione virtuale della classe base.",
+      "examples": [
+        {
+          "original": "'void T::f(double)' marked 'override', but does not override",
+          "italian": "La funzione 'void T::f(double)' è dichiarata override, ma non ridefinisce una funzione virtuale della classe base."
+        }
+      ]
+    },
+    {
+      "id": "hidden-virtual",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) was hidden$",
+      "italian": "La funzione virtuale {1} viene nascosta da una dichiarazione della classe derivata.",
+      "examples": [
+        {
+          "original": "'virtual void S::f(int)' was hidden",
+          "italian": "La funzione virtuale 'virtual void S::f(int)' viene nascosta da una dichiarazione della classe derivata."
+        }
+      ]
+    },
+    {
+      "id": "readonly-member",
+      "pattern": "^assignment of member (['‘`][^'’\\r\\n]+['’]) in read-only object$",
+      "italian": "Il membro {1} appartiene a un oggetto di sola lettura e non può essere modificato.",
+      "examples": [
+        {
+          "original": "assignment of member 'S::x' in read-only object",
+          "italian": "Il membro 'S::x' appartiene a un oggetto di sola lettura e non può essere modificato."
+        }
+      ]
+    },
+    {
+      "id": "non-scalar-conversion",
+      "pattern": "^conversion from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) to non-scalar type (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) requested$",
+      "italian": "Impossibile convertire {1} nel tipo non scalare {2}.",
+      "examples": [
+        {
+          "original": "conversion from 'int' to non-scalar type 'std::string' {aka 'std::__cxx11::basic_string<char>'} requested",
+          "italian": "Impossibile convertire 'int' nel tipo non scalare 'std::string' {aka 'std::__cxx11::basic_string<char>'}."
+        }
+      ]
+    },
+    {
+      "id": "initializer-load-time",
+      "pattern": "^initializer element is not computable at load time$",
+      "italian": "Il valore di inizializzazione non può essere calcolato al caricamento del programma.",
+      "examples": [
+        {
+          "original": "initializer element is not computable at load time",
+          "italian": "Il valore di inizializzazione non può essere calcolato al caricamento del programma."
+        }
+      ]
+    },
+    {
+      "id": "template-argument-count-minimum",
+      "pattern": "^wrong number of template arguments \\((\\d+), should be at least (\\d+)\\)$",
+      "italian": "Il template riceve {1} argomenti, ma ne richiede almeno {2}.",
+      "examples": [
+        {
+          "original": "wrong number of template arguments (0, should be at least 1)",
+          "italian": "Il template riceve 0 argomenti, ma ne richiede almeno 1."
+        }
+      ]
+    },
+    {
+      "id": "dependent-typename",
+      "pattern": "^need ['‘`]typename['’] before (['‘`][^'’\\r\\n]+['’]) because (['‘`][^'’\\r\\n]+['’]) is a dependent scope$",
+      "italian": "Occorre typename prima di {1}, perché {2} è uno scope dipendente dal parametro del template.",
+      "examples": [
+        {
+          "original": "need 'typename' before 'T::value_type' because 'T' is a dependent scope",
+          "italian": "Occorre typename prima di 'T::value_type', perché 'T' è uno scope dipendente dal parametro del template."
+        }
+      ]
+    },
+    {
+      "id": "pointer-integer-comparison",
+      "pattern": "^ISO C\\+\\+ forbids comparison between pointer and integer$",
+      "italian": "Lo standard C++ non permette il confronto fra un puntatore e un intero in questo modo.",
+      "examples": [
+        {
+          "original": "ISO C++ forbids comparison between pointer and integer",
+          "italian": "Lo standard C++ non permette il confronto fra un puntatore e un intero in questo modo."
+        }
+      ]
+    },
+    {
+      "id": "unknown-escape",
+      "pattern": "^unknown escape sequence: (['‘`][^'’\\r\\n]+['’])$",
+      "italian": "La sequenza di escape {1} non è riconosciuta.",
+      "examples": [
+        {
+          "original": "unknown escape sequence: '\\q'",
+          "italian": "La sequenza di escape '\\q' non è riconosciuta."
+        }
+      ]
+    },
+    {
+      "id": "multiple-storage-classes",
+      "pattern": "^multiple storage classes in declaration specifiers$",
+      "italian": "La dichiarazione specifica classi di memorizzazione incompatibili, per esempio static ed extern insieme.",
+      "examples": [
+        {
+          "original": "multiple storage classes in declaration specifiers",
+          "italian": "La dichiarazione specifica classi di memorizzazione incompatibili, per esempio static ed extern insieme."
+        }
+      ]
+    },
+    {
+      "id": "logical-not-comparison",
+      "pattern": "^logical not is only applied to the left hand side of comparison$",
+      "italian": "L’operatore ! si applica soltanto all’operando sinistro del confronto: verifica le parentesi.",
+      "examples": [
+        {
+          "original": "logical not is only applied to the left hand side of comparison",
+          "italian": "L’operatore ! si applica soltanto all’operando sinistro del confronto: verifica le parentesi."
+        }
+      ]
+    },
+    {
+      "id": "boolean-comparison-false",
+      "pattern": "^comparison of constant (['‘`][^'’\\r\\n]+['’]) with boolean expression is always false$",
+      "italian": "Il confronto fra la costante {1} e l’espressione booleana è sempre falso.",
+      "examples": [
+        {
+          "original": "comparison of constant '2' with boolean expression is always false",
+          "italian": "Il confronto fra la costante '2' e l’espressione booleana è sempre falso."
+        }
+      ]
+    },
+    {
+      "id": "invalid-binary-c",
+      "pattern": "^invalid operands to binary ([^\\s()]+) \\(have (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) and (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)\\)$",
+      "italian": "L’operatore binario {1} non è applicabile ai tipi {2} e {3}.",
+      "examples": [
+        {
+          "original": "invalid operands to binary % (have 'double' and 'int')",
+          "italian": "L’operatore binario % non è applicabile ai tipi 'double' e 'int'."
+        }
+      ]
+    },
+    {
+      "id": "unknown-storage-size",
+      "pattern": "^storage size of (['‘`][^'’\\r\\n]+['’]) isn't known$",
+      "italian": "La dimensione di {1} non è nota: è necessario un tipo completo.",
+      "examples": [
+        {
+          "original": "storage size of 'x' isn't known",
+          "italian": "La dimensione di 'x' non è nota: è necessario un tipo completo."
+        }
+      ]
+    },
+    {
+      "id": "pointer-member-access",
+      "pattern": "^(['‘`][^'’\\r\\n]+['’]) is a pointer; did you mean to use (['‘`][^'’\\r\\n]+['’])\\?$",
+      "italian": "{1} è un puntatore. Intendevi accedere al membro usando {2}?",
+      "examples": [
+        {
+          "original": "'s' is a pointer; did you mean to use '->'?",
+          "italian": "'s' è un puntatore. Intendevi accedere al membro usando '->'?"
+        }
+      ]
+    },
+    {
+      "id": "redeclaration-no-linkage",
+      "pattern": "^redeclaration of (['‘`][^'’\\r\\n]+['’]) with no linkage$",
+      "italian": "{1} è già stato dichiarato nello stesso scope e non può essere ridichiarato.",
+      "examples": [
+        {
+          "original": "redeclaration of 'n' with no linkage",
+          "italian": "'n' è già stato dichiarato nello stesso scope e non può essere ridichiarato."
+        }
+      ]
+    },
+    {
+      "id": "could-not-convert",
+      "pattern": "^could not convert (['‘`][^'’\\r\\n]+['’]) from (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?) to (['‘`][^'’\\r\\n]+['’](?: \\{aka ['‘`][^'’\\r\\n]+['’]\\})?)$",
+      "italian": "Impossibile convertire {1} da {2} a {3}.",
+      "examples": [
+        {
+          "original": "could not convert '2' from 'int' to 'std::string' {aka 'std::__cxx11::basic_string<char>'}",
+          "italian": "Impossibile convertire '2' da 'int' a 'std::string' {aka 'std::__cxx11::basic_string<char>'}."
+        }
+      ]
+    }
+  ]
+}

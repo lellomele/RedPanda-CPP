@@ -30,3 +30,7 @@ dist
 
 # macOS Things
 .DS_Store
+
+# Documentation artwork distributed with the fork
+!/docs/assets/
+!/docs/assets/**

@@ -5,6 +5,12 @@ add_executable(RedPandaIDE WIN32)
 
 target_qt_plain_cpp(RedPandaIDE
     src/autolinkmanager
+    src/diagnostics
+    src/snippetsstorage
+    src/buildartifacts
+    src/diagnosticcatalog
+    src/sessionstore
+    test/interfacechecks
     src/colorscheme
     src/customfileiconprovider
     src/projectoptions
@@ -53,6 +59,7 @@ target_qt_plain_cpp(RedPandaIDE
     src/utils/pe
     src/utils/terminal
     src/utils/ui
+    src/utils/colorcontrast
     )
 
 target_moc_classes(RedPandaIDE
@@ -63,6 +70,9 @@ target_moc_classes(RedPandaIDE
     src/editormanager
     src/iconsmanager
     src/main
+    src/resilientapplication
+    src/sessionrecovery
+    src/settingsdialog/environmentrecoverywidget
     src/project
     src/projecttemplate
     src/shortcutmanager
@@ -199,6 +209,7 @@ target_include_directories(RedPandaIDE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(RedPandaIDE PRIVATE
     Qt::Core
+    Qt::Concurrent
     Qt::Gui
     Qt::Network
     Qt::PrintSupport
@@ -240,8 +251,13 @@ target_qt_plain_cpp(test-editor
     src/utils/parsearg
     src/utils/parsemacros
     src/utils/ui
+    src/utils/colorcontrast
 
     src/colorscheme
+    src/snippetsstorage
+    src/buildartifacts
+    src/diagnosticcatalog
+    src/sessionstore
     src/syntaxermanager
     src/iconsmanager
     src/systemconsts
@@ -251,6 +267,9 @@ target_qt_plain_cpp(test-editor
 
 target_moc_classes(test-editor
     src/editor
+    src/settingsdialog/settingswidget
+    src/resilientapplication
+    src/widgets/coloredit
 
     src/widgets/bookmarkmodel
     src/widgets/codecompletionlistview
@@ -264,7 +283,10 @@ target_moc_classes(test-editor
     #test
     test/test_editor_base
     test/test_editor_symbol_completion
+    test/test_settingswidget
+    test/test_ide_services
 )
+target_sources(test-editor PRIVATE defaultconfigs.qrc)
 target_include_directories(test-editor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -500,6 +522,7 @@ target_sources(RedPandaIDE PRIVATE
 
 target_embed_translations(RedPandaIDE
     TS_FILES
+        translations/RedPandaIDE_it_IT.ts
         translations/RedPandaIDE_pt_BR.ts
         translations/RedPandaIDE_ru_RU.ts
         translations/RedPandaIDE_zh_CN.ts
@@ -507,6 +530,7 @@ target_embed_translations(RedPandaIDE
 
 if(QT_FEATURE_static)
     set(qtbase_translation_filenames
+        qtbase_it.qm
         qtbase_pt_BR.qm
         qtbase_ru_RU.qm
         qtbase_zh_CN.qm
@@ -570,4 +594,12 @@ elseif(MACOS)
             MACOSX_PACKAGE_LOCATION "Resources")
     target_sources(RedPandaIDE PRIVATE
         ${app_icon})
+endif()
+
+# Include Italian Qt standard dialogs even with a dynamically linked Qt build.
+if(QT_VERSION_MAJOR GREATER_EQUAL 6 AND NOT QT_FEATURE_static)
+    set(ITALIAN_QTBASE_TRANSLATION "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_TRANSLATIONS}/qtbase_it.qm")
+    if(EXISTS "${ITALIAN_QTBASE_TRANSLATION}")
+        target_embed_qtbase_translations(RedPandaIDE QM_FILES "${ITALIAN_QTBASE_TRANSLATION}")
+    endif()
 endif()

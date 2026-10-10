@@ -47,6 +47,16 @@
 #include <QActionGroup>
 
 #include "mainwindow.h"
+#include "buildartifacts.h"
+#include <QDialogButtonBox>
+#include <QVBoxLayout>
+#include <QTreeWidget>
+#include <QPointer>
+#include <QProgressDialog>
+#include <QHeaderView>
+#include "snippetsstorage.h"
+#include "appidentity.h"
+#include <QSaveFile>
 #include "ui_mainwindow.h"
 #include "editormanager.h"
 #include "editor.h"
@@ -541,6 +551,7 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     mQuitting=true;
+    mCCHandler.stop();
     if (mProject)
         mProject=nullptr;
     delete mProjectProxyModel;
@@ -697,6 +708,7 @@ void MainWindow::updateEditorActions(const Editor *e)
         ui->actionGoto_block_end->setEnabled(false);
         ui->actionTrim_trailing_spaces->setEnabled(false);
         mMenuInsertCodeSnippet->setEnabled(false);
+        ui->actionInsert_Complete_Snippet->setEnabled(false);
 
         ui->actionRename_Symbol->setEnabled(false);
 
@@ -786,6 +798,7 @@ void MainWindow::updateEditorActions(const Editor *e)
         ui->actionGoto_block_end->setEnabled(true);
         ui->actionTrim_trailing_spaces->setEnabled(true);
         mMenuInsertCodeSnippet->setEnabled(true);
+        ui->actionInsert_Complete_Snippet->setEnabled(!e->readOnly());
 
         //rename symbol needs parser
         ui->actionRename_Symbol->setEnabled(e->parser() != nullptr);
@@ -824,7 +837,11 @@ void MainWindow::updateProjectActions()
     ui->actionProject_New_File->setEnabled(hasProject);
     ui->actionAdd_to_project->setEnabled(hasProject);
     ui->actionRemove_from_project->setEnabled(hasProject && ui->projectView->selectionModel()->hasSelection());
-    ui->actionMakeClean->setEnabled(hasProject);
+    const auto *current = mEditorManager->getEditor();
+    const bool busy = mCompilerManager->compiling() || mCompilerManager->running() || mDebugger->executing();
+    ui->actionMakeClean->setEnabled(!busy && (hasProject || (current && !current->isNew())));
+    ui->actionMakefileClean->setVisible(hasProject && mProject->options().useCustomMakefile);
+    ui->actionMakefileClean->setEnabled(hasProject && !busy);
     ui->actionProject_options->setEnabled(hasProject);
     ui->actionClose_Project->setEnabled(hasProject);
     ui->actionNew_Class->setEnabled(hasProject);
@@ -840,6 +857,10 @@ void MainWindow::updateCompileActions() {
 
 void MainWindow::updateCompileActions(const Editor *e)
 {
+    const bool buildBusy = mCompilerManager->compiling() || mCompilerManager->running() || mDebugger->executing();
+    ui->actionMakeClean->setEnabled(!buildBusy && (mProject || (e && !e->isNew())));
+    ui->actionMakefileClean->setVisible(mProject && mProject->options().useCustomMakefile);
+    ui->actionMakefileClean->setEnabled(mProject && !buildBusy);
     if (mCompilerManager->compiling()
             //|| mCompilerManager->backgroundSyntaxChecking()
             || mCompilerManager->running() || mDebugger->executing()) {
@@ -972,13 +993,10 @@ void MainWindow::updateEditorColorSchemes()
     } else {
         mErrorColor = palette().color(QPalette::Text);
     }
-    ui->tableIssues->setErrorColor(mErrorColor);
+    // The view adapts the configured colors to its own actual row palette.
+    ui->tableIssues->setErrorColor(item ? item->foreground() : QColor());
     item = mColorManager->getItem(schemeName, COLOR_SCHEME_WARNING);
-    if (item && haveGoodContrast(item->foreground(), baseColor)) {
-        ui->tableIssues->setWarningColor(item->foreground());
-    } else {
-        ui->tableIssues->setWarningColor(palette().color(QPalette::Text));
-    }
+    ui->tableIssues->setWarningColor(item ? item->foreground() : QColor());
     item = mColorManager->getItem(schemeName, COLOR_SCHEME_TEXT);
     if (item) {
         QPalette pal = palette();
@@ -1467,11 +1485,7 @@ void MainWindow::updateAppTitle(const Editor *e)
 {
     if (mQuitting)
         return;
-    QString appName=tr("Red Panda C++");
-#ifdef APP_VERSION_SUFFIX
-    appName += tr(" %1 Version").arg(APP_VERSION_SUFFIX);
-#endif
-    QCoreApplication *app = QApplication::instance();
+    const QString appName = AppIdentity::displayName();
     if (e && !e->inProject()) {
         QString str;
         if (e->modified())
@@ -1481,23 +1495,15 @@ void MainWindow::updateAppTitle(const Editor *e)
         if (mDebugger->executing()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Debugging"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Running"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Compiling"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Compiling"),appName));
         } else {
             this->setWindowTitle(QString("%1 - %2 %3")
                                  .arg(str,appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - %2")
-                                    .arg(str,appName));
         }
     } else if (e && e->inProject() && mProject) {
         QString str,str2;
@@ -1513,25 +1519,17 @@ void MainWindow::updateAppTitle(const Editor *e)
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
                                 tr("Debugging"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
                                 tr("Running"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - %2 [%3] - %4 %5")
                            .arg(str,str2,
                                 tr("Compiling"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Compiling"),appName));
         } else {
             setWindowTitle(QString("%1 - %2 %3")
                                  .arg(str,appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - %2")
-                                    .arg(str,appName));
         }
     } else if (mProject) {
         QString str;
@@ -1542,27 +1540,18 @@ void MainWindow::updateAppTitle(const Editor *e)
         if (mDebugger->executing()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Debugging"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Debugging"),appName));
         } else if (mCompilerManager->running()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Running"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Running"),appName));
         } else if (mCompilerManager->compiling()) {
             setWindowTitle(QString("%1 - [%2] - %3 %4")
                            .arg(str,tr("Compiling"),appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - [%2] - %3")
-                                    .arg(str,tr("Compiling"),appName));
         } else {
             this->setWindowTitle(QString("%1 - %2 %3")
                                  .arg(str,appName,REDPANDA_CPP_VERSION));
-            app->setApplicationName(QString("%1 - %2")
-                                    .arg(str,appName));
         }
     } else {
         setWindowTitle(QString("%1 %2").arg(appName,REDPANDA_CPP_VERSION));
-        app->setApplicationName(QString("%1").arg(appName));
     }
 }
 
@@ -2195,7 +2184,7 @@ void MainWindow::updateActionIcons()
     ui->actionNext_Editor->setIcon(mIconsManager->getIcon(IconsManager::ACTION_MISC_FORWARD));
     ui->actionPrevious_Editor->setIcon(mIconsManager->getIcon(IconsManager::ACTION_MISC_BACK));
 
-    ui->actionAbout->setIcon(mIconsManager->getIcon(IconsManager::ACTION_HELP_ABOUT));
+    ui->actionAbout->setIcon(QIcon(AppIdentity::iconResource()));
 
     //editor context menu
     ui->actionOpen_Containing_Folder->setIcon(mIconsManager->getIcon(IconsManager::ACTION_MISC_FOLDER));
@@ -3141,7 +3130,7 @@ void MainWindow::createCustomActions()
 
     //compile issues
     mTableIssuesCopyAction = createAction(
-                tr("Copy"),
+                ui->tableIssues->issuesModel()->italianDiagnostics() ? tr("Copy Original Message") : tr("Copy"),
                 ui->tableIssues,
                 QKeySequence("Ctrl+C"));
     connect(mTableIssuesCopyAction,&QAction::triggered,
@@ -3540,7 +3529,7 @@ bool MainWindow::saveLastOpens()
     QJsonDocument doc;
     doc.setObject(rootObj);
     QByteArray json = doc.toJson();
-    QFile file(filename);
+    QSaveFile file(filename);
 
     if (!file.open(QFile::WriteOnly | QFile::Truncate)) {
         QMessageBox::critical(this,
@@ -3558,7 +3547,9 @@ bool MainWindow::saveLastOpens()
                               QMessageBox::Ok);
         return true;
     }
-    file.close();
+    if (!file.commit()) {
+        QMessageBox::warning(this, tr("Save last open info error"), file.errorString());
+    }
     return true;
 }
 
@@ -4029,7 +4020,16 @@ void MainWindow::onWatchViewContextMenu(const QPoint &pos)
 void MainWindow::onTableIssuesContextMenu(const QPoint &pos)
 {
     QMenu menu(this);
+    const auto clicked = ui->tableIssues->indexAt(pos);
+    if (clicked.isValid()) ui->tableIssues->setCurrentIndex(clicked);
+    const int row = ui->tableIssues->currentIndex().row();
     menu.addAction(mTableIssuesCopyAction);
+    const QString italian = ui->tableIssues->issuesModel()->translatedDescription(row);
+    if (!italian.isEmpty()) {
+        auto *copyItalian = menu.addAction(tr("Copy Italian Translation"));
+        copyItalian->setObjectName("copyItalianDiagnostic");
+        connect(copyItalian, &QAction::triggered, this, [italian] { QGuiApplication::clipboard()->setText(italian); });
+    }
     menu.addAction(mTableIssuesCopyAllAction);
     menu.addSeparator();
     menu.addAction(mTableIssuesClearAction);
@@ -4649,7 +4649,9 @@ void MainWindow::onShowInsertCodeSnippetMenu()
 {
     mMenuInsertCodeSnippet->clear();
     QList<PCodeSnippet> snippets;
-    foreach (const PCodeSnippet& snippet, mCodeSnippetManager->snippets()) {
+    const Editor *current = mEditorManager->getEditor();
+    if (!current) return;
+    foreach (const PCodeSnippet& snippet, mCodeSnippetManager->snippetsForLanguage(SnippetStorage::languageForFileType(current->fileType()))) {
         if (snippet->section>=0 && !snippet->caption.isEmpty())
             snippets.append(snippet);
     }
@@ -5255,7 +5257,7 @@ void MainWindow::onTableIssuesCopy()
     PCompileIssue issue = ui->tableIssues->issue(index);
     if (issue) {
         QClipboard* clipboard = QApplication::clipboard();
-        clipboard->setText(issue->description);
+        clipboard->setText(ui->tableIssues->issuesModel()->originalDescription(index.row()));
     }
 }
 
@@ -6119,7 +6121,7 @@ void MainWindow::onCompileIssue(PCompileIssue issue)
             int col = std::min(issue->column,e->lineText(line).length());
             if (col < 0)
                 col = e->lineText(line).length();
-            e->addSyntaxIssues(line,col,issue->endColumn,issue->type,issue->description);
+            e->addSyntaxIssues(line,col,issue->endColumn,issue->type,ui->tableIssues->issuesModel()->diagnosticHint(ui->tableIssues->count() - 1));
         }
     }
 }
@@ -7554,8 +7556,106 @@ void MainWindow::on_actionView_Makefile_triggered()
 
 void MainWindow::on_actionMakeClean_triggered()
 {
-    if (!mProject)
-        return;
+    if (mCompilerManager->compiling() || mCompilerManager->running() || mDebugger->executing()) return;
+    QStringList candidates, roots, protectedFiles;
+    QString scope;
+    if (mProject) {
+        scope = tr("Project: %1").arg(mProject->name());
+        const QDir directory(mProject->directory());
+        roots.append(directory.absolutePath());
+        roots.append(directory.absoluteFilePath(mProject->options().folderForObjFiles));
+        roots.append(directory.absoluteFilePath(mProject->options().folderForOutput));
+        protectedFiles = mProject->unitFiles();
+        protectedFiles.append(mProject->filename());
+        protectedFiles.append(mProject->makeFileName());
+        // Explicit link inputs must not become cleanup candidates even when names overlap.
+        const auto linkArguments = parseArguments(mProject->options().linkerCmd, macroVariables(), true);
+        for (const auto &argument : linkArguments) {
+            if (argument.startsWith('-')) continue;
+            const QString suffix = QFileInfo(argument).suffix().toLower();
+            if (suffix == "a" || suffix == "lib" || suffix == "o" || suffix == "obj" || suffix == "dll" || suffix == "so")
+                protectedFiles.append(directory.absoluteFilePath(argument));
+        }
+        candidates.append(mProject->outputFilename());
+        for (const auto &unit : mProject->unitList()) if (isC_CPP_ASMSourceFile(getFileType(unit->fileName()))) {
+            const QString base = mProject->options().folderForObjFiles.isEmpty() ? unit->fileName()
+                : directory.absoluteFilePath(QDir(mProject->options().folderForObjFiles).filePath(QFileInfo(unit->fileName()).fileName()));
+            if (unit->compile()) candidates.append(changeFileExt(base, OBJ_EXT));
+            else protectedFiles.append(changeFileExt(base, OBJ_EXT));
+        }
+        if (mProject->options().usePrecompiledHeader) candidates.append(directory.absoluteFilePath(mProject->options().precompiledHeader) + "." GCH_EXT);
+        if (!mProject->options().privateResource.isEmpty()) {
+            const QString resource = mProject->options().folderForObjFiles.isEmpty() ? mProject->options().privateResource
+                : QDir(mProject->options().folderForObjFiles).filePath(changeFileExt(mProject->options().privateResource, RES_EXT));
+            candidates.append(directory.absoluteFilePath(changeFileExt(resource, RES_EXT)));
+        }
+        if (mProject->options().type == ProjectType::DynamicLib) {
+            QFileInfo output(mProject->outputFilename());
+            const QString name = output.fileName().startsWith("lib") ? output.fileName() : "lib" + output.fileName();
+            candidates.append(changeFileExt(output.dir().filePath(name), LIB_EXT));
+        }
+    } else {
+        Editor *editor = mEditorManager->getEditor();
+        if (!editor || editor->isNew()) return;
+        scope = tr("File: %1").arg(editor->filename());
+        roots.append(QFileInfo(editor->filename()).absolutePath());
+        protectedFiles.append(editor->filename());
+        const auto set = pSettings->compilerSets().defaultSet();
+        candidates.append(changeFileExt(editor->filename(), set ? set->executableSuffix() : DEFAULT_EXECUTABLE_SUFFIX));
+        candidates.append(changeFileExt(editor->filename(), set ? set->assemblingSuffix() : OBJ_EXT));
+        candidates.append(changeFileExt(editor->filename(), OBJ_EXT));
+        if (getFileType(editor->filename()) == FileType::CCppHeader) candidates.append(editor->filename() + "." GCH_EXT);
+    }
+    for (int i = 0; i < mEditorManager->pageCount(); ++i) protectedFiles.append((*mEditorManager)[i]->filename());
+    const auto entries = BuildArtifacts::inspect(candidates, roots, protectedFiles);
+    if (entries.isEmpty()) { QMessageBox::information(this, tr("Clean Build Artifacts"), tr("No build artifacts were found for this file or project.")); return; }
+    QDialog dialog(this); dialog.setObjectName("buildArtifactsDialog"); dialog.setWindowTitle(tr("Clean Build Artifacts")); dialog.resize(780, 440);
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *label = new QLabel(scope + "\n" + tr("Only the selected files will be moved to the Recycle Bin. Source files and linked input libraries are preserved."), &dialog);
+    label->setWordWrap(true); layout->addWidget(label);
+    auto *list = new QTreeWidget(&dialog); list->setObjectName("buildArtifactsList"); list->setHeaderLabels({tr("File"), tr("Folder"), tr("Size")});
+    for (const auto &entry : entries) {
+        auto *item = new QTreeWidgetItem(list, {QFileInfo(entry.path).fileName(), QDir::toNativeSeparators(QFileInfo(entry.path).absolutePath()), QLocale().formattedDataSize(entry.size)});
+        item->setToolTip(0, QDir::toNativeSeparators(entry.path));
+        item->setToolTip(1, QDir::toNativeSeparators(QFileInfo(entry.path).absolutePath()));
+        item->setCheckState(0, Qt::Checked);
+    }
+    list->setColumnWidth(0, 220);
+    list->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    list->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    layout->addWidget(list);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Move to Recycle Bin"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept); connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject); layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted) return;
+    if (mCompilerManager->compiling() || mCompilerManager->running() || mDebugger->executing()) return;
+    QStringList errors; int removed = 0, processed = 0, selected = 0;
+    for (int i = 0; i < entries.size(); ++i) if (list->topLevelItem(i)->checkState(0) == Qt::Checked) ++selected;
+    QProgressDialog progress(tr("Moving build artifacts to the Recycle Bin..."), tr("Stop"), 0, selected, this);
+    progress.setWindowModality(Qt::WindowModal); progress.setMinimumDuration(400);
+    for (int i = 0; i < entries.size(); ++i) if (list->topLevelItem(i)->checkState(0) == Qt::Checked) {
+        progress.setValue(processed++);
+        if (progress.wasCanceled() || mQuitting) break;
+        const auto &entry = entries[i];
+        if (!BuildArtifacts::unchanged(entry, roots, protectedFiles)) { errors.append(tr("File changed after the preview: %1").arg(entry.path)); continue; }
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        QFile file(entry.path);
+        if (file.moveToTrash()) ++removed;
+        else errors.append(tr("Could not remove %1: %2").arg(entry.path, file.errorString()));
+#else
+        errors.append(tr("Moving files to the Recycle Bin requires Qt 5.15 or later: %1").arg(entry.path));
+#endif
+    }
+    progress.setValue(selected);
+    if (!errors.isEmpty()) QMessageBox::warning(this, tr("Clean Build Artifacts"), tr("Moved %1 file(s) to the Recycle Bin. Some files could not be removed:\n%2").arg(removed).arg(errors.join('\n')));
+    else statusBar()->showMessage(tr("Moved %1 file(s) to the Recycle Bin.").arg(removed), 6000);
+    updateCompileActions();
+}
+
+void MainWindow::on_actionMakefileClean_triggered()
+{
+    if (!mProject || !mProject->options().useCustomMakefile || mCompilerManager->compiling() || mCompilerManager->running() || mDebugger->executing()) return;
+    if (QMessageBox::question(this, tr("Run Makefile Clean"), tr("Run the clean target defined by %1? This target controls which files are deleted.").arg(mProject->makeFileName())) != QMessageBox::Yes) return;
     prepareProjectForCompile();
     mCompilerManager->cleanProject(mProject);
 }
@@ -9182,7 +9282,7 @@ QList<QAction *> MainWindow::listShortCutableActions()
     QList<QAction*> result;
     foreach(QAction* action, actions) {
         if (action->shortcutContext() == Qt::WidgetShortcut
-                && action->parentWidget() == this)
+                && qobject_cast<QWidget *>(action->parent()) == this)
             continue;
         result.append(action);
     }
@@ -10826,4 +10926,30 @@ void MainWindow::on_actionReparse_Code_triggered()
             e->reparse();
         }
     }
+}
+
+void MainWindow::on_actionInsert_Complete_Snippet_triggered()
+{
+    QPointer<Editor> editor = mEditorManager->getEditor();
+    if (!editor || editor->readOnly()) return;
+    const QString prefix = editor->snippetPrefix();
+    const auto available = mCodeSnippetManager->snippetsForLanguage(SnippetStorage::languageForFileType(editor->fileType()));
+    QList<PCodeSnippet> matching, exact;
+    for (const auto &snippet : available) {
+        if (snippet->prefix == prefix) exact.append(snippet);
+        if (prefix.isEmpty() || snippet->prefix.startsWith(prefix)) matching.append(snippet);
+    }
+    if (!exact.isEmpty()) matching = exact;
+    if (matching.isEmpty()) { statusBar()->showMessage(tr("No snippet matches '%1' for this language.").arg(prefix), 5000); return; }
+    PCodeSnippet chosen;
+    if (!prefix.isEmpty() && matching.size() == 1) chosen = matching.first();
+    else {
+        QStringList labels;
+        for (const auto &snippet : matching) labels.append(QString("%1 — %2").arg(snippet->prefix, snippet->caption));
+        bool accepted = false;
+        const QString label = QInputDialog::getItem(this, tr("Insert or Complete Snippet"), tr("Choose a snippet:"), labels, 0, false, &accepted);
+        if (!accepted || !labels.contains(label)) return;
+        chosen = matching.at(labels.indexOf(label));
+    }
+    if (editor && editor->expandCodeSnippet(chosen, prefix)) editor->setFocus();
 }

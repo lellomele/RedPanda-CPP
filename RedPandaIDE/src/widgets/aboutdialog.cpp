@@ -15,12 +15,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "aboutdialog.h"
+#include "../appidentity.h"
 #include "ui_aboutdialog.h"
 #include "../systemconsts.h"
 #include "../utils/os.h"
 #include "../utils.h"
 #include "../settings.h"
 #include <QDebug>
+#include <QEvent>
+#include <QPainter>
+#include <QSvgRenderer>
 
 AboutDialog::AboutDialog(QWidget *parent) :
     QDialog{parent},
@@ -28,7 +32,19 @@ AboutDialog::AboutDialog(QWidget *parent) :
 {
     setWindowFlag(Qt::WindowContextHelpButtonHint,false);
     ui->setupUi(this);
-    ui->lblTitle->setText(ui->lblTitle->text() + tr("Version: ") + REDPANDA_CPP_VERSION);
+    mUiReady = true;
+    ui->lblForkCopyright->setText(AppIdentity::forkCopyright());
+    ui->lblForkCopyright->installEventFilter(this);
+    ui->lblForkFlag->setAccessibleName(tr("Italian flag"));
+    updateForkFlag();
+    const qreal ratio = devicePixelRatioF();
+    QPixmap artwork(AppIdentity::iconResource());
+    artwork = artwork.scaled(qRound(192 * ratio), qRound(192 * ratio), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    artwork.setDevicePixelRatio(ratio);
+    ui->lblAppArtwork->setPixmap(artwork);
+    ui->lblAppArtwork->setFixedSize(208, 208);
+    ui->lblAppArtwork->setAccessibleName(AppIdentity::displayName());
+    ui->lblTitle->setText(QString("<h1>%1</h1>%2%3").arg(AppIdentity::displayName(), tr("Version: "), QStringLiteral(REDPANDA_CPP_VERSION)));
 
     QString buildArch = appArch();
 #if defined(__x86_64__) && defined(ENABLE_GLIBC_HWCAPS)
@@ -92,7 +108,55 @@ AboutDialog::AboutDialog(QWidget *parent) :
     ui->lblHomepage->setText(tr("Website: <a href=\"%1\">%1</a>").arg(website));
 }
 
+void AboutDialog::updateForkFlag()
+{
+    if (!mUiReady) return;
+    const int height = qMax(1, ui->lblForkCopyright->fontMetrics().capHeight());
+    const int width = qMax(1, qRound(height * 1.5));
+    const qreal ratio = devicePixelRatioF();
+    QPixmap flag(qMax(1, qRound(width * ratio)), qMax(1, qRound(height * ratio)));
+    flag.setDevicePixelRatio(ratio);
+    flag.fill(Qt::transparent);
+    QPainter painter(&flag);
+    QSvgRenderer renderer(QStringLiteral(":/icons/app/italian-flag.svg"));
+    if (!renderer.isValid()) {
+        // Keep the copyright readable if its decorative resource is unavailable.
+        ui->lblForkFlag->clear();
+        ui->lblForkFlag->hide();
+        return;
+    }
+    renderer.render(&painter, QRectF(0, 0, width, height));
+    painter.end();
+    ui->lblForkFlag->setPixmap(flag);
+    ui->lblForkFlag->setFixedSize(width, height);
+    ui->lblForkFlag->show();
+}
+
+bool AboutDialog::event(QEvent *event)
+{
+    const bool handled = QDialog::event(event);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    if (event->type() == QEvent::DevicePixelRatioChange) updateForkFlag();
+#endif
+    return handled;
+}
+
+void AboutDialog::changeEvent(QEvent *event)
+{
+    QDialog::changeEvent(event);
+    if (event->type() == QEvent::FontChange || event->type() == QEvent::ApplicationFontChange)
+        updateForkFlag();
+}
+
+bool AboutDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (mUiReady && watched == ui->lblForkCopyright && event->type() == QEvent::FontChange)
+        updateForkFlag();
+    return QDialog::eventFilter(watched, event);
+}
+
 AboutDialog::~AboutDialog()
 {
+    mUiReady = false;
     delete ui;
 }

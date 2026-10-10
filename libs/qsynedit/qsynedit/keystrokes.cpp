@@ -18,6 +18,16 @@
 #include "miscprocs.h"
 
 namespace QSynedit {
+
+static int combinedKeyAt(const QKeySequence &sequence, int index)
+{
+#if QT_VERSION_MAJOR >= 6
+    return sequence[index].toCombined();
+#else
+    return sequence[index];
+#endif
+}
+
 EditKeyStroke::EditKeyStroke()
 {
     mKey = 0;
@@ -40,9 +50,9 @@ void EditKeyStroke::setKeySequence(QKeySequence &keySequence)
 {
     if (keySequence.isEmpty())
         return;
-    decodeKey(keySequence[0],mKey,mKeyModifiers);
+    decodeKey(combinedKeyAt(keySequence, 0),mKey,mKeyModifiers);
     if (keySequence.count()>1) {
-        decodeKey(keySequence[1],mKey2,mKeyModifiers2);
+        decodeKey(combinedKeyAt(keySequence, 1),mKey2,mKeyModifiers2);
     } else {
         mKey2=0;
         mKeyModifiers2=Qt::NoModifier;
@@ -153,7 +163,7 @@ PEditKeyStroke EditKeyStrokes::findKeySequence(const QKeySequence &keySeq)
     case 1: {
             int key;
             Qt::KeyboardModifiers modifiers;
-            decodeKey(keySeq[0],key,modifiers);
+            decodeKey(combinedKeyAt(keySeq, 0),key,modifiers);
             return findKeycode(key,modifiers);
         }
     case 2:
@@ -164,8 +174,8 @@ PEditKeyStroke EditKeyStrokes::findKeySequence(const QKeySequence &keySeq)
             Qt::KeyboardModifiers modifiers;
             int key2;
             Qt::KeyboardModifiers modifiers2;
-            decodeKey(keySeq[0],key,modifiers);
-            decodeKey(keySeq[1],key2,modifiers2);
+            decodeKey(combinedKeyAt(keySeq, 0),key,modifiers);
+            decodeKey(combinedKeyAt(keySeq, 1),key2,modifiers2);
             return findKeycode2(key,modifiers,key2,modifiers2);
         }
     default:

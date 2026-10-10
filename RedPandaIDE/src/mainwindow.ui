@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>MainWindow</class>
  <widget class="QMainWindow" name="MainWindow">
@@ -124,53 +124,55 @@
     <property name="title">
      <string>File</string>
     </property>
-    <addaction name="actionOpen"/>
-    <addaction name="actionOpen_Folder"/>
-    <addaction name="separator"/>
-    <addaction name="actionSave"/>
-    <addaction name="actionSaveAs"/>
-    <addaction name="actionSaveAll"/>
-    <addaction name="separator"/>
-    <addaction name="actionClose"/>
-    <addaction name="actionClose_Project"/>
-    <addaction name="separator"/>
-    <addaction name="actionClose_All"/>
-    <addaction name="actionPrint"/>
-    <addaction name="separator"/>
-    <addaction name="actionExit"/>
+    <addaction name="actionOpen" />
+    <addaction name="actionOpen_Folder" />
+    <addaction name="separator" />
+    <addaction name="actionSave" />
+    <addaction name="actionSaveAs" />
+    <addaction name="actionSaveAll" />
+    <addaction name="separator" />
+    <addaction name="actionClose" />
+    <addaction name="actionClose_Project" />
+    <addaction name="separator" />
+    <addaction name="actionClose_All" />
+    <addaction name="actionPrint" />
+    <addaction name="separator" />
+    <addaction name="actionExit" />
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
      <string>Tools</string>
     </property>
-    <addaction name="actionOptions"/>
+    <addaction name="actionOptions" />
    </widget>
    <widget class="QMenu" name="menuExecute">
     <property name="title">
      <string>Execute</string>
     </property>
-    <addaction name="actionCompile"/>
-    <addaction name="actionRun"/>
-    <addaction name="actionRebuild"/>
-    <addaction name="actionGenerate_Assembly"/>
-    <addaction name="actionGenerate_GIMPLE"/>
-    <addaction name="actionPreprocess"/>
-    <addaction name="separator"/>
-    <addaction name="actionRun_Parameters"/>
-    <addaction name="actionCompiler_Options"/>
-    <addaction name="separator"/>
-    <addaction name="actionDebug"/>
-    <addaction name="actionInterrupt"/>
-    <addaction name="actionStep_Over"/>
-    <addaction name="actionStep_Into"/>
-    <addaction name="actionStep_Out"/>
-    <addaction name="actionRun_To_Cursor"/>
-    <addaction name="actionContinue"/>
-    <addaction name="actionStop_Execution"/>
-    <addaction name="separator"/>
-    <addaction name="actionAdd_Watch"/>
-    <addaction name="actionAdd_Watchpoint"/>
-    <addaction name="actionView_CPU_Window"/>
+    <addaction name="actionCompile" />
+    <addaction name="actionRun" />
+    <addaction name="actionRebuild" />
+    <addaction name="actionMakeClean" />
+    <addaction name="actionMakefileClean" />
+    <addaction name="actionGenerate_Assembly" />
+    <addaction name="actionGenerate_GIMPLE" />
+    <addaction name="actionPreprocess" />
+    <addaction name="separator" />
+    <addaction name="actionRun_Parameters" />
+    <addaction name="actionCompiler_Options" />
+    <addaction name="separator" />
+    <addaction name="actionDebug" />
+    <addaction name="actionInterrupt" />
+    <addaction name="actionStep_Over" />
+    <addaction name="actionStep_Into" />
+    <addaction name="actionStep_Out" />
+    <addaction name="actionRun_To_Cursor" />
+    <addaction name="actionContinue" />
+    <addaction name="actionStop_Execution" />
+    <addaction name="separator" />
+    <addaction name="actionAdd_Watch" />
+    <addaction name="actionAdd_Watchpoint" />
+    <addaction name="actionView_CPU_Window" />
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -180,146 +182,146 @@
      <property name="title">
       <string>Move Caret</string>
      </property>
-     <addaction name="actionPage_Up"/>
-     <addaction name="actionPage_Down"/>
-     <addaction name="actionGoto_Line_Start"/>
-     <addaction name="actionGoto_Line_End"/>
-     <addaction name="actionGoto_File_Start"/>
-     <addaction name="actionGoto_File_End"/>
-     <addaction name="actionGoto_Page_Start"/>
-     <addaction name="actionGoto_Page_End"/>
+     <addaction name="actionPage_Up" />
+     <addaction name="actionPage_Down" />
+     <addaction name="actionGoto_Line_Start" />
+     <addaction name="actionGoto_Line_End" />
+     <addaction name="actionGoto_File_Start" />
+     <addaction name="actionGoto_File_End" />
+     <addaction name="actionGoto_Page_Start" />
+     <addaction name="actionGoto_Page_End" />
     </widget>
     <widget class="QMenu" name="menuFile_Type">
      <property name="title">
       <string>File Type</string>
      </property>
-     <addaction name="actionC_C_Header"/>
-     <addaction name="actionC_File"/>
-     <addaction name="actionCPP_File"/>
-     <addaction name="actionGAS"/>
-     <addaction name="actionNASM"/>
-     <addaction name="actionText_File"/>
+     <addaction name="actionC_C_Header" />
+     <addaction name="actionC_File" />
+     <addaction name="actionCPP_File" />
+     <addaction name="actionGAS" />
+     <addaction name="actionNASM" />
+     <addaction name="actionText_File" />
     </widget>
-    <addaction name="actionUndo"/>
-    <addaction name="actionRedo"/>
-    <addaction name="separator"/>
-    <addaction name="actionCut"/>
-    <addaction name="actionCopy"/>
-    <addaction name="actionPaste"/>
-    <addaction name="actionPaste_indentation"/>
-    <addaction name="separator"/>
-    <addaction name="actionIndent"/>
-    <addaction name="actionUnIndent"/>
-    <addaction name="separator"/>
-    <addaction name="actionToggleComment"/>
-    <addaction name="actionToggle_Block_Comment"/>
-    <addaction name="separator"/>
-    <addaction name="menuFile_Type"/>
-    <addaction name="separator"/>
-    <addaction name="actionFoldAll"/>
-    <addaction name="actionUnfoldAll"/>
-    <addaction name="separator"/>
-    <addaction name="menuMove_Caret"/>
-    <addaction name="actionDelete_Line"/>
-    <addaction name="actionDuplicate_Line"/>
-    <addaction name="actionDelete_Word"/>
-    <addaction name="actionDelete_Last_Word"/>
-    <addaction name="actionDelete_to_Word_End"/>
-    <addaction name="actionDelete_to_BOL"/>
-    <addaction name="actionDelete_to_EOL"/>
-    <addaction name="separator"/>
-    <addaction name="actionToggle_Readonly"/>
+    <addaction name="actionUndo" />
+    <addaction name="actionRedo" />
+    <addaction name="separator" />
+    <addaction name="actionCut" />
+    <addaction name="actionCopy" />
+    <addaction name="actionPaste" />
+    <addaction name="actionPaste_indentation" />
+    <addaction name="separator" />
+    <addaction name="actionIndent" />
+    <addaction name="actionUnIndent" />
+    <addaction name="separator" />
+    <addaction name="actionToggleComment" />
+    <addaction name="actionToggle_Block_Comment" />
+    <addaction name="separator" />
+    <addaction name="menuFile_Type" />
+    <addaction name="separator" />
+    <addaction name="actionFoldAll" />
+    <addaction name="actionUnfoldAll" />
+    <addaction name="separator" />
+    <addaction name="menuMove_Caret" />
+    <addaction name="actionDelete_Line" />
+    <addaction name="actionDuplicate_Line" />
+    <addaction name="actionDelete_Word" />
+    <addaction name="actionDelete_Last_Word" />
+    <addaction name="actionDelete_to_Word_End" />
+    <addaction name="actionDelete_to_BOL" />
+    <addaction name="actionDelete_to_EOL" />
+    <addaction name="separator" />
+    <addaction name="actionToggle_Readonly" />
    </widget>
    <widget class="QMenu" name="menuSearch">
     <property name="title">
      <string>Search</string>
     </property>
-    <addaction name="actionFind"/>
-    <addaction name="actionFind_in_files"/>
-    <addaction name="actionReplace"/>
-    <addaction name="separator"/>
-    <addaction name="actionFind_Next"/>
-    <addaction name="actionFind_Previous"/>
+    <addaction name="actionFind" />
+    <addaction name="actionFind_in_files" />
+    <addaction name="actionReplace" />
+    <addaction name="separator" />
+    <addaction name="actionFind_Next" />
+    <addaction name="actionFind_Previous" />
    </widget>
    <widget class="QMenu" name="menuCode">
     <property name="title">
      <string>Code</string>
     </property>
-    <addaction name="separator"/>
-    <addaction name="actionBack"/>
-    <addaction name="actionForward"/>
-    <addaction name="separator"/>
-    <addaction name="actionMatch_Bracket"/>
-    <addaction name="actionGo_to_Line"/>
-    <addaction name="actionGoto_block_start"/>
-    <addaction name="actionGoto_block_end"/>
-    <addaction name="separator"/>
-    <addaction name="actionCode_Completion"/>
-    <addaction name="separator"/>
-    <addaction name="actionToggle_Bookmark"/>
-    <addaction name="actionModify_Bookmark_Description"/>
-    <addaction name="separator"/>
-    <addaction name="actionTrim_trailing_spaces"/>
-    <addaction name="actionReformat_Code"/>
-    <addaction name="actionReparse_Code"/>
+    <addaction name="separator" />
+    <addaction name="actionBack" />
+    <addaction name="actionForward" />
+    <addaction name="separator" />
+    <addaction name="actionMatch_Bracket" />
+    <addaction name="actionGo_to_Line" />
+    <addaction name="actionGoto_block_start" />
+    <addaction name="actionGoto_block_end" />
+    <addaction name="separator" />
+    <addaction name="actionCode_Completion" />
+    <addaction name="actionInsert_Complete_Snippet" />
+    <addaction name="separator" />
+    <addaction name="actionToggle_Bookmark" />
+    <addaction name="actionModify_Bookmark_Description" />
+    <addaction name="separator" />
+    <addaction name="actionTrim_trailing_spaces" />
+    <addaction name="actionReformat_Code" />
+    <addaction name="actionReparse_Code" />
    </widget>
    <widget class="QMenu" name="menuWindow">
     <property name="title">
      <string>Window</string>
     </property>
-    <addaction name="actionClose_All"/>
-    <addaction name="actionClose"/>
-    <addaction name="actionMaximize_Editor"/>
-    <addaction name="separator"/>
-    <addaction name="actionMove_To_Other_View"/>
-    <addaction name="actionNext_Editor"/>
-    <addaction name="actionPrevious_Editor"/>
+    <addaction name="actionClose_All" />
+    <addaction name="actionClose" />
+    <addaction name="actionMaximize_Editor" />
+    <addaction name="separator" />
+    <addaction name="actionMove_To_Other_View" />
+    <addaction name="actionNext_Editor" />
+    <addaction name="actionPrevious_Editor" />
    </widget>
    <widget class="QMenu" name="menuProject">
     <property name="title">
      <string>Project</string>
     </property>
-    <addaction name="actionProject_New_File"/>
-    <addaction name="actionNew_Class"/>
-    <addaction name="actionNew_Header"/>
-    <addaction name="actionAdd_to_project"/>
-    <addaction name="actionRemove_from_project"/>
-    <addaction name="separator"/>
-    <addaction name="actionProject_Open_Folder_In_Explorer"/>
-    <addaction name="actionProject_Open_In_Terminal"/>
-    <addaction name="separator"/>
-    <addaction name="separator"/>
-    <addaction name="actionView_Makefile"/>
-    <addaction name="actionMakeClean"/>
-    <addaction name="separator"/>
-    <addaction name="actionProject_options"/>
+    <addaction name="actionProject_New_File" />
+    <addaction name="actionNew_Class" />
+    <addaction name="actionNew_Header" />
+    <addaction name="actionAdd_to_project" />
+    <addaction name="actionRemove_from_project" />
+    <addaction name="separator" />
+    <addaction name="actionProject_Open_Folder_In_Explorer" />
+    <addaction name="actionProject_Open_In_Terminal" />
+    <addaction name="separator" />
+    <addaction name="separator" />
+    <addaction name="actionView_Makefile" />
+    <addaction name="separator" />
+    <addaction name="actionProject_options" />
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
      <string>Help</string>
     </property>
-    <addaction name="actionDocument"/>
-    <addaction name="actionC_Reference"/>
-    <addaction name="actionC_C_Reference"/>
-    <addaction name="separator"/>
-    <addaction name="actionOI_Wiki"/>
-    <addaction name="actionRaylib_Manual"/>
-    <addaction name="actionEGE_Manual"/>
-    <addaction name="actionTurtle_Graphics_Manual"/>
-    <addaction name="separator"/>
-    <addaction name="actionGNU_Assembler_Manual"/>
-    <addaction name="actionx86_Assembly_Language_Reference_Manual"/>
-    <addaction name="actionIA_32_Assembly_Language_Reference_Manual"/>
-    <addaction name="separator"/>
-    <addaction name="actionWebsite"/>
-    <addaction name="actionSubmit_Issues"/>
-    <addaction name="actionAbout"/>
+    <addaction name="actionDocument" />
+    <addaction name="actionC_Reference" />
+    <addaction name="actionC_C_Reference" />
+    <addaction name="separator" />
+    <addaction name="actionOI_Wiki" />
+    <addaction name="actionRaylib_Manual" />
+    <addaction name="actionEGE_Manual" />
+    <addaction name="actionTurtle_Graphics_Manual" />
+    <addaction name="separator" />
+    <addaction name="actionGNU_Assembler_Manual" />
+    <addaction name="actionx86_Assembly_Language_Reference_Manual" />
+    <addaction name="actionIA_32_Assembly_Language_Reference_Manual" />
+    <addaction name="separator" />
+    <addaction name="actionWebsite" />
+    <addaction name="actionSubmit_Issues" />
+    <addaction name="actionAbout" />
    </widget>
    <widget class="QMenu" name="menuRefactor">
     <property name="title">
      <string>Refactor</string>
     </property>
-    <addaction name="actionRename_Symbol"/>
+    <addaction name="actionRename_Symbol" />
    </widget>
    <widget class="QMenu" name="menuView">
     <property name="title">
@@ -329,60 +331,60 @@
      <property name="title">
       <string>Tool Panels</string>
      </property>
-     <addaction name="actionProject"/>
-     <addaction name="actionWatch"/>
-     <addaction name="actionStructure"/>
-     <addaction name="actionFiles"/>
-     <addaction name="actionProblem_Set"/>
-     <addaction name="separator"/>
-     <addaction name="actionIssues"/>
-     <addaction name="actionTools_Output"/>
-     <addaction name="actionDebug_Window"/>
-     <addaction name="actionSearch"/>
-     <addaction name="actionTODO"/>
-     <addaction name="actionBookmark"/>
-     <addaction name="actionProblem"/>
+     <addaction name="actionProject" />
+     <addaction name="actionWatch" />
+     <addaction name="actionStructure" />
+     <addaction name="actionFiles" />
+     <addaction name="actionProblem_Set" />
+     <addaction name="separator" />
+     <addaction name="actionIssues" />
+     <addaction name="actionTools_Output" />
+     <addaction name="actionDebug_Window" />
+     <addaction name="actionSearch" />
+     <addaction name="actionTODO" />
+     <addaction name="actionBookmark" />
+     <addaction name="actionProblem" />
     </widget>
-    <addaction name="actionTool_Window_Bars"/>
-    <addaction name="menuTool_Windows"/>
-    <addaction name="actionStatus_Bar"/>
-    <addaction name="separator"/>
-    <addaction name="actionToggle_Explorer_Panel"/>
-    <addaction name="actionToggle_Messages_Panel"/>
+    <addaction name="actionTool_Window_Bars" />
+    <addaction name="menuTool_Windows" />
+    <addaction name="actionStatus_Bar" />
+    <addaction name="separator" />
+    <addaction name="actionToggle_Explorer_Panel" />
+    <addaction name="actionToggle_Messages_Panel" />
    </widget>
    <widget class="QMenu" name="menuSelection">
     <property name="title">
      <string>Selection</string>
     </property>
-    <addaction name="actionSelectAll"/>
-    <addaction name="actionSelect_Word"/>
-    <addaction name="separator"/>
-    <addaction name="actionMove_Selection_Up"/>
-    <addaction name="actionMove_Selection_Down"/>
-    <addaction name="separator"/>
-    <addaction name="actionPage_Up_and_Select"/>
-    <addaction name="actionPage_Down_and_Select"/>
-    <addaction name="actionGoto_Page_Start_and_Select"/>
-    <addaction name="actionGoto_Page_End_and_Select"/>
-    <addaction name="actionGoto_Line_Start_and_Select"/>
-    <addaction name="actionGoto_Line_End_and_Select"/>
-    <addaction name="actionGoto_File_Start_and_Select"/>
-    <addaction name="actionGoto_File_End_and_Select"/>
+    <addaction name="actionSelectAll" />
+    <addaction name="actionSelect_Word" />
+    <addaction name="separator" />
+    <addaction name="actionMove_Selection_Up" />
+    <addaction name="actionMove_Selection_Down" />
+    <addaction name="separator" />
+    <addaction name="actionPage_Up_and_Select" />
+    <addaction name="actionPage_Down_and_Select" />
+    <addaction name="actionGoto_Page_Start_and_Select" />
+    <addaction name="actionGoto_Page_End_and_Select" />
+    <addaction name="actionGoto_Line_Start_and_Select" />
+    <addaction name="actionGoto_Line_End_and_Select" />
+    <addaction name="actionGoto_File_Start_and_Select" />
+    <addaction name="actionGoto_File_End_and_Select" />
    </widget>
-   <addaction name="menuFile"/>
-   <addaction name="menuEdit"/>
-   <addaction name="menuSelection"/>
-   <addaction name="menuView"/>
-   <addaction name="menuSearch"/>
-   <addaction name="menuCode"/>
-   <addaction name="menuRefactor"/>
-   <addaction name="menuProject"/>
-   <addaction name="menuExecute"/>
-   <addaction name="menuTools"/>
-   <addaction name="menuWindow"/>
-   <addaction name="menuHelp"/>
+   <addaction name="menuFile" />
+   <addaction name="menuEdit" />
+   <addaction name="menuSelection" />
+   <addaction name="menuView" />
+   <addaction name="menuSearch" />
+   <addaction name="menuCode" />
+   <addaction name="menuRefactor" />
+   <addaction name="menuProject" />
+   <addaction name="menuExecute" />
+   <addaction name="menuTools" />
+   <addaction name="menuWindow" />
+   <addaction name="menuHelp" />
   </widget>
-  <widget class="QStatusBar" name="statusbar"/>
+  <widget class="QStatusBar" name="statusbar" />
   <widget class="QToolBar" name="toolbarMain">
    <property name="windowTitle">
     <string>Main</string>
@@ -399,11 +401,11 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionNew"/>
-   <addaction name="actionOpen"/>
-   <addaction name="actionSave"/>
-   <addaction name="actionSaveAs"/>
-   <addaction name="actionSaveAll"/>
+   <addaction name="actionNew" />
+   <addaction name="actionOpen" />
+   <addaction name="actionSave" />
+   <addaction name="actionSaveAs" />
+   <addaction name="actionSaveAll" />
   </widget>
   <widget class="QToolBar" name="toolbarCode">
    <property name="windowTitle">
@@ -415,10 +417,10 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionBack"/>
-   <addaction name="actionForward"/>
-   <addaction name="separator"/>
-   <addaction name="actionReformat_Code"/>
+   <addaction name="actionBack" />
+   <addaction name="actionForward" />
+   <addaction name="separator" />
+   <addaction name="actionReformat_Code" />
   </widget>
   <widget class="QToolBar" name="toolbarCompile">
    <property name="windowTitle">
@@ -436,11 +438,11 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionCompile"/>
-   <addaction name="actionRun"/>
-   <addaction name="actionRebuild"/>
-   <addaction name="separator"/>
-   <addaction name="actionRun_Parameters"/>
+   <addaction name="actionCompile" />
+   <addaction name="actionRun" />
+   <addaction name="actionRebuild" />
+   <addaction name="separator" />
+   <addaction name="actionRun_Parameters" />
   </widget>
   <widget class="QToolBar" name="toolbarDebug">
    <property name="windowTitle">
@@ -458,16 +460,16 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionDebug"/>
-   <addaction name="actionInterrupt"/>
-   <addaction name="actionStep_Over"/>
-   <addaction name="actionStep_Into"/>
-   <addaction name="actionStep_Out"/>
-   <addaction name="actionRun_To_Cursor"/>
-   <addaction name="actionContinue"/>
-   <addaction name="actionStop_Execution"/>
-   <addaction name="separator"/>
-   <addaction name="actionAdd_Watch"/>
+   <addaction name="actionDebug" />
+   <addaction name="actionInterrupt" />
+   <addaction name="actionStep_Over" />
+   <addaction name="actionStep_Into" />
+   <addaction name="actionStep_Out" />
+   <addaction name="actionRun_To_Cursor" />
+   <addaction name="actionContinue" />
+   <addaction name="actionStop_Execution" />
+   <addaction name="separator" />
+   <addaction name="actionAdd_Watch" />
   </widget>
   <widget class="QToolBar" name="toolbarCompilerSet">
    <property name="windowTitle">
@@ -485,7 +487,7 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionCompiler_Options"/>
+   <addaction name="actionCompiler_Options" />
   </widget>
   <widget class="QDockWidget" name="dockExplorer">
    <property name="features">
@@ -1867,7 +1869,7 @@
           <item row="3" column="0">
            <widget class="QLabel" name="lblProblemCaseInput">
             <property name="text">
-             <string/>
+             <string />
             </property>
            </widget>
           </item>
@@ -2005,7 +2007,7 @@
               </spacer>
              </item>
              <item>
-              <widget class="QComboBox" name="cbProblemCaseValidateType"/>
+              <widget class="QComboBox" name="cbProblemCaseValidateType" />
              </item>
             </layout>
            </widget>
@@ -2013,14 +2015,14 @@
           <item row="3" column="3">
            <widget class="QLabel" name="lblProblemCaseExpected">
             <property name="text">
-             <string/>
+             <string />
             </property>
            </widget>
           </item>
           <item row="3" column="2">
            <widget class="QLabel" name="lblProblemCaseOutput">
             <property name="text">
-             <string/>
+             <string />
             </property>
            </widget>
           </item>
@@ -2636,7 +2638,7 @@
   </action>
   <action name="actionMakeClean">
    <property name="text">
-    <string>Clean</string>
+    <string>Clean Build Artifacts...</string>
    </property>
   </action>
   <action name="actionProject_Open_Folder_In_Explorer">
@@ -3376,6 +3378,19 @@
     <string>Reparse Code</string>
    </property>
   </action>
+  <action name="actionInsert_Complete_Snippet">
+   <property name="text">
+    <string>Insert or Complete Snippet...</string>
+   </property>
+   <property name="shortcut">
+    <string notr="true">Ctrl+Alt+Space</string>
+   </property>
+  </action>
+  <action name="actionMakefileClean">
+   <property name="text">
+    <string>Run Makefile Clean...</string>
+   </property>
+  </action>
  </widget>
  <customwidgets>
   <customwidget>
@@ -3408,7 +3423,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="R:/RedPanda-CPP-Qt5_64_Debug/RedPandaIDE/.qrc/iconsets.qrc"/>
+  <include location="R:/RedPanda-CPP-Qt5_64_Debug/RedPandaIDE/.qrc/iconsets.qrc" />
  </resources>
- <connections/>
+ <connections />
 </ui>

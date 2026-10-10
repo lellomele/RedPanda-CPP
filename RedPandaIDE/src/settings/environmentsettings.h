@@ -30,6 +30,10 @@ public:
     };
 
     explicit EnvironmentSettings(SettingsPersistor * persistor, DirSettings *dirSettings);
+    bool recoveryEnabled() const { return mRecoveryEnabled; }
+    void setRecoveryEnabled(bool enabled) { mRecoveryEnabled = enabled; }
+    int recoveryInterval() const { return mRecoveryInterval; }
+    void setRecoveryInterval(int seconds) { mRecoveryInterval = qBound(10, seconds, 300); }
     QString theme() const;
     void setTheme(const QString &theme);
 
@@ -93,6 +97,8 @@ private:
 private:
     DirSettings *mDirSettings;
     //Appearance
+    bool mRecoveryEnabled = true;
+    int mRecoveryInterval = 20;
     QString mTheme;
     QString mInterfaceFont;
     int mInterfaceFontSize;

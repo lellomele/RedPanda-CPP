@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "basesettings.h"
+#include <qt_utils/utils.h>
 #include "../utils.h"
 
 SettingsPersistor::SettingsPersistor(const QString &filename):
@@ -163,15 +164,13 @@ void BaseSettings::save()
 {
     Q_ASSERT(mPersistor!=nullptr);
     beginGroup();
+    auto closeGroup = finally([this] { endGroup(); });
     doSave();
-    endGroup();
 }
 
 void BaseSettings::load()
 {
-    if (mPersistor)
-        beginGroup();
+    if (mPersistor) beginGroup();
+    auto closeGroup = finally([this] { if (mPersistor) endGroup(); });
     doLoad();
-    if (mPersistor)
-        endGroup();
 }

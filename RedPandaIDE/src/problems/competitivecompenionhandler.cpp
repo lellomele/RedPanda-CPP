@@ -44,7 +44,8 @@ void CompetitiveCompanionHandler::start()
                 this, &CompetitiveCompanionHandler::onNewProblemReceived);
     mThread->start();
     if (!mThread->waitStart()) {
-        qDebug()<<"Failed to listen!";
+        qWarning() << "Competitive Companion port is unavailable; service disabled for this attempt.";
+        mThread->wait();
         delete mThread;
         mThread = nullptr;
     }
@@ -54,10 +55,12 @@ void CompetitiveCompanionHandler::stop()
 {
     if (!mThread)
         return;
-    connect(mThread, &QThread::finished,
-            mThread, &QObject::deleteLater);
-    mThread->waitStop();
-    mThread=nullptr;
+    auto *thread = mThread;
+    mThread = nullptr;
+    thread->waitStop();
+    // The semaphore acknowledges server shutdown, not the end of QThread::run().
+    thread->wait();
+    delete thread;
 }
 
 void CompetitiveCompanionHandler::onNewProblemReceived(int num, int total, POJProblem newProblem)

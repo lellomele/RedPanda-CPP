@@ -42,6 +42,8 @@ struct CompileIssue {
     int endColumn;
     QString description;
     CompileIssueType type;
+    QString originalDescription; // Exact message before UI severity formatting.
+    bool gccDiagnostic = false;
 };
 
 typedef std::shared_ptr<CompileIssue> PCompileIssue;

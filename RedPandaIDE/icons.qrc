@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/icons">
+        <file alias="app/redpanda-cpp.png">resources/appicon/redpanda-cpp.png</file>
+        <file alias="app/italian-flag.svg">resources/appicon/italian-flag.svg</file>
         <file>images/devcpp.ico</file>
         <file>images/associations/c.ico</file>
         <file>images/associations/cpp.ico</file>

@@ -20,7 +20,19 @@
 #include <QTableView>
 #include <vector>
 #include "../common.h"
+#include "../diagnosticcatalog.h"
 #include <QAbstractTableModel>
+#include <QStyledItemDelegate>
+#include <QCache>
+
+class DiagnosticItemDelegate : public QStyledItemDelegate {
+public:
+    explicit DiagnosticItemDelegate(QObject *parent = nullptr);
+protected:
+    void initStyleOption(QStyleOptionViewItem *option, const QModelIndex &index) const override;
+private:
+    mutable QCache<quint64, QColor> mTextColors;
+};
 
 class IssuesModel : public QAbstractTableModel {
 
@@ -35,8 +47,14 @@ public slots:
     void setErrorColor(QColor color);
     void setWarningColor(QColor color);
     PCompileIssue issue(int row);
+    QString translatedDescription(int row) const;
+    QString originalDescription(int row) const;
+    QString diagnosticHint(int row) const;
+    bool italianDiagnostics() const;
 private:
     QVector<PCompileIssue> mIssues;
+    QVector<DiagnosticCatalog::Translation> mTranslations;
+    bool mItalianDiagnostics;
     QColor mErrorColor;
     QColor mWarningColor;
 

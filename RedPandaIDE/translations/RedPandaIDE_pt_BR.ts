@@ -6314,7 +6314,7 @@
     </message>
     <message>
         <location line="+1"/>
-        <source>Current Compiler set has the following critical error: 
+        <source>Current Compiler set has the following critical error:
 
 </source>
         <translation type="unfinished"></translation>

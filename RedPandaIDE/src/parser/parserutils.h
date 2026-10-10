@@ -44,6 +44,8 @@ struct CodeSnippet {
     QString code;  //Code body
     QString desc;  //Description
     int section;  //Section in the menu
+    QString language = "all";
+    bool enabled = true;
 };
 
 using PCodeSnippet = std::shared_ptr<CodeSnippet>;

@@ -36,33 +36,6 @@ void ToolsManager::load()
     QString filename = includeTrailingPathDelimiter(pSettings->dirs().config()) + DEV_TOOLS_FILE;
     if (!fileExists(filename)) {
         mTools.clear();
-        PToolItem item = std::make_shared<ToolItem>();
-        item->id = QUuid::createUuid().toString();
-        item->title = tr("Remove Compiled");
-#ifdef Q_OS_WIN
-        item->program = "del";
-#else
-        item->program = "rm";
-#endif
-        item->workingDirectory = "<SOURCEPATH>";
-#ifdef Q_OS_WIN
-        item->parameters = "/q /f <EXENAME>";
-#else
-        item->parameters = "-f <EXENAME>";
-#endif
-        item->inputOrigin = ToolItemInputOrigin::None;
-        item->outputTarget = ToolItemOutputTarget::RedirectToToolsOutputPanel;
-        item->isUTF8 = false;
-        mTools.append(item);
-//#ifdef Q_OS_WIN
-//        item = std::make_shared<ToolItem>();
-//        item->title = tr("Open compiled in explorer");
-//        item->program = "explorer.exe";
-//        item->workingDirectory = "<SOURCEPATH>";
-//        item->parameters = " /n, /select, <EXENAME>";
-//        item->pauseAfterExit = false;
-//        mTools.append(item);
-//#endif
         save();
         return;
     }
@@ -105,6 +78,10 @@ void ToolsManager::load()
         item->parameters = object["parameters"].toString();
         item->outputTarget = static_cast<ToolItemOutputTarget>(object["outputTarget"].toInt(0));
         item->inputOrigin= static_cast<ToolItemInputOrigin>(object["inputOrigin"].toInt(0));
+        const bool legacyDelete = ((item->program == "del" && item->parameters == "/q /f <EXENAME>")
+            || (item->program == "rm" && item->parameters == "-f <EXENAME>"))
+            && item->workingDirectory == "<SOURCEPATH>" && item->inputOrigin == ToolItemInputOrigin::None;
+        if (legacyDelete) continue;
         item->isUTF8 = object["isUTF8"].toBool(true);
         mTools.append(item);
     }

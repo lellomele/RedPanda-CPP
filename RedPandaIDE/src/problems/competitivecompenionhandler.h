@@ -19,6 +19,7 @@
 #include <QObject>
 #include <memory>
 #include <QThread>
+#include <atomic>
 #include <QSemaphore>
 
 class OJProblem;
@@ -44,7 +45,7 @@ private slots:
 protected:
     void run() override;
 private:
-    bool mStop;
+    std::atomic_bool mStop;
     QString mBatchId;
     int mBatchCount;
     int mBatchProblemsRecieved;

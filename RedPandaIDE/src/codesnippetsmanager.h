@@ -19,9 +19,9 @@
 
 #include <QObject>
 #include "parser/parserutils.h"
-#include <QAbstractListModel>
+#include <QAbstractTableModel>
 
-class CodeSnippetsModel: public QAbstractListModel {
+class CodeSnippetsModel: public QAbstractTableModel {
     Q_OBJECT
 public:
     void addSnippet(
@@ -29,7 +29,7 @@ public:
             const QString& prefix,
             const QString& code,
             const QString& description,
-            int menuSection);
+            int menuSection, const QString &language = "all", bool enabled = true);
     void remove(int index);
     void clear();
     QModelIndex lastSnippetCaption();
@@ -56,6 +56,7 @@ class CodeSnippetsManager : public QObject
 public:
     explicit CodeSnippetsManager(DirSettings *dirSettings, QObject *parent = nullptr);
 
+    QList<PCodeSnippet> snippetsForLanguage(const QString &language) const;
     void load();
     void save();
 
@@ -74,10 +75,8 @@ public:
 
 private:
     void loadSnippets();
-    void saveSnippets();
     QString loadNewFileTemplate(const QString &filename);
 
-    void saveNewFileTemplate(const QString &filename, const QString &templateContent);
 
 private:
     QList<PCodeSnippet> mSnippets;

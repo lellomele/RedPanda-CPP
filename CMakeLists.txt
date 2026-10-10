@@ -52,6 +52,7 @@ set(PORTABLE_CONFIG ${PORTABLE_CONFIG_DEFAULT} CACHE STRING
 
 set(QT_COMPONENTS
     Core
+    Concurrent
     Gui
     LinguistTools
     Network
@@ -314,18 +315,32 @@ elseif(WIN32)
 endif()
 
 # docs
+# Bilingual user documentation, kept with all install layouts.
+set(FORK_DOCUMENTATION_FILES
+    docs/README.md
+    docs/FEATURES.md docs/FUNZIONALITA.md
+    docs/FORK_CHANGES.md docs/MODIFICHE_FORK.md
+    docs/GCC_DIAGNOSTICS.md docs/TRADUZIONE_DIAGNOSTICI.md
+    docs/WINDOWS_DISTRIBUTION.md docs/DISTRIBUZIONE_WINDOWS_FORK.md
+    docs/ITALIAN_TERMINOLOGY.md docs/TERMINOLOGIA_IT.md)
 if(${FILESYSTEM_LAYOUT} STREQUAL "hierarchy")
     install(
-        FILES README.md NEWS.md LICENSE
+        FILES README.md README.it.md NEWS.md LICENSE FORK_NOTICE.txt
         DESTINATION share/doc/${APP_NAME})
+    install(FILES ${FORK_DOCUMENTATION_FILES} DESTINATION share/doc/${APP_NAME}/docs)
+    install(DIRECTORY docs/assets DESTINATION share/doc/${APP_NAME}/docs)
 elseif(${FILESYSTEM_LAYOUT} STREQUAL "flat")
     install(
-        FILES README.md NEWS.md LICENSE
+        FILES README.md README.it.md NEWS.md LICENSE FORK_NOTICE.txt
         DESTINATION .)
+    install(FILES ${FORK_DOCUMENTATION_FILES} DESTINATION docs)
+    install(DIRECTORY docs/assets DESTINATION docs)
 elseif(${FILESYSTEM_LAYOUT} STREQUAL "bundle")
     install(
-        FILES README.md NEWS.md LICENSE
+        FILES README.md README.it.md NEWS.md LICENSE FORK_NOTICE.txt
         DESTINATION RedPandaIDE.app/Contents/Resources/doc)
+    install(FILES ${FORK_DOCUMENTATION_FILES} DESTINATION RedPandaIDE.app/Contents/Resources/doc/docs)
+    install(DIRECTORY docs/assets DESTINATION RedPandaIDE.app/Contents/Resources/doc/docs)
 else()
     message(FATAL_ERROR "Unknown FILESYSTEM_LAYOUT: ${FILESYSTEM_LAYOUT}")
 endif()
@@ -335,6 +350,14 @@ if (XDG)
     install(
         FILES platform/linux/redpandaide.svg
         DESTINATION share/icons/hicolor/scalable/apps)
+endif()
+
+# Raster launcher icons are provided at native desktop sizes.
+if(XDG)
+    foreach(ICON_SIZE 16 24 32 48 64 128 256 512)
+        install(FILES platform/linux/icons/${ICON_SIZE}x${ICON_SIZE}/apps/redpandaide.png
+            DESTINATION share/icons/hicolor/${ICON_SIZE}x${ICON_SIZE}/apps)
+    endforeach()
 endif()
 
 # desktop entry

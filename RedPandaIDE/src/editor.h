@@ -213,6 +213,8 @@ public:
     void reparseTodo();
     void insertString(const QString& value, bool moveCursor);
     void insertCodeSnippet(const QString& code);
+    QString snippetPrefix() const;
+    bool expandCodeSnippet(const PCodeSnippet &snippet, const QString &expectedPrefix);
     void print();
     void exportAsRTF(const QString& rtfFilename);
     void exportAsHTML(const QString& htmlFilename);

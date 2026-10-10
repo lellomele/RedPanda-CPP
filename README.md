@@ -2,7 +2,7 @@
 
 [Italiano](README.it.md) · [Features](docs/FEATURES.md) · [Fork changes](docs/FORK_CHANGES.md)
 
-<img src="docs/assets/redpanda-cpp.png" width="96" alt="Red Panda C++">
+<img src="docs/assets/redpanda-cpp.png" width="160" alt="Red Panda C++">
 
 A C/C++ and GNU assembly IDE with compiler integration, code navigation and debugging. This fork adds a configurable Italian interface, coordinated light and dark themes, richer snippets, searchable preferences, local Italian GCC diagnostics and safer document persistence and recovery.
 
@@ -10,7 +10,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-Download the Windows packages from [GitHub Releases](https://github.com/lellomele/RedPanda-CPP/releases).
+**[Release beta v3.5.0-beta.2-mele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-mele.1)** — Windows 10/11 x64.
+
+| Package | Download |
+| --- | --- |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 

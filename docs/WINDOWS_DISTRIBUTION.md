@@ -1,5 +1,17 @@
 # Windows installation and distribution
 
+**[Release beta v3.5.0-beta.2-mele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-mele.1)** — Windows 10/11 x64.
+
+| Package | Download |
+| --- | --- |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/SHA256SUMS.txt) |
+
+Downloadable package names use `rmele`. Only the GitHub attachments have been renamed: installation folders and credits inside the packages retain the names documented below.
+
 [Italiano](DISTRIBUZIONE_WINDOWS_FORK.md) · [Features](FEATURES.md) · [README](../README.md)
 
 ## Choose a package

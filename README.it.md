@@ -10,15 +10,15 @@ Basato su [RedPanda C++ di Roy Qu e contributori](https://github.com/royqh1979/R
 
 ## Installazione
 
-**[Release beta v3.5.0-beta.2-mele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-mele.1)** — Windows 10/11 x64.
+**[Release beta v3.5.0-beta.2-rmele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-rmele.1)** — Windows 10/11 x64.
 
 | Pacchetto | Download |
 | --- | --- |
-| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
-| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
-| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-mele.1/SHA256SUMS.txt) |
+| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
+| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
+| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/SHA256SUMS.txt) |
 
 I pacchetti Windows x64 sono disponibili in tre formati:
 

@@ -18,6 +18,8 @@
 #define COMPILERMANAGER_H
 
 #include <QObject>
+#include <QSet>
+#include <QThread>
 #include <QMutex>
 #include "qt_utils/utils.h"
 #include "../utils.h"
@@ -68,6 +70,8 @@ public:
                     );
     void stopRun();
     void stopAllRunners();
+    // GUI-thread shutdown gate: false keeps live tasks owned for a later retry.
+    bool shutdown(int timeoutMilliseconds = 8000);
     void stopPausing();
     void stopCompile();
     void stopCheckSyntax();
@@ -98,6 +102,7 @@ private slots:
     void onSyntaxCheckFinished(const QString& filename);
     void onSyntaxCheckIssue(PCompileIssue issue);
 private:
+    void trackWorker(QThread *worker);
     ProjectCompiler* createProjectCompiler(std::shared_ptr<Project> project);
     PCppParser getParserForFile(const QString& filename);
 private:
@@ -110,6 +115,9 @@ private:
     Compiler* mBackgroundSyntaxChecker;
     Runner* mRunner;
     PNonExclusiveTemporaryFileOwner mTempFileOwner;
+    // Mutated only on this QObject's GUI thread. Removal uses QThread::finished,
+    // not an earlier task-specific completion signal.
+    QSet<QThread *> mWorkers;
     mutable QRecursiveMutex mCompileMutex;
     mutable QRecursiveMutex mBackgroundSyntaxCheckMutex;
     mutable QRecursiveMutex mRunnerMutex;

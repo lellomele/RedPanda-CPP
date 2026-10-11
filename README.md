@@ -10,15 +10,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-**[Release beta v3.5.0-beta.2-rmele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.0](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 
@@ -49,6 +49,8 @@ Installed builds keep settings in the user profile; portable packages use `app/c
 
 Recovery is best-effort: native crashes, memory corruption, unavailable storage and power loss may require restarting and recovering the last valid snapshot. Save important work regularly. Cleanup covers recognised build outputs and requires operating-system Recycle Bin support. Italian diagnostic translation covers a finite catalog, not every compiler message. See [Recovery, reliability and operational limits](docs/FORK_CHANGES.md#robustness-and-error-resilience).
 
+Project builds use Make timestamps. Use **Rebuild All** when files were copied with older timestamps or changed within the toolchain’s timestamp resolution.
+
 The officially validated distribution targets **Windows x64 with Qt 6.11.2**. Qt 5 code paths are retained as secondary compatibility; they are not a release requirement.
 
 ## Build from source
@@ -56,7 +58,7 @@ The officially validated distribution targets **Windows x64 with Qt 6.11.2**. Qt
 Requirements: C++17, CMake 3.19+, Qt 6.8+ or Qt 5.15, and matching compiler/Qt architecture. Qt modules: Core, Concurrent, Gui, Widgets, Network, PrintSupport, Svg, Xml, Test and LinguistTools. The Windows distributions use Qt 6.11.2 and MinGW-w64. Other platform/toolchain combinations require validation for this fork.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCS=ON -DLUA_ADDON=ON -DSDCC=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build --parallel
 cmake --build build --target all-test-targets --parallel
 ctest --test-dir build --output-on-failure

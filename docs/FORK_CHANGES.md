@@ -11,7 +11,7 @@ This document describes implemented additions and their effect on everyday use. 
 | Initial RedPanda 3.4 source archive | Official tag `v3.4`, commit `2fff3c2584e99ccd5aafdf897120e00e9c036515` | The original reference for this work |
 | Upstream checkout used for implementation | Commit `cbe084d162987fb90867b12f279af94c7a1d6a38`, version `3.5.0-beta.2` | The technical base against which the fork's modifications were applied |
 
-The initial archive and official 3.4 tag identify the same commit. Work on the cloned repository started from the later upstream revision; therefore upstream changes between those revisions are not presented as our additions. The current application's 3.5 beta version derives from that checkout, rather than a relabelled stable 3.4 release. See the [upstream comparison](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
+The initial archive and official 3.4 tag identify the same commit. Work on the cloned repository started from the later upstream revision; therefore upstream changes between those revisions are not presented as our additions. The fork's stable 3.5 release builds on that checkout and its subsequent stabilization work. See the [upstream comparison](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
 
 Original copyrights, attribution and GPL licensing are retained. The fork attribution is **© 2006 Ing. prof. Raffaele Mele**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
 
@@ -88,7 +88,7 @@ Native crashes, memory corruption, unavailable storage and power loss may requir
 
 The exercised configuration is Windows x64, GCC 16.1.0, Qt 6.11.2 and CMake/Ninja. Verification covers document failure paths, rejected imports, preference cancellation, recovery, cleanup, language/identity, rendered colours and diagnostic consistency. The GCC corpus contains 164 real diagnostics from 142 small C/C++ programs, in addition to the catalog examples.
 
-Installed and portable layouts were exercised in English and Italian without SDK Qt or compiler directories in the launch PATH; installer extraction and selective uninstallation were checked in isolated folders. Conditional Qt 5.15 code paths and Linux/macOS resources remain, but this fork has not been fully validated on those combinations. This is a beta-derived fork, not a claim of a new upstream stable release.
+Installed and portable layouts were exercised in English and Italian without SDK Qt or compiler directories in the launch PATH; installer extraction and selective uninstallation were checked in isolated folders. Conditional Qt 5.15 code paths and Linux/macOS resources remain, but this fork has not been fully validated on those combinations. Version 3.5.0 is the stable Windows release of this fork; upstream releases retain their own versioning and validation.
 
 ## Editing and persistence stabilization
 
@@ -107,3 +107,15 @@ A [multi-level testing guide](TESTING.md) documents unit/component suites, failu
 A recoverable save failure while closing rejects the close event, restores shutdown flags and keeps unsaved editors available for correction or retry.
 
 The checked text-codec wrappers now share the same Unicode framing and stateless BOM policy under Qt 5 and Qt 6. UTF-32 saves validate scalar boundaries and omit uninitialized encoder tails; truncated final units are rejected. Git integration exposes process exit status, reports nonzero exits and startup failures, and has offline repository regression checks with Unicode paths and commits.
+
+Git commands are available from the Git menu when a configured Git executable and a suitable repository are present. Unavailable commands remain disabled. Restoring tracked working-tree files requires a confirmation with No selected initially; cancelling preserves the files and unsaved editor buffers remain available.
+
+Compiler and runner cancellation uses atomic cross-thread flags and bounded termination followed by forced process stop. Stopping a program no longer waits on a semaphore in the interface thread. Task ownership is retained until the worker finishes, and compiler argument macros are captured before starting the worker instead of reading editor widgets from a background thread. IPC memory and native handles are released on normal completion and failure.
+
+The Windows launcher now carries stable 3.5 version metadata and is rebuilt together with the distribution resources.
+
+Repository initialization checks the actual Git result before generating ignore rules. Existing `.gitignore` files and links are preserved, generated defaults use an atomic checked save, and staging failures are reported. Detached HEAD repositories are recognised. Windows execution preserves the user program’s PATH without adding the IDE’s private runtime directory.
+
+Closing a modified buffer now requires an explicit save or discard decision, including empty modified documents. An unexpected dialog result preserves the buffer. Failed clipboard copying reports a recoverable status message and keeps the selected original diagnostic available for retry.
+
+Generated Windows/MinGW Make recipes now select the absolute system cmd.exe and /d /c explicitly for clean and build. Rebuild therefore removes old objects even when inherited shell settings prefer sh; custom Makefiles and Unix recipes retain their selected shell.

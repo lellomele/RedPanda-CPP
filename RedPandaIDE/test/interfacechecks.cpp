@@ -11,6 +11,8 @@
 #include <QFileSystemWatcher>
 #include <qsynedit/syntaxer/cpp.h>
 #include "interfacechecks.h"
+#include "compilerworkflowchecks.h"
+#include "src/utils/os.h"
 #include "src/mainwindow.h"
 #include "src/sessionrecovery.h"
 #include "src/sessionstore.h"
@@ -30,11 +32,18 @@
 #include "src/utils/colorcontrast.h"
 #include <QStyleOptionViewItem>
 #include <QClipboard>
+#include <QStatusBar>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include <QMimeData>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QCloseEvent>
 #include <QPointer>
+#include <QItemSelectionModel>
+#include <QFileSystemModel>
+#include <QTabWidget>
 #include <QMenu>
 #include <QTreeWidget>
 #include <QDialogButtonBox>
@@ -87,8 +96,9 @@ private:
 static QString prefText(const char *source) { return QCoreApplication::translate("SettingsDialog", source); }
 static void waitForUi(int milliseconds = 150) { QEventLoop loop; QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit); loop.exec(); }
 int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &outputDirectory) {
-    QDir().mkpath(outputDirectory); QJsonArray checks; int failures = 0;
+    QDir().mkpath(outputDirectory); QJsonArray checks; QJsonArray skipped; int failures = 0;
     auto check = [&](const QString &name, bool passed) { checks.append(QJsonObject{{"name", name}, {"passed", passed}}); if (!passed) ++failures; };
+    auto skip = [&](const QString &name, const QString &reason) { skipped.append(QJsonObject{{"name", name}, {"reason", reason}}); };
     const QString invalidTheme = QDir(outputDirectory).filePath("invalid-theme.json");
     for (const QByteArray &bytes : {QByteArray("[]"), QByteArray("{}"), QByteArray(R"({"palette":{"PaletteText":"bad color"}})")}) {
         QFile file(invalidTheme); if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) return 2; file.close(); bool rejected = false;
@@ -369,11 +379,37 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             check("Original column is restricted to Italian UI", model->columnCount({}) == (language == "it_IT" ? 5 : 4));
             const QString original = model->originalDescription(0);
             table->setCurrentIndex(model->index(0, 3));
-            auto *savedClipboard = new QMimeData;
-            if (const auto *previous = QGuiApplication::clipboard()->mimeData()) for (const auto &format : previous->formats()) savedClipboard->setData(format, previous->data(format));
+            bool nativeClipboardDenied = false;
+#ifdef Q_OS_WIN
+            if (QGuiApplication::platformName() == "windows") {
+                SetLastError(ERROR_SUCCESS);
+                const bool available = OpenClipboard(nullptr);
+                const DWORD clipboardError = GetLastError();
+                if (available) CloseClipboard();
+                nativeClipboardDenied = !available && clipboardError == ERROR_ACCESS_DENIED;
+            }
+#endif
+            // A denied native clipboard is an explicit environment limitation.
+            // Never convert unrelated failures or a text mismatch into a skip.
+            QMimeData *savedClipboard = nullptr;
+            if (!nativeClipboardDenied) {
+                savedClipboard = new QMimeData;
+                if (const auto *previous = QGuiApplication::clipboard()->mimeData())
+                    for (const auto &format : previous->formats()) savedClipboard->setData(format, previous->data(format));
+            }
             check("Copy original action invoked", QMetaObject::invokeMethod(&window, "onTableIssuesCopy", Qt::DirectConnection));
-            check("Clipboard contains exact GCC message", QGuiApplication::clipboard()->text() == original);
-            QGuiApplication::clipboard()->setMimeData(savedClipboard);
+            const bool copied = QGuiApplication::clipboard()->text() == original;
+            if (!copied && nativeClipboardDenied) {
+                skip("Clipboard contains exact GCC message", "Native Windows OpenClipboard(NULL) returned ERROR_ACCESS_DENIED (5) in the restricted QA process.");
+                const QString feedback = QCoreApplication::translate("MainWindow", "Cannot copy the diagnostic to the clipboard. Please retry.");
+                check("Denied native clipboard reports a recoverable translated copy failure", window.statusBar()->currentMessage() == feedback);
+                check("Denied native clipboard preserves the original diagnostic and selection", model->originalDescription(0) == original && table->currentIndex() == model->index(0, 3));
+                check("Denied native clipboard copy can be retried", QMetaObject::invokeMethod(&window, "onTableIssuesCopy", Qt::DirectConnection)
+                      && window.statusBar()->currentMessage() == feedback && model->originalDescription(0) == original);
+            } else {
+                check("Clipboard contains exact GCC message", copied);
+            }
+            if (savedClipboard) QGuiApplication::clipboard()->setMimeData(savedClipboard);
             check("Text export includes the original", table->toTxt().contains(original));
             check("Exported positions match GCC and the displayed table", table->toTxt().contains("\t" + QString::number(parsed.first()->line + 1) + "\t" + QString::number(parsed.first()->column + 1) + "\t"));
             if (language == "it_IT") {
@@ -657,12 +693,25 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     const bool invokedReadOnly = QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection);
     dismissReadOnly.stop();
     check("Read-only batch replacement is reported before editing", invokedReadOnly && readOnlyErrors == 1);
+    check("Read-only batch replacement preserves content caret modified and read-only state",
+          opened->text() == beforeReadOnly && opened->modified() == beforeModified
+          && opened->caretXY() == beforeCaret && opened->readOnly());
+    // Availability of editing commands deliberately changes in read-only mode.
+    check("Read-only mode disables undo and redo without editing", !opened->canUndo() && !opened->canRedo());
+    check("Read-only batch replacement preserves the disk file", readBytes(openedPath) == "foo foo\n");
+    opened->setReadOnly(previousReadOnly);
     check("Read-only batch replacement preserves content undo redo caret and modified state",
           opened->text() == beforeReadOnly && opened->modified() == beforeModified
           && opened->canUndo() == beforeUndo && opened->canRedo() == beforeRedo
-          && opened->caretXY() == beforeCaret && opened->readOnly());
-    check("Read-only batch replacement preserves the disk file", readBytes(openedPath) == "foo foo\n");
-    opened->setReadOnly(previousReadOnly);
+          && opened->caretXY() == beforeCaret && opened->readOnly() == previousReadOnly);
+    check("Read-only preservation fixture retains the prior redo operation", beforeRedo);
+    if (beforeRedo) {
+        opened->redo();
+        check("A prior redo still applies after rejected read-only replacement", opened->lineText(0) == "Xfoo foo" && opened->modified());
+        opened->undo();
+        check("Undo after redo recovers the preserved read-only fixture", opened->text() == beforeReadOnly
+              && opened->modified() == beforeModified && opened->canUndo() == beforeUndo && opened->canRedo() == beforeRedo);
+    }
 }
 
             window.editorManager()->forceCloseEditor(opened);
@@ -761,7 +810,9 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 ++layoutErrors;
             if (stage == 2 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
                 ++cancelledDocumentPrompts;
-                message->done(QMessageBox::Cancel);
+                message->button(QMessageBox::Cancel)->click();
+            } else if (stage == 3 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
+                message->done(0); // No standard save/discard choice was made.
             } else
                 message->accept();
         }
@@ -811,6 +862,19 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                   extra && extra->modified() && extra->text() == unsavedText);
             check("Close retry commits a valid layout before document cancellation",
                   QJsonDocument::fromJson(readBytes(closeLayout)).isArray());
+            stage = 3;
+            QCloseEvent noChoice;
+            QApplication::sendEvent(&window, &noChoice);
+            check("Close without an explicit save or discard choice keeps the buffer",
+                  !noChoice.isAccepted() && extra && extra->modified() && extra->text() == unsavedText);
+            if (extra) {
+                extra->setContent(QStringList{QString()});
+                extra->setModified(true);
+                QCloseEvent emptyModified;
+                QApplication::sendEvent(&window, &emptyModified);
+                check("Closing an empty modified document still requires a save or discard choice",
+                      !emptyModified.isAccepted() && extra && extra->modified() && extra->empty());
+            }
             if (extra)
                 window.editorManager()->forceCloseEditor(extra);
         }
@@ -866,17 +930,36 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 GitManager manager;
                 QString output;
                 bool initialized = false;
+                const QByteArray preservedIgnore("# QA user's existing rules\n*.temporary-qa\n");
+                const QString ignorePath = repository.filePath(".gitignore");
+                {
+                    QFile ignore(ignorePath);
+                    check("VCS smoke existing ignore fixture written", ignore.open(QIODevice::WriteOnly)
+                          && ignore.write(preservedIgnore) == preservedIgnore.size());
+                }
+                const auto readIgnore = [&] {
+                    QFile ignore(ignorePath);
+                    return ignore.open(QIODevice::ReadOnly) ? ignore.readAll() : QByteArray();
+                };
                 try {
-                    manager.createRepository(repository.path());
+                    const bool initSucceeded = manager.createRepository(repository.path(), output);
                     QString branch;
-                    initialized = manager.hasRepository(repository.path(), branch);
+                    initialized = initSucceeded && manager.hasRepository(repository.path(), branch);
+                    check("VCS smoke repository initialization preserves the user's existing ignore bytes", readIgnore() == preservedIgnore);
+                    check("VCS smoke repository initialization does not stage an existing ignore", !manager.listStagedFiles(repository.path()).contains(".gitignore"));
                     check("VCS smoke initializes and recognizes an offline repository", initialized && !branch.isEmpty());
                 } catch (const BaseError &) {
                     check("VCS smoke initializes and recognizes an offline repository", false);
                 }
                 if (initialized) {
+                    // Isolate byte-level fixtures from Git for Windows' system
+                    // autocrlf policy; these writes affect this temporary repo only.
+                    const bool autocrlfConfigured = manager.setConfig(repository.path(), "core.autocrlf", "false", output);
+                    const bool eolConfigured = manager.setConfig(repository.path(), "core.eol", "lf", output);
+                    check("VCS smoke configures local core.autocrlf=false", autocrlfConfigured);
+                    check("VCS smoke configures local core.eol=lf", eolConfigured);
                     const QString hooks = repository.filePath("disabled hooks");
-                    const bool configured = QDir().mkpath(hooks)
+                    const bool configured = autocrlfConfigured && eolConfigured && QDir().mkpath(hooks)
                             && manager.setConfig(repository.path(), "core.hooksPath", hooks, output)
                             && manager.setConfig(repository.path(), "commit.gpgSign", "false", output)
                             && manager.setUserName(repository.path(), "RedPanda GUI test", output)
@@ -910,7 +993,155 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                             const auto afterFailure = manager.log(repository.path(), 0, 1);
                             check("VCS smoke failed operation preserves HEAD", !head.isEmpty() && afterFailure.size() == 1
                                   && afterFailure.first()->commitHash == head);
+                            {
+                                auto *gitMenu = window.findChild<QMenu *>("menuGit");
+                                struct GitActionSpec { const char *suffix; const char *english; const char *italian; };
+                                const QList<GitActionSpec> actions{
+                                    {"Create_Repository", "Create Repository...", "Crea repository..."},
+                                    {"Add_Files", "Stage Selected Files", "Aggiungi file selezionati allo staging"},
+                                    {"Commit", "Commit...", "Commit..."},
+                                    {"Restore", "Restore Working Tree...", "Ripristina working tree..."},
+                                    {"Branch", "Branches...", "Branch..."},
+                                    {"Merge", "Merge...", "Merge..."},
+                                    {"Log", "History...", "Cronologia..."},
+                                    {"Remotes", "Remotes...", "Repository remoti..."},
+                                    {"Fetch", "Fetch", "Fetch"},
+                                    {"Pull", "Pull", "Pull"},
+                                    {"Push", "Push", "Push"},
+                                };
+                                check("Git menu is available with VCS enabled", gitMenu && gitMenu->menuAction()->isVisible());
+                                for (const auto &spec : actions) {
+                                    const QString objectName = "actionGit_" + QString::fromLatin1(spec.suffix);
+                                    auto *action = window.findChild<QAction *>(objectName);
+                                    const QByteArray slot = "on_" + objectName.toLatin1() + "_triggered()";
+                                    const QString expected = QString::fromUtf8(language == "it_IT" ? spec.italian : spec.english);
+                                    check("Git menu action and implemented slot: " + QString::fromLatin1(spec.suffix),
+                                          action && gitMenu && gitMenu->actions().contains(action)
+                                          && action->text() == expected && !action->toolTip().isEmpty()
+                                          && window.metaObject()->indexOfSlot(slot.constData()) >= 0);
+                                }
+                                check("Git menu omits unsupported reset and revert actions",
+                                      !window.findChild<QAction *>("actionGit_Reset") && !window.findChild<QAction *>("actionGit_Revert"));
+                                auto *files = window.findChild<QTreeView *>("treeFiles");
+                                auto *explorer = window.findChild<QTabWidget *>("tabExplorer");
+                                auto *filesPage = window.findChild<QWidget *>("tabFiles");
+                                auto *stage = window.findChild<QAction *>("actionGit_Add_Files");
+                                auto *restore = window.findChild<QAction *>("actionGit_Restore");
+                                check("Git action smoke has the files view and working actions", files && explorer && filesPage && stage && restore && gitMenu);
+                                if (files && explorer && filesPage && stage && restore && gitMenu) {
+                                    const QString oldRoot = pSettings->environment().currentFolder();
+                                    QPointer<QWidget> oldPage = explorer->currentWidget();
+                                    QPointer<Editor> opened;
+                                    auto cleanupGitUi = finally([&] {
+                                        if (opened)
+                                            window.editorManager()->forceCloseEditor(opened);
+                                        window.setFilesViewRoot(oldRoot);
+                                        if (oldPage)
+                                            explorer->setCurrentWidget(oldPage);
+                                    });
+                                    explorer->setCurrentWidget(filesPage);
+                                    window.setFilesViewRoot(repository.path());
+                                    waitForUi(100);
+                                    const QString path = repository.filePath(name);
+                                    const auto writeGitBytes = [&](const QByteArray &bytes) {
+                                        QFile target(path);
+                                        return target.open(QIODevice::WriteOnly) && target.write(bytes) == bytes.size();
+                                    };
+                                    const auto readGitBytes = [&] {
+                                        QFile source(path);
+                                        return source.open(QIODevice::ReadOnly) ? source.readAll() : QByteArray();
+                                    };
+                                    auto *model = qobject_cast<QFileSystemModel *>(files->model());
+                                    QModelIndex index;
+                                    QElapsedTimer ready;
+                                    ready.start();
+                                    while (model && !index.isValid() && ready.elapsed() < 3000) {
+                                        index = model->index(path);
+                                        if (!index.isValid())
+                                            waitForUi(40);
+                                    }
+                                    check("Git files view resolves the isolated Unicode filename", index.isValid());
+                                    if (index.isValid()) {
+                                        files->selectionModel()->clearSelection();
+                                        QMetaObject::invokeMethod(gitMenu, "aboutToShow", Qt::DirectConnection);
+                                        check("Git staging action is disabled with no selection", !stage->isEnabled());
+                                        const QByteArray stagedBytes("int main() { return 7; }\n");
+                                        const QByteArray changedBytes("int main() { return 9; }\n");
+                                        check("Git action smoke writes a change for staging", writeGitBytes(stagedBytes));
+                                        files->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                                        QMetaObject::invokeMethod(gitMenu, "aboutToShow", Qt::DirectConnection);
+                                        check("Git staging action enables for a selected repository file", stage->isEnabled());
+                                        stage->trigger();
+                                        check("Git staging QAction invokes its connected slot", manager.listStagedFiles(repository.path()).contains(name));
+                                        check("Git restore smoke writes an unstaged change", writeGitBytes(changedBytes));
+                                        opened = window.openFile(path);
+                                        check("Git restore smoke opens an independent buffer", !opened.isNull());
+                                        if (opened) {
+                                            const QString unsaved("// unsaved editor buffer\nint memory_only = 42;");
+                                            opened->setContent(unsaved);
+                                            opened->setModified(true);
+                                            const QString expectedBuffer = opened->text();
+                                            const auto expectedCaret = opened->caretXY();
+                                            int restoreDialogs = 0;
+                                            bool defaultsToNo = true;
+                                            QMessageBox::StandardButton answer = QMessageBox::No;
+                                            QTimer dismissRestore;
+                                            QObject::connect(&dismissRestore, &QTimer::timeout, [&] {
+                                                for (auto *widget : QApplication::topLevelWidgets()) {
+                                                    if (auto *message = qobject_cast<QMessageBox *>(widget)) {
+                                                        if (message->windowTitle() == QCoreApplication::translate("MainWindow", "Restore Working Tree")) {
+                                                            ++restoreDialogs;
+                                                            defaultsToNo = defaultsToNo && message->defaultButton() == message->button(QMessageBox::No);
+                                                            if (auto *button = message->button(answer))
+                                                                button->click();
+                                                        } else if (auto *button = message->button(QMessageBox::No)) {
+                                                            // File watcher reload prompts must keep the unsaved buffer.
+                                                            button->click();
+                                                        } else {
+                                                            message->reject();
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                            dismissRestore.start(20);
+                                            QMetaObject::invokeMethod(gitMenu, "aboutToShow", Qt::DirectConnection);
+                                            restore->trigger();
+                                            waitForUi(100);
+                                            check("Canceled Git restore asks once with No as default", restoreDialogs == 1 && defaultsToNo);
+                                            check("Canceled Git restore preserves working tree bytes", readGitBytes() == changedBytes);
+                                            check("Canceled Git restore preserves unsaved editor and caret", opened && opened->text() == expectedBuffer && opened->modified() && opened->caretXY() == expectedCaret);
+                                            answer = QMessageBox::Yes;
+                                            restore->trigger();
+                                            waitForUi(200);
+                                            dismissRestore.stop();
+                                            check("Confirmed Git restore asks once with No as default", restoreDialogs == 2 && defaultsToNo);
+                                            check("Confirmed Git restore QAction invokes its connected slot", readGitBytes() == stagedBytes);
+                                            check("Confirmed Git restore preserves unsaved editor and caret", opened && opened->text() == expectedBuffer && opened->modified() && opened->caretXY() == expectedCaret);
+                                            check("Git restore preserves staged changes", manager.listStagedFiles(repository.path()).contains(name));
+                                        }
+                                    }
+                                }
+                            }
+                            QProcess detach;
+                            detach.setProgram(git);
+                            detach.setArguments({"-C", repository.path(), "checkout", "--detach", head});
+                            detach.start();
+                            const bool detached = detach.waitForStarted(2000) && detach.waitForFinished(5000)
+                                    && detach.exitStatus() == QProcess::NormalExit && detach.exitCode() == 0;
+                            if (detach.state() != QProcess::NotRunning) { detach.kill(); detach.waitForFinished(2000); }
+                            QString detachedBranch;
+                            check("VCS smoke recognizes a detached HEAD repository", detached
+                                  && manager.hasRepository(repository.path(), detachedBranch) && detachedBranch == "HEAD");
                             pSettings->vcs().setGitPath(repository.filePath("missing git.exe"));
+                            output.clear();
+                            check("VCS smoke failed initialization leaves existing ignore bytes unchanged",
+                                  !manager.createRepository(repository.path(), output) && !output.trimmed().isEmpty() && readIgnore() == preservedIgnore);
+                            QTemporaryDir notCreated;
+                            output.clear();
+                            check("VCS smoke failed initialization creates neither ignore nor repository",
+                                  notCreated.isValid() && !manager.createRepository(notCreated.path(), output)
+                                  && !output.trimmed().isEmpty() && !QFileInfo::exists(notCreated.filePath(".gitignore"))
+                                  && !QFileInfo::exists(notCreated.filePath(".git")));
                             output.clear();
                             check("VCS smoke missing executable cannot report empty success",
                                   !manager.add(repository.path(), name, output) && output.startsWith("fatal:")
@@ -936,8 +1167,12 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     }
 #endif
 
+    runCompilerWorkflowChecks(window, outputDirectory, check);
     QFile result(QDir(outputDirectory).filePath("ui-results.json"));
-    if (!result.open(QIODevice::WriteOnly)) return 2; const auto report = QJsonDocument(QJsonObject{{"language", language}, {"checks", checks}, {"failures", failures}}).toJson(); if (result.write(report) != report.size()) return 2;
+    if (!result.open(QIODevice::WriteOnly)) return 2;
+    const auto report = QJsonDocument(QJsonObject{{"language", language}, {"appVersion", REDPANDA_CPP_VERSION},
+        {"qtVersion", qVersion()}, {"portableConfig", usePortableConfigPath()}, {"checks", checks}, {"skipped", skipped}, {"failures", failures}}).toJson();
+    if (result.write(report) != report.size()) return 2;
     for (int i = 0; i < window.editorManager()->pageCount(); ++i) if (auto *editor = (*window.editorManager())[i]) editor->setModified(false);
     return failures == 0 ? 0 : 1;
 }

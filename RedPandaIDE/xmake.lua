@@ -32,6 +32,7 @@ target("RedPandaIDE")
         "QtWidgets",
         "QtXml")
     add_includedirs(".")
+    add_headerfiles("src/compiler/processcancellation.h")
 
     -- resolve version
 
@@ -82,6 +83,7 @@ target("RedPandaIDE")
         "src/sessionstore.cpp",
         "src/diagnostics.cpp",
         "test/interfacechecks.cpp",
+        "test/compilerworkflowchecks.cpp",
         "src/colorscheme.cpp",
         "src/customfileiconprovider.cpp",
         "src/projectoptions.cpp",

@@ -31,7 +31,7 @@ Runner::Runner(const QString &filename, const QStringList &arguments, const QStr
 
 void Runner::stop()
 {
-    mStop = true;
+    mStop.store(true, std::memory_order_release);
     doStop();
 }
 
@@ -42,12 +42,12 @@ void Runner::doStop()
 
 bool Runner::pausing() const
 {
-    return mPausing;
+    return mPausing.load(std::memory_order_acquire);
 }
 
 void Runner::setPausing(bool newCanFinish)
 {
-    mPausing = newCanFinish;
+    mPausing.store(newCanFinish, std::memory_order_release);
 }
 
 int Runner::waitForFinishTime() const

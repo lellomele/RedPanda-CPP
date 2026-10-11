@@ -6,33 +6,64 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSaveFile>
 
 GitManager::GitManager(QObject *parent) : QObject(parent)
 {
 }
 
-void GitManager::createRepository(const QString &folder)
+bool GitManager::createRepository(const QString &folder, QString &output)
 {
+    output.clear();
+    if (folder.isEmpty() || !QFileInfo(folder).isDir()) {
+        output = QStringLiteral("fatal: ") + tr("The repository folder does not exist.");
+        return false;
+    }
+    QDir directory(folder);
+    const QString absoluteFolder = directory.absolutePath();
     QString currentBranch;
-    if (hasRepository(folder,currentBranch))
-        throw GitError(tr("Folder \"%1\" already has a repository!"));
-    QStringList args;
-    args.append("init");
-    runGit(folder,args);
+    if (hasRepository(absoluteFolder, currentBranch)) {
+        output = QStringLiteral("fatal: ") + tr("Folder \"%1\" already has a repository!").arg(folder);
+        return false;
+    }
+    output = runGit(absoluteFolder, QStringList{"init"});
+    if (!isSuccess(output))
+        return false;
 
-    QStringList contents;
-    contents.append(".git");
-    contents.append("*.o");
-    contents.append("*.exe");
-    contents.append("*.layout");
+    // Git initialization must succeed before touching default rules. Existing
+    // files (including links) are user data: preserve them and do not stage them.
+    const QString ignorePath = directory.filePath(".gitignore");
+    const QFileInfo existing(ignorePath);
+    if (existing.exists() || existing.isSymLink())
+        return true;
+    QStringList contents{".git", "*.o", "*.exe", "*.layout"};
 #ifdef Q_OS_UNIX
     contents.append("*.");
 #endif
-
-    QDir dir(folder);
-    stringsToFile(contents,dir.filePath(".gitignore"));
-    QString output;
-    add(folder,".gitignore",output);
+    const QByteArray bytes = (contents.join('\n') + '\n').toUtf8();
+    QSaveFile ignore(ignorePath);
+    ignore.setDirectWriteFallback(false);
+    if (!ignore.open(QIODevice::WriteOnly) || ignore.write(bytes) != bytes.size()) {
+        ignore.cancelWriting();
+        output = QStringLiteral("fatal: ") + tr("Cannot create \"%1\": %2").arg(ignorePath, ignore.errorString());
+        return false;
+    }
+    // Preserve a rule file created by another operation during initialization.
+    const QFileInfo beforeCommit(ignorePath);
+    if (beforeCommit.exists() || beforeCommit.isSymLink()) {
+        ignore.cancelWriting();
+        return true;
+    }
+    if (!ignore.commit()) {
+        output = QStringLiteral("fatal: ") + tr("Cannot save \"%1\": %2").arg(ignorePath, ignore.errorString());
+        return false;
+    }
+    QString stageOutput;
+    if (!add(absoluteFolder, ".gitignore", stageOutput)) {
+        output = stageOutput.isEmpty() ? QStringLiteral("fatal: ") + tr("Cannot stage the generated ignore file.") : stageOutput;
+        return false;
+    }
+    return true;
 }
 
 bool GitManager::hasRepository(const QString &folder, QString& currentBranch)
@@ -46,6 +77,10 @@ bool GitManager::hasRepository(const QString &folder, QString& currentBranch)
     args.append("no");
     args.append("--ignored=no");
     QString output = runGit(folder,args);
+    if (output.startsWith("HEAD detached at ") || output.startsWith("HEAD detached from ")) {
+        currentBranch = QStringLiteral("HEAD");
+        return true;
+    }
     bool result = output.startsWith("On branch");
     if (result) {
         int pos = QString("On branch").length();

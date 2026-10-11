@@ -562,18 +562,18 @@ bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force) 
         return false;
     if (force) {
         editor->save(true,false);
-    } else if ( (editor->modified()) && (!editor->empty())) {
+    } else if (editor->modified()) {
         // ask user if he wants to save
         QMessageBox::StandardButton reply;
         reply = QMessageBox::question(editor,QObject::tr("Save"),
                                       QString(QObject::tr("Save changes to %1?")).arg(editor->filename()),
                                       QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel);
-        if (reply == QMessageBox::Cancel) {
-            return false;
-        } else if (reply == QMessageBox::Yes) {
-            if (!editor->save(false,false)) {
+        if (reply == QMessageBox::Yes) {
+            if (!editor->save(false,false))
                 return false;
-            }
+        } else if (reply != QMessageBox::No) {
+            // Only an explicit discard choice may close an unsaved buffer.
+            return false;
         }
     }
 

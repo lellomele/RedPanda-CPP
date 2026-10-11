@@ -88,3 +88,9 @@ Il recupero affianca i salvataggi normali. Problemi di archiviazione, crash nati
 Installer, ZIP portabile ed estrattore portabile includono Qt e le dipendenze private. Il `RedPandaIDE.exe` principale avvia **`app/RedPandaIDE-core.exe`**. Le preferenze installate risiedono nel profilo utente; quelle portabili e il recupero sono in `app/config`. Compilatore e debugger si configurano separatamente.
 
 Consulta [Distribuzioni Windows](DISTRIBUZIONE_WINDOWS_FORK.md) per installazione, aggiornamento, struttura delle cartelle e sorgenti del packaging.
+
+## Integrazione Git
+
+Configura un eseguibile Git esterno in **Preferenze > Strumenti > Git**. Il menu **Git** offre creazione del repository, aggiunta dei file selezionati allo staging, Commit, Branch, Merge, cronologia, repository remoti, Fetch, Pull e Push. I comandi si abilitano in base all’eseguibile configurato, al repository e alla selezione. Sono riconosciuti anche i repository con HEAD scollegato da un branch.
+
+La creazione conserva un `.gitignore` già presente. Un nuovo file di regole predefinite viene salvato atomicamente dopo l’inizializzazione riuscita. **Ripristina working tree** scarta le modifiche non incluse nello staging dei file versionati su disco soltanto dopo conferma, con No preselezionato. I contenuti non salvati negli editor rimangono disponibili. Gli errori Git mostrano l’output originale dello strumento, per consentire di correggere permessi, configurazione o stato del repository e riprovare.

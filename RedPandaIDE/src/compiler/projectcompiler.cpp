@@ -28,7 +28,25 @@
 #include "../utils/parsemacros.h"
 #include "../mainwindow.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#if defined(Q_OS_WIN) && MAKE_INTERFACE == MAKE_INTERFACE_mingw32
+#include <windows.h>
+
+namespace {
+QString windowsMakeShell()
+{
+    wchar_t directory[MAX_PATH];
+    const UINT length = GetSystemDirectoryW(directory, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH)
+        throw CompileError(QCoreApplication::translate("ProjectCompiler", "Can't locate the Windows command shell."));
+    const QString shell = QDir::fromNativeSeparators(QString::fromWCharArray(directory, length)) + "/cmd.exe";
+    if (!QFileInfo(shell).isFile())
+        throw CompileError(QCoreApplication::translate("ProjectCompiler", "Windows command shell '%1' doesn't exist.").arg(shell));
+    return shell;
+}
+}
+#endif
 
 ProjectCompiler::ProjectCompiler(std::shared_ptr<Project> project):
     Compiler("",false),
@@ -270,13 +288,21 @@ void ProjectCompiler::writeMakeDefines(QFile &file, bool &genModuleDef)
 #endif
 
 #ifdef Q_OS_WIN
-    QStringList resourceArguments = parseArguments(mProject->options().resourceCmd, pMainWindow->macroVariables(), true);
+    QStringList resourceArguments = parseArguments(mProject->options().resourceCmd, macroVariables(), true);
 #endif
 
     QString executable = extractRelativePath(mProject->makeFileName(), mProject->outputFilename());
     QString cleanExe = localizeMakefilePath(executable);
     QString pchHeader = extractRelativePath(mProject->makeFileName(), mProject->options().precompiledHeader);
     QString pch = extractRelativePath(mProject->makeFileName(), mProject->options().precompiledHeader + "." GCH_EXT);
+
+    // Generated mingw32 recipes use cmd built-ins. An environment SHELL alone
+    // does not stop Make from finding sh.exe on PATH.
+#if defined(Q_OS_WIN) && MAKE_INTERFACE == MAKE_INTERFACE_mingw32
+    const QString makeShell = windowsMakeShell();
+    writeln(file, "SHELL := " + QString(makeShell).replace('$', "$$").replace('#', "\\#"));
+    writeln(file, ".SHELLFLAGS := /d /c");
+#endif
 
     // programs
     writeln(file, "CXX      = " + escapeArgumentForMakefileVariableValue(cxx, true));
@@ -651,6 +677,18 @@ bool ProjectCompiler::prepareForCompile()
         makefile,
         "all",
     };
+#if defined(Q_OS_WIN) && MAKE_INTERFACE == MAKE_INTERFACE_mingw32
+    if (!mProject->options().useCustomMakefile || mProject->options().customMakefile.isEmpty()) {
+        // Command-line values also protect generated recipes from inherited
+        // MAKEFLAGS or make-includes that select an incompatible shell.
+        const QStringList shellArguments{
+            "SHELL=" + windowsMakeShell().replace('$', "$$"),
+            ".SHELLFLAGS=/d /c",
+        };
+        cleanArgs += shellArguments;
+        makeAllArgs += shellArguments;
+    }
+#endif
     if (mOnlyClean) {
         mArguments = cleanArgs;
     } else if (mRebuild) {

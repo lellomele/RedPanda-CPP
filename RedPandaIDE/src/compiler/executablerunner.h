@@ -19,7 +19,6 @@
 
 #include "runner.h"
 #include <QProcess>
-#include <QSemaphore>
 #include <memory>
 
 class ExecutableRunner : public Runner
@@ -53,16 +52,12 @@ private:
     QString mShareMemoryId;
     bool mRedirectInput;
     bool mStartConsole;
-    QSemaphore mQuitSemaphore;
     QStringList mBinDirs;
 
     // QThread interface
 protected:
     void run() override;
 
-    // Runner interface
-protected:
-    void doStop() override;
 };
 
 #endif // EXECUTABLERUNNER_H

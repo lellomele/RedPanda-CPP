@@ -21,9 +21,9 @@ const QString &GitRepository::folder() const
     return mRealFolder;
 }
 
-void GitRepository::createRepository()
+bool GitRepository::createRepository(QString &output)
 {
-    mManager->createRepository(mRealFolder);
+    return mManager->createRepository(mRealFolder, output);
 }
 
 bool GitRepository::hasRepository(QString& currentBranch)

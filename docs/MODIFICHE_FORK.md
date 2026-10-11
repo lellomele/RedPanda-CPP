@@ -11,7 +11,7 @@ Questo documento descrive le aggiunte implementate e i loro effetti nell'uso quo
 | Archivio iniziale dei sorgenti RedPanda 3.4 | Tag ufficiale `v3.4`, commit `2fff3c2584e99ccd5aafdf897120e00e9c036515` | Riferimento originale di questo lavoro |
 | Checkout upstream usato per l'implementazione | Commit `cbe084d162987fb90867b12f279af94c7a1d6a38`, versione `3.5.0-beta.2` | Base tecnica rispetto alla quale sono state applicate le modifiche del fork |
 
-L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lavoro sul clone è iniziato dalla revisione upstream successiva: gli sviluppi upstream fra queste revisioni non vengono quindi presentati come nostre aggiunte. La versione 3.5 beta visualizzata dall'applicazione deriva da quel checkout, anziché da una release stabile 3.4 rinominata. Consulta il [confronto upstream](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
+L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lavoro sul clone è iniziato dalla revisione upstream successiva: gli sviluppi upstream fra queste revisioni non vengono quindi presentati come nostre aggiunte. La release stabile 3.5 del fork nasce da quel checkout e dal successivo lavoro di stabilizzazione. Consulta il [confronto upstream](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
 
 Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **© 2006 Ing. prof. Raffaele Mele**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
@@ -88,7 +88,7 @@ Crash nativi, corruzione della memoria, archiviazione non disponibile e interruz
 
 La combinazione esercitata è Windows x64, GCC 16.1.0, Qt 6.11.2 e CMake/Ninja. Le verifiche coprono errori dei documenti, importazioni rifiutate, annullamento delle preferenze, recupero, pulizia, lingua/identità, colori disegnati e coerenza dei diagnostici. Il corpus GCC comprende 164 diagnostici reali da 142 piccoli programmi C/C++, oltre agli esempi del catalogo.
 
-Le strutture installabile e portabile sono state provate in inglese e italiano senza cartelle dello SDK Qt o dei compilatori nel PATH di avvio; estrazione e disinstallazione selettiva sono state verificate in cartelle isolate. Restano i percorsi condizionali Qt 5.15 e le risorse Linux/macOS, ma queste combinazioni non sono state validate integralmente per il fork. La base è una versione beta: non viene presentata come nuova release stabile upstream.
+Le strutture installabile e portabile sono state provate in inglese e italiano senza cartelle dello SDK Qt o dei compilatori nel PATH di avvio; estrazione e disinstallazione selettiva sono state verificate in cartelle isolate. Restano i percorsi condizionali Qt 5.15 e le risorse Linux/macOS, ma queste combinazioni non sono state validate integralmente per il fork. La 3.5.0 è la release stabile Windows di questo fork; le release upstream mantengono la propria numerazione e validazione.
 
 ## Stabilizzazione dell’editing e della persistenza
 
@@ -107,3 +107,15 @@ Una [guida ai test multilivello](TEST_IT.md) documenta suite unitarie/di compone
 Un errore recuperabile di salvataggio durante la chiusura annulla l’evento, ripristina gli stati di arresto e mantiene disponibili gli editor non salvati per correggere il problema o riprovare.
 
 I wrapper controllati delle codifiche applicano ora gli stessi limiti delle unità Unicode e la stessa gestione stateless del BOM con Qt 5 e Qt 6. I salvataggi UTF-32 validano gli scalari ed escludono i byte residui non inizializzati del codificatore; le unità finali troncate vengono rifiutate. L’integrazione Git espone lo stato del processo, segnala uscite non riuscite ed errori di avvio, ed è coperta da prove su repository locali isolati con percorsi Unicode e commit.
+
+I comandi Git sono disponibili nel menu Git quando sono configurati l’eseguibile e un repository adatto. I comandi non applicabili rimangono disabilitati. Il ripristino dei file versionati nella cartella di lavoro richiede una conferma con No preselezionato: annullando, i file restano invariati e i contenuti non salvati negli editor rimangono disponibili.
+
+L’annullamento di compilazione ed esecuzione usa flag atomici tra i thread e arresti dei processi con attese limitate, seguiti dalla terminazione forzata se necessaria. Fermare un programma non attende più un semaforo nel thread dell’interfaccia. La proprietà dei task viene mantenuta fino alla conclusione del worker; le macro degli argomenti del compilatore vengono acquisite prima di avviarlo, senza leggere gli editor da un thread secondario. Memoria IPC e handle nativi vengono rilasciati sia alla conclusione normale sia dopo un errore.
+
+Il launcher Windows riporta ora i metadati della versione stabile 3.5 e viene ricompilato insieme alle risorse della distribuzione.
+
+L’inizializzazione verifica l’esito effettivo di Git prima di generare le regole di esclusione. File e collegamenti `.gitignore` già presenti vengono conservati; le regole predefinite usano un salvataggio atomico controllato e gli errori di staging sono segnalati. I repository con HEAD scollegato vengono riconosciuti. L’esecuzione Windows conserva il PATH dei programmi dell’utente senza aggiungere la cartella delle dipendenze private dell’IDE.
+
+La chiusura di un buffer modificato richiede ora una scelta esplicita di salvataggio o scarto, anche quando il documento è vuoto. Un esito inatteso della finestra conserva il buffer. Se la copia negli appunti fallisce, un messaggio recuperabile nella barra di stato mantiene disponibile il diagnostico originale selezionato per riprovare.
+
+Le ricette Make generate per Windows/MinGW selezionano esplicitamente cmd.exe di sistema con percorso assoluto e /d /c, sia per la pulizia sia per la compilazione. Ricompila tutto elimina quindi i vecchi oggetti anche quando le impostazioni ereditate preferiscono sh; Makefile personalizzati e ricette Unix conservano la shell scelta.

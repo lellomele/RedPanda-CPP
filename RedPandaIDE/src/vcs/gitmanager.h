@@ -19,7 +19,7 @@ public:
 
     explicit GitManager(QObject *parent = nullptr);
 
-    void createRepository(const QString& folder);
+    bool createRepository(const QString& folder, QString &output);
     bool hasRepository(const QString& folder, QString& currentBranch);
 
     QString rootFolder(const QString& folder);

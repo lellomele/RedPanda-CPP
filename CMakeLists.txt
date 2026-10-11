@@ -406,3 +406,14 @@ if(WIN32)
         message(FATAL_ERROR "Unknown FILESYSTEM_LAYOUT: ${FILESYSTEM_LAYOUT}")
     endif()
 endif()
+
+# Development-only report validation; Python is never an IDE runtime requirement.
+if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME test-stabilization-report
+            COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stabilization_report.py)
+        set_tests_properties(test-stabilization-report PROPERTIES
+            TIMEOUT 15 LABELS "infrastructure")
+    endif()
+endif()

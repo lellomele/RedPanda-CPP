@@ -34,6 +34,8 @@
 #include "../systemconsts.h"
 #include "../settings.h"
 #include <QMessageBox>
+#include <QElapsedTimer>
+#include <algorithm>
 #include <QUuid>
 #include "projectcompiler.h"
 #ifdef Q_OS_MACOS
@@ -58,10 +60,53 @@ CompilerManager::CompilerManager(QObject *parent) : QObject(parent),
 
 CompilerManager::~CompilerManager()
 {
-    stopAllRunners();
-    stopCompile();
-    stopCheckSyntax();
-    stopRun();
+    // Normal close paths must reject shutdown() == false before destroying the
+    // window/settings. This fallback also drains tasks in startup/QA teardown.
+    if (!shutdown())
+        qCritical("Compiler workers are still stopping; active QThread objects were not deleted.");
+}
+
+void CompilerManager::trackWorker(QThread *worker)
+{
+    mWorkers.insert(worker);
+    connect(worker, &QThread::finished, this, [this, worker] {
+        mWorkers.remove(worker);
+    });
+    connect(worker, &QObject::destroyed, this, [this, worker] {
+        mWorkers.remove(worker);
+    });
+}
+
+bool CompilerManager::shutdown(int timeoutMilliseconds)
+{
+    if (QThread::currentThread() != thread())
+        return false;
+    const auto workers = mWorkers;
+    for (QThread *worker : workers) {
+        if (auto *compiler = qobject_cast<Compiler *>(worker))
+            compiler->stopCompile();
+        else if (auto *runner = qobject_cast<Runner *>(worker))
+            runner->stop();
+    }
+    QElapsedTimer deadline;
+    deadline.start();
+    for (QThread *worker : workers) {
+        const qint64 remaining = std::max<qint64>(0, timeoutMilliseconds - deadline.elapsed());
+        if (!worker->wait(static_cast<unsigned long>(remaining)))
+            return false;
+        // Waiting does not pump the GUI queue. Clear only completed current
+        // tasks here; queued callbacks also guard against stale sender objects.
+        if (worker == mRunner) {
+            mRunner = nullptr;
+            mTempFileOwner.reset();
+        }
+        if (worker == mCompiler)
+            mCompiler = nullptr;
+        if (worker == mBackgroundSyntaxChecker)
+            mBackgroundSyntaxChecker = nullptr;
+        mWorkers.remove(worker);
+    }
+    return true;
 }
 
 bool CompilerManager::compiling() const
@@ -110,6 +155,7 @@ void CompilerManager::compile(const QString& filename, FileType fileType, const 
         }
         mCompiler->setParserForFile(getParserForFile(filename));
         mCompiler->setRebuild(rebuild);
+        trackWorker(mCompiler);
         connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
         connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
         connect(mCompiler, &Compiler::compileIssue, this, &CompilerManager::onCompileIssue);
@@ -143,6 +189,7 @@ void CompilerManager::compileProject(std::shared_ptr<Project> project, bool rebu
         //deleted when thread finished
         mCompiler = createProjectCompiler(project);
         mCompiler->setRebuild(rebuild);
+        trackWorker(mCompiler);
         connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
         connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
 
@@ -179,6 +226,7 @@ void CompilerManager::cleanProject(std::shared_ptr<Project> project)
         compiler->setOnlyClean(true);
         mCompiler = compiler;
         mCompiler->setRebuild(false);
+        trackWorker(mCompiler);
         connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
         connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
 
@@ -236,6 +284,7 @@ void CompilerManager::checkSyntax(const QString &filename, const QByteArray& enc
         if (!project)
             mBackgroundSyntaxChecker->setParserForFile(getParserForFile(filename));
         mBackgroundSyntaxChecker->setProject(project);
+        trackWorker(mBackgroundSyntaxChecker);
         connect(mBackgroundSyntaxChecker, &Compiler::finished, mBackgroundSyntaxChecker, &QThread::deleteLater);
         connect(mBackgroundSyntaxChecker, &Compiler::compileIssue, this, &CompilerManager::onSyntaxCheckIssue);
         connect(mBackgroundSyntaxChecker, &Compiler::compileFinished, this, &CompilerManager::onSyntaxCheckFinished);
@@ -344,10 +393,18 @@ void CompilerManager::run(
     }
     execRunner->addBinDirs(binDirs);
 
+#ifndef Q_OS_WIN
     execRunner->addBinDir(pSettings->dirs().appDir());
+#endif
 
     mRunner = execRunner;
 
+    // Retain a terminal-wrapper script until its worker actually finishes,
+    // even if a paused console is detached and a new run starts.
+    trackWorker(mRunner);
+    const auto scriptOwner = std::shared_ptr<NonExclusiveTemporaryFileOwner>(std::move(mTempFileOwner));
+    connect(mRunner, &Runner::finished, mRunner, [owner = scriptOwner]() mutable { owner.reset(); });
+    connect(this, &CompilerManager::signalStopAllRunners, mRunner, &Runner::stop);
     connect(mRunner, &Runner::finished, this ,&CompilerManager::onRunnerTerminated);
     connect(mRunner, &Runner::finished, mRunner ,&Runner::deleteLater);
     connect(mRunner, &Runner::pausingForFinish, this ,&CompilerManager::onRunnerPausing);
@@ -394,6 +451,8 @@ void CompilerManager::doRunProblem(const QString &filename, const QString &argum
         execRunner->setExecTimeout(timeLimit);
     if (memoryLimit)
         execRunner->setMemoryLimit(memoryLimit);
+    trackWorker(mRunner);
+    connect(this, &CompilerManager::signalStopAllRunners, mRunner, &Runner::stop);
     connect(mRunner, &Runner::finished, this ,&CompilerManager::onRunnerTerminated);
     connect(mRunner, &Runner::finished, mRunner ,&Runner::deleteLater);
     if (mMainWindow) {
@@ -414,10 +473,9 @@ void CompilerManager::stopRun()
 {
     QMutexLocker locker(&mRunnerMutex);
     if (mRunner!=nullptr) {
+        // Stop is asynchronous. Keep ownership and the finished connection
+        // until the worker and child process have released their resources.
         mRunner->stop();
-        disconnect(mRunner, &Runner::finished, this ,&CompilerManager::onRunnerTerminated);
-        mRunner=nullptr;
-        mTempFileOwner=nullptr;
     }
 }
 
@@ -430,10 +488,7 @@ void CompilerManager::stopPausing()
 {
     QMutexLocker locker(&mRunnerMutex);
     if (mRunner!=nullptr && mRunner->pausing()) {
-        disconnect(mRunner, &Runner::finished, this ,&CompilerManager::onRunnerTerminated);
         mRunner->stop();
-        mRunner=nullptr;
-        mTempFileOwner=nullptr;
     }
 }
 
@@ -459,6 +514,8 @@ bool CompilerManager::canCompile(const QString &) const
 void CompilerManager::onCompileFinished(const QString& filename)
 {
     QMutexLocker locker(&mCompileMutex);
+    if (sender() != mCompiler)
+        return;
     mCompiler=nullptr;
     emit compileFinished(filename, false);
 }
@@ -466,6 +523,8 @@ void CompilerManager::onCompileFinished(const QString& filename)
 void CompilerManager::onRunnerTerminated()
 {
     QMutexLocker locker(&mRunnerMutex);
+    if (sender() != mRunner)
+        return;
     mRunner=nullptr;
     mTempFileOwner=nullptr;
 }
@@ -473,8 +532,9 @@ void CompilerManager::onRunnerTerminated()
 void CompilerManager::onRunnerPausing()
 {
     QMutexLocker locker(&mRunnerMutex);
+    if (sender() != mRunner)
+        return;
     disconnect(mRunner, &Runner::finished, this ,&CompilerManager::onRunnerTerminated);
-    connect(this, &CompilerManager::signalStopAllRunners, mRunner, &Runner::stop);
     if (mMainWindow) {
         disconnect(mRunner, &Runner::finished, mMainWindow ,&MainWindow::onRunFinished);
         disconnect(mRunner, &Runner::runErrorOccurred, mMainWindow ,&MainWindow::onRunErrorOccured);
@@ -493,6 +553,8 @@ void CompilerManager::onCompileIssue(PCompileIssue issue)
 void CompilerManager::onSyntaxCheckFinished(const QString& filename)
 {
     QMutexLocker locker(&mBackgroundSyntaxCheckMutex);
+    if (sender() != mBackgroundSyntaxChecker)
+        return;
     mBackgroundSyntaxChecker=nullptr;
     emit compileFinished(filename, true);
 }

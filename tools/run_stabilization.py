@@ -3,6 +3,82 @@
 from pathlib import Path
 import argparse,json,os,subprocess,sys,time
 
+CLIPBOARD_SKIP_NAME = 'Clipboard contains exact GCC message'
+CLIPBOARD_SKIP_REASON = 'Native Windows OpenClipboard(NULL) returned ERROR_ACCESS_DENIED (5) in the restricted QA process.'
+CLIPBOARD_FAILURE_CHECKS = {
+    'Denied native clipboard reports a recoverable translated copy failure',
+    'Denied native clipboard preserves the original diagnostic and selection',
+    'Denied native clipboard copy can be retried',
+}
+
+COMPILER_WORKFLOW_CHECKS = {
+    'Production compiler workflow: ' + name for name in (
+        'configured GCC is an existing executable',
+        'valid C++ emits a warning and creates its executable',
+        'production ExecutableRunner completes without a visible console',
+        'real slow runner cancellation is bounded and joins its worker',
+        'stop immediately after start is not lost',
+        'real FileCompiler subprocess cancellation is bounded',
+        'real GCC compilation succeeds after compiler-process cancellation',
+        'project workflow has the real Make executable',
+        'production ProjectCompiler builds multiple units through Make',
+        'project rebuild succeeds after a previous unit error',
+    )
+}
+WINDOWS_MANAGED_PATH_CHECKS = {
+    'Production compiler workflow: managed run retains the compiler runtime path',
+    'Production compiler workflow: managed run excludes IDE app and private library paths',
+}
+VCS_WORKFLOW_CHECKS = {
+    'VCS smoke has a real Git executable',
+    'VCS smoke initializes and recognizes an offline repository',
+    'Git menu is available with VCS enabled',
+    'Git staging QAction invokes its connected slot',
+    'Canceled Git restore preserves working tree bytes',
+    'Confirmed Git restore QAction invokes its connected slot',
+    'Confirmed Git restore preserves unsaved editor and caret',
+} | {'Git menu action and implemented slot: ' + name for name in (
+    'Create_Repository', 'Add_Files', 'Commit', 'Restore', 'Branch', 'Merge', 'Log',
+    'Remotes', 'Fetch', 'Pull', 'Push',
+)}
+
+def validate_gui_results(result, language, windows, compiler=False, git=False):
+    """Accept only successful checks and the explicitly verified Windows skip."""
+    if not isinstance(result, dict) or result.get('language') != language:
+        raise ValueError('unexpected GUI report language')
+    if type(result.get('failures')) is not int or result['failures'] != 0:
+        raise ValueError('GUI report contains failures')
+    checks = result.get('checks')
+    if not isinstance(checks, list) or not checks:
+        raise ValueError('GUI checks must be a nonempty array')
+    names = set()
+    for check in checks:
+        if not isinstance(check, dict) or check.get('passed') is not True:
+            raise ValueError('GUI check failed or has an invalid result')
+        name = check.get('name')
+        if not isinstance(name, str) or not name:
+            raise ValueError('GUI check has a missing name')
+        names.add(name)
+    required = set()
+    if compiler:
+        required.update(COMPILER_WORKFLOW_CHECKS)
+        if windows:
+            required.update(WINDOWS_MANAGED_PATH_CHECKS)
+    if git:
+        required.update(VCS_WORKFLOW_CHECKS)
+    missing = required - names
+    if missing:
+        raise ValueError('requested GUI workflow was not executed: ' + ', '.join(sorted(missing)))
+    skipped = result.get('skipped', [])
+    if not isinstance(skipped, list) or len(skipped) > 1:
+        raise ValueError('unexpected GUI skipped checks')
+    if skipped:
+        if not windows or skipped[0] != dict(name=CLIPBOARD_SKIP_NAME, reason=CLIPBOARD_SKIP_REASON):
+            raise ValueError('GUI skip is not authorized for this platform and reason')
+        if CLIPBOARD_SKIP_NAME in names or not CLIPBOARD_FAILURE_CHECKS.issubset(names):
+            raise ValueError('clipboard skip lacks its recoverable failure checks')
+    return len(checks), skipped
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir',required=True,type=Path)
@@ -66,11 +142,15 @@ def main():
             if ok:
                 try:
                     result=json.loads((profile/'ui-results.json').read_text(encoding='utf-8'))
-                    passed=result['failures']==0 and result['language']==language and all(c['passed'] for c in result['checks'])
-                    results[-1]['passed']=passed;results[-1]['checks']=len(result['checks'])
+                    check_count,skipped=validate_gui_results(result,language,os.name=='nt',compiler=bool(args.compiler),git=bool(args.git))
+                    results[-1]['passed']=True;results[-1]['checks']=check_count
+                    results[-1]['skipped']=skipped
                 except (OSError,ValueError,KeyError):
                     results[-1]['passed']=False;results[-1]['error']='missing or invalid GUI results'
     (report/'results.json').write_text(json.dumps(dict(schema=1,results=results),indent=2)+'\n',encoding='utf-8')
-    for result in results:print(('PASS' if result['passed'] else 'FAIL')+': '+result['name'])
+    for result in results:
+        print(('PASS' if result['passed'] else 'FAIL')+': '+result['name'])
+        for skipped in result.get('skipped',[]):
+            print('  SKIP: '+skipped['name']+' — '+skipped['reason'])
     return 0 if results and all(r['passed'] for r in results) else 1
 if __name__=='__main__':sys.exit(main())

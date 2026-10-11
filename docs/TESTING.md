@@ -7,7 +7,7 @@
 Use a matching C++17 compiler and Qt installation as described in [BUILD.md](../BUILD.md). Build the application and every test target; building the IDE alone does not build all test executables.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCS=ON -DLUA_ADDON=ON -DSDCC=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build --target RedPandaIDE all-test-targets benchmark-qsynedit --parallel
 ctest --test-dir build --output-on-failure --timeout 120 --output-junit functional.xml
 ```
@@ -42,7 +42,7 @@ The following runner records logs, JUnit, JSON results and screenshots in a new 
 python tools/run_stabilization.py --build-dir build --report-dir reports/run-1 --ui --benchmark --compiler /path/to/g++
 ```
 
-Use a fresh report directory for every GUI run. Native Windows checks require a desktop session and Recycle Bin support. The compiler argument enables actual GCC compilation and checks its diagnostics through the IDE panel; without it, the diagnostic fixture tests still run. `--ide` can point to the root launcher of an extracted distribution to verify the packaged application. Prefer test directories with spaces and Unicode characters.
+Use a fresh report directory for every GUI run. Native Windows checks require a desktop session and Recycle Bin support. The compiler argument enables actual GCC checks through the production compiler manager, file compiler and executable runner, including diagnostics, failure/retry and cancellation; without it, the diagnostic fixture tests still run. `--ide` can point to the root launcher of an extracted distribution to verify the packaged application. Prefer test directories with spaces and Unicode characters.
 
 ## Repeatable measurements
 
@@ -60,4 +60,8 @@ The `Stabilization gates` workflow builds the full application with Git, Lua and
 
 The release requirement is Windows x64 with Qt 6.11.2. The Linux/Qt 5 job is informational legacy coverage and does not block the Windows release; its actual result remains visible. Other platforms and toolchains require separate validation.
 
-On Windows with Git enabled, an additional native askpass encoding test brings the total to 22; it uses synthetic Unicode input, never real credentials.
+On Windows with Git enabled, an additional native askpass encoding test brings the total to 22; it uses synthetic Unicode input, never real credentials. When a Python 3 interpreter is available, CTest also runs the orchestration-report regression suite, bringing that configuration to 23 checks. Python is a development dependency only.
+
+Real-tool GUI checks require GCC and its Make executable; an available GDB next to the compiler also exercises an owned debug fixture and the production MI parser. Pass `--git /path/to/git` for offline Git/UI checks. No user repository is used. Project error/retry checks use Rebuild All to avoid file-time resolution ambiguities in Make.
+
+GUI reports contain an explicit `skipped` array. The only accepted skip is successful native clipboard transfer when Windows denies clipboard access to the test process with error 5. That case still checks the recoverable failure message, retained original/selection and retry; it does not claim a successful transfer. Other failures and unsupported skips fail the run. A normal interactive launch can exercise the positive clipboard case.

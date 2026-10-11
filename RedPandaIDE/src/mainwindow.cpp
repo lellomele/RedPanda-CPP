@@ -517,6 +517,8 @@ MainWindow::MainWindow(QWidget *parent)
     //git menu
     connect(ui->menuGit, &QMenu::aboutToShow,
             this, &MainWindow::updateVCSActions);
+#else
+    ui->menuGit->menuAction()->setVisible(false);
 #endif
     //set action group name (show in the option / environment / shortcuts)
     ui->actionNew->setData(mMenuNew->title());
@@ -1304,14 +1306,14 @@ void MainWindow::onFileSaved(const QString &path, bool inProject)
         if (index.isValid()) {
             if (!inProject) {
                 if ( (isCFile(path) || isHFile(path))
-                        &&  !mFileSystemModelIconProvider.VCSRepository()->isFileInRepository(path)) {
+                        &&  !mFileSystemModelIconProvider->VCSRepository()->isFileInRepository(path)) {
                     QString output;
-                    mFileSystemModelIconProvider.VCSRepository()->add(extractRelativePath(mFileSystemModelIconProvider.VCSRepository()->folder(),path),output);
+                    mFileSystemModelIconProvider->VCSRepository()->add(extractRelativePath(mFileSystemModelIconProvider->VCSRepository()->folder(),path),output);
                 }
             }
 //            qDebug()<<"update icon provider";
-            mFileSystemModelIconProvider.update();
-            mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+            mFileSystemModelIconProvider->update();
+            mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
             ui->treeFiles->update(index);
         }
     }
@@ -4300,15 +4302,15 @@ void MainWindow::onFilesViewContextMenu(const QPoint &pos)
 
 #ifdef ENABLE_VCS
     if (pSettings->vcs().gitOk() && hasRepository) {
-        mFileSystemModelIconProvider.update();
+        mFileSystemModelIconProvider->update();
         vcsMenu.setTitle(tr("Version Control"));
         if (ui->treeFiles->selectionModel()->hasSelection()) {
             bool shouldAdd = true;
             foreach (const QModelIndex& index, ui->treeFiles->selectionModel()->selectedRows()) {
-                if (mFileSystemModelIconProvider.VCSRepository()->isFileInRepository(
+                if (mFileSystemModelIconProvider->VCSRepository()->isFileInRepository(
                             mFileSystemModel->fileInfo(index)
                             ) &&
-                        ! mFileSystemModelIconProvider.VCSRepository()->isFileConflicting(
+                        ! mFileSystemModelIconProvider->VCSRepository()->isFileConflicting(
                             mFileSystemModel->fileInfo(index)
                             )
                         ) {
@@ -4326,8 +4328,8 @@ void MainWindow::onFilesViewContextMenu(const QPoint &pos)
         vcsMenu.addAction(ui->actionGit_Commit);
         vcsMenu.addAction(ui->actionGit_Restore);
 
-        bool canBranch = !mFileSystemModelIconProvider.VCSRepository()->hasChangedFiles()
-                && !mFileSystemModelIconProvider.VCSRepository()->hasStagedFiles();
+        bool canBranch = !mFileSystemModelIconProvider->VCSRepository()->hasChangedFiles()
+                && !mFileSystemModelIconProvider->VCSRepository()->hasStagedFiles();
         ui->actionGit_Branch->setEnabled(canBranch);
         ui->actionGit_Merge->setEnabled(canBranch);
         ui->actionGit_Log->setEnabled(true);
@@ -5259,7 +5261,10 @@ void MainWindow::onTableIssuesCopy()
     PCompileIssue issue = ui->tableIssues->issue(index);
     if (issue) {
         QClipboard* clipboard = QApplication::clipboard();
-        clipboard->setText(ui->tableIssues->issuesModel()->originalDescription(index.row()));
+        const QString original = ui->tableIssues->issuesModel()->originalDescription(index.row());
+        clipboard->setText(original);
+        if (clipboard->text() != original)
+            statusBar()->showMessage(tr("Cannot copy the diagnostic to the clipboard. Please retry."), 6000);
     }
 }
 
@@ -5857,6 +5862,15 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         //Don't save config twice ( lastopen info will get lost )
         if (!mQuitting) {
             mQuitting = true;
+            // Keep documents and the window alive until every worker has stopped.
+            const bool workersStopped = mCompilerManager->shutdown();
+            mCheckSyntaxInBack = false;
+            mCompileSuccessionTask = nullptr;
+            if (!workersStopped) {
+                QMessageBox::warning(this, tr("Shutdown Deferred"),
+                        tr("Background tasks are still stopping. Your documents remain open. Please retry closing shortly."));
+                return;
+            }
             if (!mShouldRemoveAllSettings) {
                 if (mCPUDialog)
                     mCPUDialog->close();
@@ -6371,6 +6385,8 @@ void MainWindow::onRunErrorOccured(const QString& reason)
 
 void MainWindow::onRunFinished()
 {
+    if (mQuitting)
+        return;
     updateCompileActions();
     if (pSettings->executor().minimizeOnRun()) {
         showNormal();        
@@ -8476,22 +8492,25 @@ void MainWindow::updateVCSActions()
     bool hasRepository = false;
     bool shouldEnable = false;
     bool canBranch = false;
-    if (ui->projectView->isVisible() && mProject) {
+    if (pSettings->vcs().gitOk() && ui->projectView->isVisible() && mProject) {
         mProject->model()->iconProvider()->update();
         QString branch;
         hasRepository = mProject->model()->iconProvider()->VCSRepository()->hasRepository(branch);
         shouldEnable = true;
         canBranch = !mProject->model()->iconProvider()->VCSRepository()->hasChangedFiles()
                 && !mProject->model()->iconProvider()->VCSRepository()->hasStagedFiles();
-    } else if (ui->treeFiles->isVisible()) {
-        mFileSystemModelIconProvider.update();
+    } else if (pSettings->vcs().gitOk() && ui->treeFiles->isVisible()) {
+        mFileSystemModelIconProvider->update();
         QString branch;
-        hasRepository = mFileSystemModelIconProvider.VCSRepository()->hasRepository(branch);
+        hasRepository = mFileSystemModelIconProvider->VCSRepository()->hasRepository(branch);
         shouldEnable = true;
-        canBranch =!mFileSystemModelIconProvider.VCSRepository()->hasChangedFiles()
-                && !mFileSystemModelIconProvider.VCSRepository()->hasStagedFiles();
+        canBranch =!mFileSystemModelIconProvider->VCSRepository()->hasChangedFiles()
+                && !mFileSystemModelIconProvider->VCSRepository()->hasStagedFiles();
     }
 
+    const bool hasSelection = (ui->treeFiles->isVisible() && ui->treeFiles->selectionModel()->hasSelection())
+            || (ui->projectView->isVisible() && ui->projectView->selectionModel()->hasSelection());
+    ui->actionGit_Add_Files->setEnabled(hasRepository && shouldEnable && hasSelection);
     ui->actionGit_Remotes->setEnabled(hasRepository && shouldEnable);
     ui->actionGit_Create_Repository->setEnabled(!hasRepository && shouldEnable);
     ui->actionGit_Push->setEnabled(hasRepository && shouldEnable);
@@ -8501,9 +8520,7 @@ void MainWindow::updateVCSActions()
     ui->actionGit_Commit->setEnabled(hasRepository && shouldEnable);
     ui->actionGit_Branch->setEnabled(hasRepository && shouldEnable && canBranch);
     ui->actionGit_Merge->setEnabled(hasRepository && shouldEnable && canBranch);
-    ui->actionGit_Reset->setEnabled(hasRepository && shouldEnable);
     ui->actionGit_Restore->setEnabled(hasRepository && shouldEnable);
-    ui->actionGit_Revert->setEnabled(hasRepository && shouldEnable);
 }
 #endif
 
@@ -9816,14 +9833,18 @@ void MainWindow::on_actionGit_Create_Repository_triggered()
 {
     if (ui->treeFiles->isVisible()) {
         GitManager vcsManager;
-        vcsManager.createRepository(pSettings->environment().currentFolder());
+        QString output;
+        if (!vcsManager.createRepository(pSettings->environment().currentFolder(), output)) {
+            QMessageBox::critical(this, tr("Error"), output);
+            return;
+        }
         //update files view;
         int pos = ui->cbFilesPath->findText(pSettings->environment().currentFolder());
         if (pos>=0) {
             ui->cbFilesPath->setItemIcon(pos, mIconsManager->getIcon(IconsManager::FILESYSTEM_GIT));
         }
-        mFileSystemModelIconProvider.setRootFolder(pSettings->environment().currentFolder());
-        mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+        mFileSystemModelIconProvider->setRootFolder(pSettings->environment().currentFolder());
+        mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
         //update project view
         if (mProject && mProject->folder() == mFileSystemModel->rootPath()) {
             mProject->addUnit(includeTrailingPathDelimiter(mProject->folder())+".gitignore", mProject->rootNode());
@@ -9832,13 +9853,22 @@ void MainWindow::on_actionGit_Create_Repository_triggered()
         }
     } else if (ui->projectView->isVisible() && mProject) {
         GitManager vcsManager;
-        vcsManager.createRepository(mProject->folder());
         QString output;
-        vcsManager.add(mProject->folder(), extractFileName(mProject->filename()), output);
-        vcsManager.add(mProject->folder(), extractFileName(mProject->options().icon), output);
-        foreach (PProjectUnit pUnit, mProject->unitList()) {
-            vcsManager.add(mProject->folder(),extractRelativePath(mProject->folder(),pUnit->fileName()),output);
+        if (!vcsManager.createRepository(mProject->folder(), output)) {
+            QMessageBox::critical(this, tr("Error"), output);
+            return;
         }
+        QStringList stageErrors;
+        const auto stageFile = [&](const QString &filename) {
+            if (!filename.isEmpty() && !vcsManager.add(mProject->folder(),
+                    extractRelativePath(mProject->folder(), filename), output))
+                stageErrors.append(output);
+        };
+        stageFile(mProject->filename());
+        if (!mProject->options().icon.isEmpty())
+            stageFile(QDir(mProject->folder()).absoluteFilePath(mProject->options().icon));
+        foreach (PProjectUnit pUnit, mProject->unitList())
+            stageFile(pUnit->fileName());
         //update project view
         QString ignoreFile=includeTrailingPathDelimiter(mProject->folder())+".gitignore";
         mProject->addUnit(ignoreFile, mProject->rootNode());
@@ -9852,9 +9882,11 @@ void MainWindow::on_actionGit_Create_Repository_triggered()
             if (pos>=0) {
                 ui->cbFilesPath->setItemIcon(pos, mIconsManager->getIcon(IconsManager::FILESYSTEM_GIT));
             }
-            mFileSystemModelIconProvider.update();
-            mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+            mFileSystemModelIconProvider->update();
+            mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
         }
+        if (!stageErrors.isEmpty())
+            QMessageBox::warning(this, tr("Error"), stageErrors.join("\n\n"));
     }
 }
 
@@ -9870,8 +9902,8 @@ void MainWindow::on_actionGit_Add_Files_triggered()
             vcsManager.add(info.absolutePath(),info.fileName(),output);
         }
         //update icons in files view
-        mFileSystemModelIconProvider.update();
-        mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+        mFileSystemModelIconProvider->update();
+        mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
     } else if (ui->projectView->isVisible() && mProject) {
         GitManager vcsManager;
         QModelIndexList indices = ui->projectView->selectionModel()->selectedRows();
@@ -9892,8 +9924,8 @@ void MainWindow::on_actionGit_Add_Files_triggered()
     }
 
     //update icons in files view too
-    mFileSystemModelIconProvider.update();
-    mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+    mFileSystemModelIconProvider->update();
+    mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
 }
 
 
@@ -9945,8 +9977,8 @@ void MainWindow::on_actionGit_Commit_triggered()
             mProject->model()->refreshIcons();
         }
         //update files view
-        mFileSystemModelIconProvider.update();
-        mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+        mFileSystemModelIconProvider->update();
+        mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
     }
     if (!output.isEmpty()) {
         InfoMessageBox infoBox;
@@ -9965,6 +9997,11 @@ void MainWindow::on_actionGit_Restore_triggered()
     }
     if (folder.isEmpty())
         return;
+    if (QMessageBox::warning(this, tr("Restore Working Tree"),
+            tr("Discard unstaged changes to tracked files in this repository?\n"
+               "Unsaved editor buffers are kept. This operation cannot be undone by Git."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
     GitManager vcsManager;
     QString output;
     if (vcsManager.restore(folder,"",output)) {
@@ -9974,8 +10011,8 @@ void MainWindow::on_actionGit_Restore_triggered()
             mProject->model()->refreshIcons();
         }
         //update files view
-        mFileSystemModelIconProvider.update();
-        mFileSystemModel->setIconProvider(&mFileSystemModelIconProvider);
+        mFileSystemModelIconProvider->update();
+        mFileSystemModel->setIconProvider(mFileSystemModelIconProvider.get());
     }
     if (!output.isEmpty()) {
         InfoMessageBox infoBox;

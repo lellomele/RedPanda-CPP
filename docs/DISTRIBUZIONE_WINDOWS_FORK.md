@@ -1,14 +1,14 @@
 # Installazione e distribuzioni Windows
 
-**[Release beta v3.5.0-beta.2-rmele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-rmele.1)** — Windows 10/11 x64.
+**[Release 3.5.0 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-rmele.1)** — Windows 10/11 x64.
 
 | Pacchetto | Download |
 | --- | --- |
-| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
-| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
-| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/SHA256SUMS.txt) |
+| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.exe) |
+| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Sources.zip) |
+| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/SHA256SUMS.txt) |
 
 I nomi dei pacchetti scaricabili usano `rmele`. La rinomina riguarda soltanto gli allegati su GitHub: la cartella di installazione e i crediti all’interno dei pacchetti rimangono quelli indicati sotto.
 
@@ -50,11 +50,11 @@ Setup ed estrattore portabile richiedono una destinazione vuota, evitando di sov
 
 Per aggiornare il portabile, chiudi la vecchia copia, conserva `app/config`, estrai il nuovo pacchetto in una cartella vuota e scrivibile e ripristina lì la configurazione. Quando cambi computer trasferisci sempre l'intero pacchetto. Riconfigura i percorsi delle toolchain se compilatore/debugger sono installati in posizioni diverse.
 
-I pacchetti non sono firmati digitalmente. Una scansione antivirus locale riguarda quei file in quel momento e non garantisce il comportamento futuro dei software di sicurezza. Il fork deriva da una versione beta: consulta [compatibilità e limiti](MODIFICHE_FORK.md#ambito-della-compatibilità).
+I pacchetti non sono firmati digitalmente. Una scansione antivirus locale riguarda quei file in quel momento e non garantisce il comportamento futuro dei software di sicurezza. Per la configurazione supportata e i limiti operativi, consulta [compatibilità e limiti](MODIFICHE_FORK.md#ambito-della-compatibilità).
 
 ## Ricompilazione
 
-Requisiti: CMake/Ninja, GCC MinGW-w64, Qt 6.11.2 (base, SVG, tools e traduzioni), Python 3, NSIS e astyle. I sorgenti del packaging sono in [`platform/windows/fork-packaging`](../platform/windows/fork-packaging).
+Requisiti: CMake/Ninja, GCC MinGW-w64, Qt 6.11.2 (base, SVG, tools e traduzioni), Python 3, NSIS e astyle. I sorgenti del packaging sono in [`platform/windows/fork-packaging`](https://github.com/lellomele/RedPanda-CPP/tree/v3.5.0-rmele.1/platform/windows/fork-packaging).
 
 1. Configura due build dell'IDE: `PORTABLE_CONFIG=oui` per il portabile e `PORTABLE_CONFIG=non` per l'installabile; entrambe usano `FILESYSTEM_LAYOUT=flat` e `MAKE_INTERFACE=mingw32`.
 2. Installa ciascuna build in `payload/portable/app` oppure `payload/installed/app`, aggiungi astyle e denomina il backend distribuito `app/RedPandaIDE-core.exe`.

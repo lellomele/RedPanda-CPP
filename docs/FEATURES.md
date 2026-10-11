@@ -88,3 +88,9 @@ Recovery supplements normal saves. Storage errors, native crashes and invalid pr
 Installer, portable ZIP and portable extractor include Qt and private runtime dependencies. The main `RedPandaIDE.exe` launches **`app/RedPandaIDE-core.exe`**. Installed preferences reside in the user profile; portable preferences and recovery reside in `app/config`. The compiler/debugger are configured separately.
 
 See [Windows distributions](WINDOWS_DISTRIBUTION.md) for installation, updating, layouts and source packaging.
+
+## Git integration
+
+Configure an external Git executable under **Options > Tools > Git**. The **Git** menu provides repository creation, staging selected files, Commit, branches, Merge, history, remotes, Fetch, Pull and Push. Commands are enabled according to the configured executable, repository and selection. Detached HEAD repositories are recognised too.
+
+Repository creation keeps an existing `.gitignore` unchanged. A new default ignore file is saved atomically after successful initialization. **Restore Working Tree** discards unstaged changes to tracked disk files only after confirmation; No is selected by default. Unsaved editor buffers remain available. Git command failures show the original tool output so that permissions, configuration or repository state can be corrected before retrying.

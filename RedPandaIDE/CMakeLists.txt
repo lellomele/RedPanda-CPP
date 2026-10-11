@@ -11,6 +11,7 @@ target_qt_plain_cpp(RedPandaIDE
     src/diagnosticcatalog
     src/sessionstore
     test/interfacechecks
+    test/compilerworkflowchecks
     src/colorscheme
     src/customfileiconprovider
     src/projectoptions

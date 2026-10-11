@@ -10,15 +10,15 @@ Basato su [RedPanda C++ di Roy Qu e contributori](https://github.com/royqh1979/R
 
 ## Installazione
 
-**[Release beta v3.5.0-beta.2-rmele.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-beta.2-rmele.1)** — Windows 10/11 x64.
+**[Release 3.5.0 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-rmele.1)** — Windows 10/11 x64.
 
 | Pacchetto | Download |
 | --- | --- |
-| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Portable-x64.exe) |
-| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/RedPandaCPP-3.5-beta2-rmele-Sources.zip) |
-| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-beta.2-rmele.1/SHA256SUMS.txt) |
+| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.exe) |
+| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Sources.zip) |
+| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/SHA256SUMS.txt) |
 
 I pacchetti Windows x64 sono disponibili in tre formati:
 
@@ -49,6 +49,8 @@ Le build installabili conservano le impostazioni nel profilo utente; i pacchetti
 
 Il recupero è una misura di protezione: crash nativi, corruzione della memoria, problemi di archiviazione e interruzioni di corrente possono richiedere un riavvio e l'ultima copia valida. Salva regolarmente il lavoro importante. La pulizia copre gli output riconosciuti e richiede il Cestino del sistema operativo. La traduzione italiana usa un catalogo finito, che non comprende ogni messaggio del compilatore. Consulta [Robustezza, resilienza e limiti operativi](docs/MODIFICHE_FORK.md#robustezza-e-resilienza-agli-errori).
 
+La compilazione dei progetti usa i timestamp di Make. Usa **Ricompila tutto** quando i file sono stati copiati con date precedenti o modificati entro la risoluzione temporale della toolchain.
+
 La distribuzione verificata ufficialmente usa **Windows x64 con Qt 6.11.2**. I percorsi Qt 5 restano come compatibilità secondaria e non sono un requisito per il rilascio.
 
 ## Compilazione dai sorgenti
@@ -56,7 +58,7 @@ La distribuzione verificata ufficialmente usa **Windows x64 con Qt 6.11.2**. I p
 Requisiti: C++17, CMake 3.19+, Qt 6.8+ oppure Qt 5.15, con compilatore e Qt della stessa architettura. Moduli Qt: Core, Concurrent, Gui, Widgets, Network, PrintSupport, Svg, Xml, Test e LinguistTools. Le distribuzioni Windows usano Qt 6.11.2 e MinGW-w64. Altre combinazioni di piattaforma e toolchain richiedono verifica per questo fork.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCS=ON -DLUA_ADDON=ON -DSDCC=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build --parallel
 cmake --build build --target all-test-targets --parallel
 ctest --test-dir build --output-on-failure

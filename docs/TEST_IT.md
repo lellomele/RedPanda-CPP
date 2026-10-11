@@ -7,7 +7,7 @@
 Usa un compilatore C++17 e un’installazione Qt compatibili, come descritto in [BUILD.md](../BUILD.md). Compila l’applicazione e tutti i target di test: compilare soltanto l’IDE non genera tutti gli eseguibili della suite.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/Qt
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVCS=ON -DLUA_ADDON=ON -DSDCC=ON -DCMAKE_PREFIX_PATH=/path/to/Qt
 cmake --build build --target RedPandaIDE all-test-targets benchmark-qsynedit --parallel
 ctest --test-dir build --output-on-failure --timeout 120 --output-junit functional.xml
 ```
@@ -42,7 +42,7 @@ Il runner seguente registra log, JUnit, risultati JSON e schermate in una nuova 
 python tools/run_stabilization.py --build-dir build --report-dir reports/run-1 --ui --benchmark --compiler /path/to/g++
 ```
 
-Usa una nuova cartella per ogni esecuzione GUI. I controlli nativi Windows richiedono una sessione desktop e il supporto del Cestino. L’argomento del compilatore attiva vere compilazioni GCC e verifica i diagnostici nel pannello dell’IDE; senza di esso restano i test sui messaggi campione. `--ide` può indicare il launcher principale di una distribuzione estratta, per verificare il programma distribuito. Preferisci cartelle di test con spazi e caratteri Unicode.
+Usa una nuova cartella per ogni esecuzione GUI. I controlli nativi Windows richiedono una sessione desktop e il supporto del Cestino. L’argomento del compilatore attiva verifiche GCC attraverso il gestore di compilazione, il compilatore dei file e il runner di produzione, inclusi diagnostici, errori, nuovi tentativi e annullamento; senza di esso restano i test sui messaggi campione. `--ide` può indicare il launcher principale di una distribuzione estratta, per verificare il programma distribuito. Preferisci cartelle di test con spazi e caratteri Unicode.
 
 ## Misure ripetibili
 
@@ -60,4 +60,8 @@ Il workflow `Stabilization gates` compila l’applicazione completa con Git, Lua
 
 Il requisito per il rilascio è Windows x64 con Qt 6.11.2. Il job Linux/Qt 5 offre una verifica informativa della compatibilità storica e non blocca la release Windows; il risultato effettivo resta visibile. Altre piattaforme e toolchain richiedono una validazione separata.
 
-Su Windows con Git attivo, un ulteriore test nativo del codificatore askpass porta il totale a 22; usa input Unicode sintetici, mai credenziali reali.
+Su Windows con Git attivo, un ulteriore test nativo del codificatore askpass porta il totale a 22; usa input Unicode sintetici, mai credenziali reali. Se è disponibile un interprete Python 3, CTest esegue anche le regressioni del validatore dei report, portando questa configurazione a 23 controlli. Python serve soltanto per lo sviluppo.
+
+I controlli GUI con strumenti reali richiedono GCC e il relativo Make; se GDB è disponibile accanto al compilatore, vengono provati anche un programma di debug isolato e il parser MI di produzione. Usa `--git /path/to/git` per i test Git e del menu in un repository temporaneo offline. Non viene usato un repository dell’utente. I test di errore e nuovo tentativo del progetto usano Ricompila tutto per evitare ambiguità nella risoluzione dei timestamp di Make.
+
+I report GUI includono un array `skipped` esplicito. L’unico controllo saltato ammesso riguarda il trasferimento riuscito agli appunti nativi quando Windows nega l’accesso al processo di test con errore 5. In quel caso si verificano comunque messaggio recuperabile, conservazione dell’originale e della selezione e nuovo tentativo; non viene dichiarato riuscito il trasferimento. Altri errori o controlli saltati non previsti fanno fallire il ciclo. Un normale avvio interattivo può verificare il caso positivo degli appunti.

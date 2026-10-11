@@ -17,7 +17,7 @@ public:
 
     const QString &folder() const;
 
-    void createRepository();
+    bool createRepository(QString &output);
     bool hasRepository(QString& currentBranch);
 
     bool isFileInRepository(const QFileInfo& fileInfo) {

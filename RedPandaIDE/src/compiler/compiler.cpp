@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "compiler.h"
+#include "processcancellation.h"
 #include <exception>
 #include "compilerinfo.h"
 #include "../utils.h"
@@ -26,6 +27,11 @@
 
 #include <cmath>
 #include <QFileInfo>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMutex>
 #include <QProcess>
 #include <QString>
 #include <QTime>
@@ -49,15 +55,65 @@ Compiler::Compiler(const QString &filename, bool onlyCheckSyntax):
     mForceEnglishOutput{false}
 {
     mParserForFile = nullptr;
+    // CompilerManager constructs each task on the GUI thread, before start().
+    // Worker argument expansion must not read editor widgets or window lifetime.
+    if (pMainWindow && QThread::currentThread() == pMainWindow->thread())
+        mMacroVariables = pMainWindow->macroVariables();
+    // Snapshot QA opt-in on the GUI thread. A delayed worker must not depend
+    // on a test helper restoring the environment or on GUI lifetime.
+    const auto *application = QCoreApplication::instance();
+    if (application && QThread::currentThread() == application->thread()
+            && !application->property("uiTestConfigPath").toString().isEmpty()) {
+        mQaProcessTracePath = qEnvironmentVariable("REDPANDA_QA_COMPILER_TRACE");
+        if (!mQaProcessTracePath.isEmpty()) {
+            QElapsedTimer reference;
+            reference.start();
+            mQaTraceReference = reference.msecsSinceReference();
+        }
+    }
+}
+
+void Compiler::writeQaProcessTrace(const char *stage, const QProcess *process, int started) const
+{
+    if (mQaProcessTracePath.isEmpty())
+        return;
+    QElapsedTimer now;
+    now.start();
+    const qint64 reference = now.msecsSinceReference();
+    QJsonObject event{{"stage", QString::fromLatin1(stage)},
+                      {"job", QString::number(reinterpret_cast<quintptr>(this), 16)},
+                      {"monotonicMilliseconds", double(reference)},
+                      {"elapsedMilliseconds", double(reference - mQaTraceReference)},
+                      {"stopRequested", mStop.load(std::memory_order_acquire)},
+                      {"stopMonotonicMilliseconds", double(mQaStopReference.load(std::memory_order_acquire))}};
+    if (process) {
+        event.insert("program", QFileInfo(process->program()).fileName());
+        event.insert("processState", int(process->state()));
+        event.insert("processId", double(process->processId()));
+        event.insert("processError", int(process->error()));
+    }
+    if (started >= 0)
+        event.insert("started", started != 0);
+    // Only opt-in workers append metadata, never source text or command args.
+    // Serialize simultaneous foreground/background QA jobs into complete lines.
+    static QMutex traceMutex;
+    QMutexLocker locker(&traceMutex);
+    QFile file(mQaProcessTracePath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append))
+        file.write(QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n');
 }
 
 void Compiler::run()
 {
+    writeQaProcessTrace("task-enter");
     emit compileStarted();
     auto action = finally([this]{
+        writeQaProcessTrace("task-exit");
         emit compileFinished(mFilename);
     });
     try {
+        if (mStop.load(std::memory_order_acquire))
+            return;
         if (!prepareForCompile()){
             return;
         }
@@ -70,6 +126,8 @@ void Compiler::run()
         timer.start();
         runCommand(mCompiler, mArguments, mDirectory, pipedText());
         for(int i=0;i<mExtraArgumentsList.count();i++) {
+            if (mStop.load(std::memory_order_acquire))
+                break;
             if (!beforeRunExtraCommand(i))
                 break;
             QString command = escapeCommandForLog(mExtraCompilersList[i], mExtraArgumentsList[i]);
@@ -357,7 +415,13 @@ void Compiler::processOutput(QString &line)
 
 void Compiler::stopCompile()
 {
-    mStop = true;
+    if (!mQaProcessTracePath.isEmpty()) {
+        QElapsedTimer now;
+        now.start();
+        qint64 unset = -1;
+        mQaStopReference.compare_exchange_strong(unset, now.msecsSinceReference(), std::memory_order_release);
+    }
+    mStop.store(true, std::memory_order_release);
 }
 
 QStringList Compiler::getCharsetArgument(const QByteArray& encoding,FileType fileType, bool checkSyntax)
@@ -474,7 +538,7 @@ QStringList Compiler::getCCompileArguments(bool checkSyntax)
         }
     }
 
-    QMap<QString, QString> macros = pMainWindow->macroVariables();
+    QMap<QString, QString> macros = mMacroVariables;
 
     if (compilerSet()->useCustomCompileParams() && !compilerSet()->customCompileParams().isEmpty()) {
         result << parseArguments(compilerSet()->customCompileParams(), macros, true);
@@ -525,7 +589,7 @@ QStringList Compiler::getCppCompileArguments(bool checkSyntax)
         }
     }
 
-    QMap<QString, QString> macros = pMainWindow->macroVariables();
+    QMap<QString, QString> macros = mMacroVariables;
     if (compilerSet()->useCustomCompileParams() && !compilerSet()->customCompileParams().isEmpty()) {
         result << parseArguments(compilerSet()->customCompileParams(), macros, true);
     }
@@ -641,7 +705,7 @@ QStringList Compiler::getLibraryArguments(FileType fileType)
 
     // Add global compiler linker extras
     if (compilerSet()->useCustomLinkParams() && !compilerSet()->customLinkParams().isEmpty()) {
-        QMap<QString, QString> macros = pMainWindow->macroVariables();
+        QMap<QString, QString> macros = mMacroVariables;
         QStringList params = parseArguments(compilerSet()->customLinkParams(), macros, true);
         if (!params.isEmpty()) {
             foreach(const QString& param, params)
@@ -727,8 +791,14 @@ bool Compiler::parseForceUTF8ForAutolink(const QString &filename, QSet<QString> 
 
 void Compiler::runCommand(const QString &cmd, const QStringList &arguments, const QString &workingDir, const QByteArray& inputText, const QString& outputFile)
 {
+    writeQaProcessTrace("command-enter");
+    // Declared before QProcess: this records return after its destructor, which
+    // can distinguish native startup/cleanup delays from polling cancellation.
+    auto commandExit = finally([this] { writeQaProcessTrace("command-exit"); });
+    if (mStop.load(std::memory_order_acquire))
+        return;
     QProcess process;
-    mStop = false;
+    auto processExit = finally([this, &process] { writeQaProcessTrace("before-process-destruction", &process); });
     bool errorOccurred = false;
     process.setProgram(cmd);
     QString cmdDir = extractFileDir(cmd);
@@ -755,10 +825,8 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
         env.insert("PATH",path);
     }
 
-    // mingw32-make.exe will choose sh if it is found in path. use SHELL to override it.
-    if constexpr (MAKE_INTERFACE == MAKE_INTERFACE_mingw32) {
-        env.insert("SHELL", "cmd.exe");
-    }
+    // ProjectCompiler selects the shell for generated makefiles explicitly;
+    // custom makefiles retain their own shell selection.
     if (compilerSet() && compilerSet()->supportNLS() && compilerSet()->forceEnglishOutput()) {
         env.insert("LANGUAGE", "");
         env.insert("LC_ALL", "C"); // https://pubs.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap07.html#tag_07_02
@@ -801,8 +869,11 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
     process.connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),[this](){
         this->error(COMPILE_PROCESS_END);
     });
+    writeQaProcessTrace("before-start", &process);
     process.start();
-    process.waitForStarted(5000);
+    writeQaProcessTrace("after-start", &process);
+    const bool started = process.waitForStarted(5000);
+    writeQaProcessTrace("after-wait-for-started", &process, started ? 1 : 0);
     if (!inputText.isEmpty()) {
         process.write(inputText);
         process.waitForFinished(0);
@@ -813,12 +884,16 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
             writeChannelClosed=true;
             process.closeWriteChannel();
         }
-        process.waitForFinished(100);
+        process.waitForFinished(ProcessCancellation::pollMilliseconds);
         if (process.state()!=QProcess::Running) {
             break;
         }
-        if (mStop) {
-            process.terminate();
+        if (mStop.load(std::memory_order_acquire)) {
+            writeQaProcessTrace("before-cancellation", &process);
+            if (!ProcessCancellation::stop(process))
+                emit compileErrorOccured(tr("The compiler process could not be stopped within the timeout."));
+            writeQaProcessTrace("after-cancellation", &process);
+            break;
         }
         if (errorOccurred)
             break;
@@ -829,7 +904,7 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
             throw CompileError(tr("The compiler process for '%1' failed to start.").arg(mFilename));
             break;
         case QProcess::Crashed:
-            if (!mStop)
+            if (!mStop.load(std::memory_order_acquire))
                 throw CompileError(tr("The compiler process crashed after starting successfully."));
             break;
         case QProcess::Timedout:

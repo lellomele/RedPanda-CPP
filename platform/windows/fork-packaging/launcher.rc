@@ -16,7 +16,7 @@ BEGIN
    VALUE "FileDescription", "Red Panda C++"
    VALUE "ProductName", "Red Panda C++"
    VALUE "FileVersion", "3.5.0.0"
-   VALUE "ProductVersion", "3.5.0-beta.2 fork"
+   VALUE "ProductVersion", "3.5.0 rmele"
    VALUE "OriginalFilename", "RedPandaIDE.exe"
    VALUE "LegalCopyright", "© 2006 Ing. prof. Raffaele Mele; upstream © 2021-2026 Roy Qu"
   END

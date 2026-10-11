@@ -8,4 +8,4 @@ Established technical terms remain recognisable: Debug, Breakpoint, Watch, Watch
 
 The terminology review covers main/context menus, editing and navigation commands, debugging panels and Git-related wording. Every secondary dialog has not yet received a complete linguistic review. Available Git commands also depend on the build's optional VCS support.
 
-The application catalog is [`RedPandaIDE_it_IT.ts`](../RedPandaIDE/translations/RedPandaIDE_it_IT.ts); reviewed choices are recorded in [`italian_terminology.json`](../tools/italian_terminology.json). Local GCC diagnostic translation is a separate feature described in [GCC diagnostics](GCC_DIAGNOSTICS.md).
+The application catalog is [`RedPandaIDE_it_IT.ts`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/translations/RedPandaIDE_it_IT.ts); reviewed choices are recorded in [`italian_terminology.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/tools/italian_terminology.json). Local GCC diagnostic translation is a separate feature described in [GCC diagnostics](GCC_DIAGNOSTICS.md).

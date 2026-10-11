@@ -18,6 +18,7 @@
 #define RUNNER_H
 
 #include <QThread>
+#include <atomic>
 
 class Runner : public QThread
 {
@@ -44,8 +45,8 @@ protected:
     virtual void doStop();
     void setPausing(bool newCanFinish);
 protected:
-    bool mPausing;
-    bool mStop;
+    std::atomic_bool mPausing;
+    std::atomic_bool mStop;
     QString mFilename;
     QStringList mArguments; // without argv[0]
     QString mWorkDir;

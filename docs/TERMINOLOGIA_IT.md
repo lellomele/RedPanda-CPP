@@ -8,4 +8,4 @@ Restano riconoscibili i termini tecnici consolidati: Debug, Breakpoint, Watch, W
 
 La revisione copre menu principali/contestuali, comandi di editing e navigazione, pannelli di debug e terminologia delle voci Git. Non tutte le finestre secondarie hanno ancora ricevuto una revisione linguistica completa. La disponibilità dei comandi Git dipende anche dal supporto VCS opzionale della build.
 
-Il catalogo applicativo è [`RedPandaIDE_it_IT.ts`](../RedPandaIDE/translations/RedPandaIDE_it_IT.ts); le scelte riviste sono registrate in [`italian_terminology.json`](../tools/italian_terminology.json). La traduzione locale dei diagnostici GCC è una funzione distinta, descritta in [Diagnostici GCC](TRADUZIONE_DIAGNOSTICI.md).
+Il catalogo applicativo è [`RedPandaIDE_it_IT.ts`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/translations/RedPandaIDE_it_IT.ts); le scelte riviste sono registrate in [`italian_terminology.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/tools/italian_terminology.json). La traduzione locale dei diagnostici GCC è una funzione distinta, descritta in [Diagnostici GCC](TRADUZIONE_DIAGNOSTICI.md).

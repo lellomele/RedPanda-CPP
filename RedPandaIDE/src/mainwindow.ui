@@ -371,6 +371,24 @@
     <addaction name="actionGoto_File_Start_and_Select" />
     <addaction name="actionGoto_File_End_and_Select" />
    </widget>
+   <widget class="QMenu" name="menuGit">
+    <property name="title">
+     <string>Git</string>
+    </property>
+    <addaction name="actionGit_Create_Repository" />
+    <addaction name="actionGit_Add_Files" />
+    <addaction name="actionGit_Commit" />
+    <addaction name="actionGit_Restore" />
+    <addaction name="separator" />
+    <addaction name="actionGit_Branch" />
+    <addaction name="actionGit_Merge" />
+    <addaction name="actionGit_Log" />
+    <addaction name="actionGit_Remotes" />
+    <addaction name="separator" />
+    <addaction name="actionGit_Fetch" />
+    <addaction name="actionGit_Pull" />
+    <addaction name="actionGit_Push" />
+   </widget>
    <addaction name="menuFile" />
    <addaction name="menuEdit" />
    <addaction name="menuSelection" />
@@ -379,6 +397,7 @@
    <addaction name="menuCode" />
    <addaction name="menuRefactor" />
    <addaction name="menuProject" />
+   <addaction name="menuGit" />
    <addaction name="menuExecute" />
    <addaction name="menuTools" />
    <addaction name="menuWindow" />
@@ -3389,6 +3408,127 @@
   <action name="actionMakefileClean">
    <property name="text">
     <string>Run Makefile Clean...</string>
+   </property>
+  </action>
+  <action name="actionGit_Create_Repository">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Create Repository...</string>
+   </property>
+   <property name="toolTip">
+    <string>Initialize a Git repository in the current folder.</string>
+   </property>
+  </action>
+  <action name="actionGit_Add_Files">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Stage Selected Files</string>
+   </property>
+   <property name="toolTip">
+    <string>Stage the selected files for the next commit.</string>
+   </property>
+  </action>
+  <action name="actionGit_Commit">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Commit...</string>
+   </property>
+   <property name="toolTip">
+    <string>Create a commit from the changes in this repository.</string>
+   </property>
+  </action>
+  <action name="actionGit_Restore">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Restore Working Tree...</string>
+   </property>
+   <property name="toolTip">
+    <string>Discard unstaged changes to tracked files after confirmation.</string>
+   </property>
+  </action>
+  <action name="actionGit_Branch">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Branches...</string>
+   </property>
+   <property name="toolTip">
+    <string>Create or switch branches in this repository.</string>
+   </property>
+  </action>
+  <action name="actionGit_Merge">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Merge...</string>
+   </property>
+   <property name="toolTip">
+    <string>Merge another branch into the current branch.</string>
+   </property>
+  </action>
+  <action name="actionGit_Log">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>History...</string>
+   </property>
+   <property name="toolTip">
+    <string>View the commit history of this repository.</string>
+   </property>
+  </action>
+  <action name="actionGit_Remotes">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Remotes...</string>
+   </property>
+   <property name="toolTip">
+    <string>Manage remote repositories.</string>
+   </property>
+  </action>
+  <action name="actionGit_Fetch">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Fetch</string>
+   </property>
+   <property name="toolTip">
+    <string>Download remote changes without merging them.</string>
+   </property>
+  </action>
+  <action name="actionGit_Pull">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Pull</string>
+   </property>
+   <property name="toolTip">
+    <string>Download and integrate remote changes into the current branch.</string>
+   </property>
+  </action>
+  <action name="actionGit_Push">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="text">
+    <string>Push</string>
+   </property>
+   <property name="toolTip">
+    <string>Upload local commits to a remote repository.</string>
    </property>
   </action>
  </widget>

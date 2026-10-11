@@ -18,12 +18,14 @@
 #define COMPILER_H
 
 #include <QThread>
+#include <atomic>
 #include "../settings.h"
 #include "../common.h"
 #include "../parser/cppparser.h"
 #include "../utils/file.h"
 
 class Project;
+class QProcess;
 class Compiler : public QThread
 {
     Q_OBJECT
@@ -89,6 +91,7 @@ protected:
     void error(const QString& msg);
     void runCommand(const QString& cmd, const QStringList& arguments, const QString& workingDir, const QByteArray& inputText=QByteArray(), const QString& outputFile=QString());
     QString escapeCommandForLog(const QString &cmd, const QStringList &arguments);
+    const QMap<QString, QString> &macroVariables() const { return mMacroVariables; }
 
 protected:
     bool mOnlyCheckSyntax;
@@ -98,8 +101,8 @@ protected:
     QList<QStringList> mExtraArgumentsList;
     QList<QString> mExtraOutputFilesList;
     QString mOutputFile;
-    int mErrorCount;
-    int mWarningCount;
+    int mErrorCount = 0;
+    int mWarningCount = 0;
     PCompileIssue mLastIssue;
     QString mFilename;
     QString mDirectory;
@@ -110,7 +113,12 @@ protected:
     bool mForceEnglishOutput;
 
 private:
-    bool mStop;
+    void writeQaProcessTrace(const char *stage, const QProcess *process = nullptr, int started = -1) const;
+    std::atomic_bool mStop{false};
+    QMap<QString, QString> mMacroVariables;
+    QString mQaProcessTracePath;
+    qint64 mQaTraceReference = 0;
+    std::atomic<qint64> mQaStopReference{-1};
 };
 
 

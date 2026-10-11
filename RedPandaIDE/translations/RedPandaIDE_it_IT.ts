@@ -688,6 +688,10 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Compilation task was cancelled: %1</source>
             <translation>La compilazione è stata annullata: %1</translation>
         </message>
+        <message>
+            <source>The compiler process could not be stopped within the timeout.</source>
+            <translation>Non è stato possibile arrestare il processo di compilazione entro il tempo previsto.</translation>
+        </message>
     </context>
     <context>
         <name>CompilerAutolinkWidget</name>
@@ -2923,6 +2927,10 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>An error occurred when attempting to read from the runner process.</source>
             <translation>Si è verificato un errore durante il tentativo di lettura dal processo runner.</translation>
         </message>
+        <message>
+            <source>The runner process could not be stopped within the timeout.</source>
+            <translation>Non è stato possibile arrestare il processo di esecuzione entro il tempo previsto.</translation>
+        </message>
     </context>
     <context>
         <name>ExecutorGeneralWidget</name>
@@ -3936,6 +3944,26 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
     </context>
     <context>
         <name>GitManager</name>
+        <message>
+            <source>The repository folder does not exist.</source>
+            <translation>La cartella del repository non esiste.</translation>
+        </message>
+        <message>
+            <source>Folder &quot;%1&quot; already has a repository!</source>
+            <translation>La cartella &quot;%1&quot; contiene già un repository.</translation>
+        </message>
+        <message>
+            <source>Cannot create &quot;%1&quot;: %2</source>
+            <translation>Impossibile creare &quot;%1&quot;: %2</translation>
+        </message>
+        <message>
+            <source>Cannot save &quot;%1&quot;: %2</source>
+            <translation>Impossibile salvare &quot;%1&quot;: %2</translation>
+        </message>
+        <message>
+            <source>Cannot stage the generated ignore file.</source>
+            <translation>Impossibile aggiungere allo staging il file .gitignore generato.</translation>
+        </message>
     </context>
     <context>
         <name>GitMergeDialog</name>
@@ -7072,7 +7100,121 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Copy Italian Translation</source>
             <translation>Copia traduzione italiana</translation>
         </message>
-    </context>
+        <message>
+            <source>Git</source>
+            <translation>Git</translation>
+        </message>
+        <message>
+            <source>Create Repository...</source>
+            <translation>Crea repository...</translation>
+        </message>
+        <message>
+            <source>Initialize a Git repository in the current folder.</source>
+            <translation>Inizializza un repository Git nella cartella corrente.</translation>
+        </message>
+        <message>
+            <source>Stage Selected Files</source>
+            <translation>Aggiungi file selezionati allo staging</translation>
+        </message>
+        <message>
+            <source>Stage the selected files for the next commit.</source>
+            <translation>Aggiunge i file selezionati allo staging per il prossimo commit.</translation>
+        </message>
+        <message>
+            <source>Commit...</source>
+            <translation>Commit...</translation>
+        </message>
+        <message>
+            <source>Create a commit from the changes in this repository.</source>
+            <translation>Crea un commit con le modifiche di questo repository.</translation>
+        </message>
+        <message>
+            <source>Restore Working Tree...</source>
+            <translation>Ripristina working tree...</translation>
+        </message>
+        <message>
+            <source>Discard unstaged changes to tracked files after confirmation.</source>
+            <translation>Dopo la conferma, annulla le modifiche non aggiunte allo staging nei file versionati.</translation>
+        </message>
+        <message>
+            <source>Branches...</source>
+            <translation>Branch...</translation>
+        </message>
+        <message>
+            <source>Create or switch branches in this repository.</source>
+            <translation>Crea un branch o passa a un altro branch del repository.</translation>
+        </message>
+        <message>
+            <source>Merge...</source>
+            <translation>Merge...</translation>
+        </message>
+        <message>
+            <source>Merge another branch into the current branch.</source>
+            <translation>Esegue il merge di un altro branch nel branch corrente.</translation>
+        </message>
+        <message>
+            <source>History...</source>
+            <translation>Cronologia...</translation>
+        </message>
+        <message>
+            <source>View the commit history of this repository.</source>
+            <translation>Mostra la cronologia dei commit del repository.</translation>
+        </message>
+        <message>
+            <source>Remotes...</source>
+            <translation>Repository remoti...</translation>
+        </message>
+        <message>
+            <source>Manage remote repositories.</source>
+            <translation>Gestisce i repository remoti.</translation>
+        </message>
+        <message>
+            <source>Fetch</source>
+            <translation>Fetch</translation>
+        </message>
+        <message>
+            <source>Download remote changes without merging them.</source>
+            <translation>Scarica le modifiche remote senza eseguire il merge.</translation>
+        </message>
+        <message>
+            <source>Pull</source>
+            <translation>Pull</translation>
+        </message>
+        <message>
+            <source>Download and integrate remote changes into the current branch.</source>
+            <translation>Scarica e integra le modifiche remote nel branch corrente.</translation>
+        </message>
+        <message>
+            <source>Push</source>
+            <translation>Push</translation>
+        </message>
+        <message>
+            <source>Upload local commits to a remote repository.</source>
+            <translation>Invia i commit locali a un repository remoto.</translation>
+        </message>
+        <message>
+            <source>Restore Working Tree</source>
+            <translation>Ripristina working tree</translation>
+        </message>
+        <message>
+            <source>Discard unstaged changes to tracked files in this repository?
+Unsaved editor buffers are kept. This operation cannot be undone by Git.</source>
+            <translation>Annullare le modifiche non aggiunte allo staging nei file versionati di questo repository?
+Il contenuto non salvato negli editor viene conservato. Git non può annullare questa operazione.</translation>
+        </message>
+        <message>
+            <source>Shutdown Deferred</source>
+            <translation>Chiusura rinviata</translation>
+        </message>
+        <message>
+            <source>Background tasks are still stopping. Your documents remain open. Please retry closing shortly.</source>
+            <translation>Le attività in background si stanno ancora arrestando. I documenti rimangono aperti. Riprova a chiudere tra qualche istante.</translation>
+        </message>
+        <message>
+        <source>Cannot copy the diagnostic to the clipboard. Please retry.</source>
+        <translation>Impossibile copiare il messaggio diagnostico negli appunti. Riprova.</translation>
+    </message>
+</context>
     <context>
         <name>MemoryModel</name>
         <message>

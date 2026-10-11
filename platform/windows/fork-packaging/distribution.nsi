@@ -53,12 +53,12 @@ LangString AlreadyInstalled ${LANG_ENGLISH} "This fork is already installed. Uni
 LangString AlreadyInstalled ${LANG_ITALIAN} "Questo fork è già installato. Disinstallalo prima di installare una nuova versione."
 LangString CopyFailed ${LANG_ENGLISH} "The package could not be written completely. No existing installation has been overwritten. Choose a writable folder and retry."
 LangString CopyFailed ${LANG_ITALIAN} "Non è stato possibile scrivere l’intero pacchetto. Nessuna installazione esistente è stata sovrascritta. Scegli una cartella scrivibile e riprova."
-VIProductVersion "3.5.0.0"
+VIProductVersion "3.5.1.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "Red Panda C++"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Red Panda C++ Windows distribution"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "3.5.0.0"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "3.5.1.0"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${APP_VERSION}"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "© 2006 Ing. prof. Raffaele Mele; upstream © 2021-2026 Roy Qu"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com); upstream © 2021-2026 Roy Qu"
 
 Function .onInit
  StrCpy $TestMode 0

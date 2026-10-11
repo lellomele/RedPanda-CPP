@@ -8,7 +8,7 @@ Questa guida descrive le aggiunte implementate nel fork, usando RedPanda 3.4 com
 
 Inglese e italiano sono selezionabili in **Preferenze > Interfaccia e area di lavoro > Aspetto**, insieme alle lingue già presenti. Riavvia dopo un cambio di lingua. I menu italiani usano verbi di azione e terminologia familiare negli IDE; termini consolidati come Debug, Breakpoint, Watch, Snippet, Template, Assembly e Commit rimangono riconoscibili. L'interfaccia italiana è disponibile, ma la revisione linguistica di tutte le finestre secondarie non è completa.
 
-Il nome dell'applicazione è **Red Panda C++ in ogni lingua**. La nuova icona a colori combina panda rosso, C++ e parentesi graffe. Compare nell'eseguibile, nella finestra, nel comando Informazioni e nelle risorse desktop. La finestra Informazioni mostra un'immagine ampia, i crediti originali e **© 2006 Ing. prof. Raffaele Mele**, con una bandiera italiana alta quanto i caratteri del copyright. Una breve schermata iniziale mostra la stessa immagine durante la preparazione dell'ambiente; un timer o un clic la chiude.
+Il nome dell'applicazione è **Red Panda C++ in ogni lingua**. La nuova icona a colori combina panda rosso, C++ e parentesi graffe. Compare nell'eseguibile, nella finestra, nel comando Informazioni e nelle risorse desktop. La finestra Informazioni mostra un'immagine ampia, i crediti originali e **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, con una bandiera italiana alta quanto i caratteri del copyright. Una breve schermata iniziale mostra la stessa immagine durante la preparazione dell'ambiente; un timer o un clic la chiude.
 
 ### Temi coordinati
 

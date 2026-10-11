@@ -5,7 +5,7 @@ https://github.com/royqh1979/RedPanda-CPP
 Roy Qu and contributors / Roy Qu e contributori
 
 Fork attribution / Attribuzione del fork:
-© 2006 Ing. prof. Raffaele Mele
+Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)
 
 English
 The initial reference is upstream v3.4 (2fff3c2584e99ccd5aafdf897120e00e9c036515).

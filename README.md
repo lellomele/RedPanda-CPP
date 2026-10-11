@@ -10,15 +10,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-**[Stable release 3.5.0](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.1-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 
@@ -74,4 +74,4 @@ See [Testing and editing measurements](docs/TESTING.md) for isolated application
 
 GNU GPL version 3 or later: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Original authors and contributors retain their copyrights; third-party components retain their respective licenses.
 
-Fork attribution: **© 2006 Ing. prof. Raffaele Mele**, also shown in About beside the original credits.
+Fork attribution: **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, also shown in About beside the original credits.

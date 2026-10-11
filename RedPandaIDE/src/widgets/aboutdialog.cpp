@@ -34,6 +34,8 @@ AboutDialog::AboutDialog(QWidget *parent) :
     ui->setupUi(this);
     mUiReady = true;
     ui->lblForkCopyright->setText(AppIdentity::forkCopyright());
+    ui->lblUpstreamScope->setText(tr("Original Red Panda C++ / QSynEdit: Roy Qu (royqh1979) and contributors. Inherited editor, C/C++ support and shared Qt infrastructure."));
+    ui->lblForkScope->setText(tr("Fork enhancements by Raffaele Mele: Italian localization, themes and icons, snippets, diagnostic translation, document recovery and stability improvements. Third-party components retain their own copyrights and licenses."));
     ui->lblForkCopyright->installEventFilter(this);
     ui->lblForkFlag->setAccessibleName(tr("Italian flag"));
     updateForkFlag();
@@ -101,11 +103,7 @@ AboutDialog::AboutDialog(QWidget *parent) :
     ui->lblCompileTime->setText(ui->lblCompileTime->text()
                                 .arg(__DATE__, __TIME__));
 
-    QString website="https://sourceforge.net/projects/redpanda-cpp/";
-    if (pSettings->environment().language()=="zh_CN") {
-        website = "http://royqh.net/redpandacpp/";
-    }
-    ui->lblHomepage->setText(tr("Website: <a href=\"%1\">%1</a>").arg(website));
+    ui->lblHomepage->setText(tr("Website: <a href=\"%1\">%1</a>").arg(AppIdentity::website().toHtmlEscaped()));
 }
 
 void AboutDialog::updateForkFlag()

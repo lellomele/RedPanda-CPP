@@ -13,7 +13,7 @@ This document describes implemented additions and their effect on everyday use. 
 
 The initial archive and official 3.4 tag identify the same commit. Work on the cloned repository started from the later upstream revision; therefore upstream changes between those revisions are not presented as our additions. The fork's stable 3.5 release builds on that checkout and its subsequent stabilization work. See the [upstream comparison](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
 
-Original copyrights, attribution and GPL licensing are retained. The fork attribution is **© 2006 Ing. prof. Raffaele Mele**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
+Original copyrights, attribution and GPL licensing are retained. The fork attribution is **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
 
 ## Implemented additions
 
@@ -125,3 +125,7 @@ Windows distributions retain the required notices for the actual bundled runtime
 The Windows Git credential helper is installed beside the IDE core, matching the path used by Git integration.
 
 Windows can delay native process creation inside QProcess before the worker can act on a stop request. Cancellation requests remain pending until startup returns; termination of an already running child has bounded waits. Application closure waits up to eight seconds for workers. If they remain active, the close request is rejected and documents stay alive for another attempt.
+
+About and Help > Website now use the fork GitHub repository in every interface language. About separately identifies the inherited Red Panda C++/QSynEdit code and the fork enhancements, with the updated 2026 author/contact line. Original source notices and third-party copyrights remain preserved.
+
+Maintenance release 3.5.1 publishes the fork website and clarified ownership descriptions, updated copyright/contact, bilingual documentation and regenerated Windows distributions.

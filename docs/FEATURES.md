@@ -8,7 +8,7 @@ This guide describes additions implemented in the fork, using RedPanda 3.4 as th
 
 English and Italian can be selected in **Options > Interface and workspace > Appearance**, alongside existing interface languages. Restart after changing language. Italian menu wording uses action verbs and familiar IDE terminology; established terms such as Debug, Breakpoint, Watch, Snippet, Template, Assembly and Commit remain recognisable. The Italian interface is available, but the linguistic review of every secondary dialog is not complete.
 
-The application is called **Red Panda C++ in every language**. Its new coloured icon combines the red panda, C++ and braces. It appears in the executable, window, About action and desktop resources. About includes a large illustration, original credits and **© 2006 Ing. prof. Raffaele Mele**, with an Italian flag sized to the copyright characters. A brief startup screen shows the same artwork while the workspace is being prepared; a timer or click closes it.
+The application is called **Red Panda C++ in every language**. Its new coloured icon combines the red panda, C++ and braces. It appears in the executable, window, About action and desktop resources. About includes a large illustration, original credits and **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, with an Italian flag sized to the copyright characters. A brief startup screen shows the same artwork while the workspace is being prepared; a timer or click closes it.
 
 ### Coordinated themes
 

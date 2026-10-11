@@ -1,14 +1,14 @@
 # Windows installation and distribution
 
-**[Stable release 3.5.0](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.0-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.1](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.1-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/RedPandaCPP-3.5.0-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.0-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/RedPandaCPP-3.5.1-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.1-rmele.1/SHA256SUMS.txt) |
 
 Downloadable package names use `rmele`. Only the GitHub attachments have been renamed: installation folders and credits inside the packages retain the names documented below.
 
@@ -42,7 +42,7 @@ RedPandaCPP/
     config/                  Created for portable preferences/recovery
 ```
 
-Keep the whole structure. The launcher forwards arguments and preserves the caller's environment/working directory, without adding private Qt DLLs to PATH. Its icon matches the core executable and installer. About includes **© 2006 Ing. prof. Raffaele Mele**, an Italian flag and the original project credits.
+Keep the whole structure. The launcher forwards arguments and preserves the caller's environment/working directory, without adding private Qt DLLs to PATH. Its icon matches the core executable and installer. About includes **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, an Italian flag and the original project credits.
 
 ## Install, update and remove
 
@@ -54,7 +54,7 @@ Packages are unsigned. A local antivirus scan is a check of those files at that 
 
 ## Building distributions
 
-Requirements: CMake/Ninja, MinGW-w64 GCC, Qt 6.11.2 (base, SVG, tools and translations), Python 3.9+, NSIS and astyle. Packaging sources are in [`platform/windows/fork-packaging`](https://github.com/lellomele/RedPanda-CPP/tree/v3.5.0-rmele.1/platform/windows/fork-packaging).
+Requirements: CMake/Ninja, MinGW-w64 GCC, Qt 6.11.2 (base, SVG, tools and translations), Python 3.9+, NSIS and astyle. Packaging sources are in [`platform/windows/fork-packaging`](https://github.com/lellomele/RedPanda-CPP/tree/v3.5.1-rmele.1/platform/windows/fork-packaging).
 
 1. Configure two IDE builds: `PORTABLE_CONFIG=oui` for portable and `PORTABLE_CONFIG=non` for installed; use `FILESYSTEM_LAYOUT=flat` and `MAKE_INTERFACE=mingw32` for both.
 2. Install each build into `payload/portable/app` or `payload/installed/app`, add astyle and name the deployed backend `app/RedPandaIDE-core.exe`.

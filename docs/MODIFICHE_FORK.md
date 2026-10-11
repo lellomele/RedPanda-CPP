@@ -13,7 +13,7 @@ Questo documento descrive le aggiunte implementate e i loro effetti nell'uso quo
 
 L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lavoro sul clone è iniziato dalla revisione upstream successiva: gli sviluppi upstream fra queste revisioni non vengono quindi presentati come nostre aggiunte. La release stabile 3.5 del fork nasce da quel checkout e dal successivo lavoro di stabilizzazione. Consulta il [confronto upstream](https://github.com/royqh1979/RedPanda-CPP/compare/2fff3c2584e99ccd5aafdf897120e00e9c036515...cbe084d162987fb90867b12f279af94c7a1d6a38).
 
-Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **© 2006 Ing. prof. Raffaele Mele**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
+Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
 ## Aggiunte implementate
 
@@ -125,3 +125,7 @@ Le distribuzioni Windows conservano i notice richiesti per i runtime effettivame
 Il helper Windows per le credenziali Git viene installato accanto al core dell’IDE, nel percorso usato dall’integrazione Git.
 
 Windows può ritardare la creazione nativa del processo dentro QProcess, prima che il worker possa applicare una richiesta di arresto. La richiesta resta pendente finché l’avvio non ritorna; l’arresto di un processo già attivo ha attese limitate. La chiusura dell’applicazione attende fino a otto secondi i worker: se restano attivi, la chiusura viene rifiutata e i documenti rimangono disponibili per riprovare.
+
+Informazioni e Aiuto > Sito web ora puntano al repository GitHub del fork in ogni lingua. Informazioni distingue il codice Red Panda C++/QSynEdit ereditato dalle modifiche del fork e mostra la dicitura aggiornata 2026 con autore e contatto. Gli avvisi originali dei sorgenti e i copyright di terze parti sono conservati.
+
+La release correttiva 3.5.1 pubblica i link al fork e i crediti distinti, il copyright con contatto aggiornato, la documentazione bilingue e le distribuzioni Windows rigenerate.

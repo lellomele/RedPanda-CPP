@@ -36,8 +36,8 @@ Issue-row text is adjusted against the background actually drawn, including sele
 
 ## Catalog maintenance
 
-The source resource is [`gcc-it.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/resources/diagnostics/gcc-it.json). It is embedded in the executable; editing it requires rebuilding the IDE. This version does not import runtime catalogs from preferences.
+The source resource is [`gcc-it.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.1-rmele.1/RedPandaIDE/resources/diagnostics/gcc-it.json). It is embedded in the executable; editing it requires rebuilding the IDE. This version does not import runtime catalogs from preferences.
 
 Each rule has a stable identifier, an expression anchored to the complete message, an Italian template with `{1}`, `{2}`, etc., and examples. Every captured value must be preserved. Parameters are substituted once so percent signs or braces in identifiers are not interpreted as replacement instructions. The rules are validated/compiled once; each issue row caches its translation.
 
-Catalog input is limited to 512 KiB and one translated message to 16,384 UTF-16 code units. Tests cover the catalog examples and real messages, exact originals, matching panel/editor hints, Unicode, aliases, options, unknown-message fallback and HTML-safe export. See [the corpus](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/test/gcc_diagnostic_samples.json).
+Catalog input is limited to 512 KiB and one translated message to 16,384 UTF-16 code units. Tests cover the catalog examples and real messages, exact originals, matching panel/editor hints, Unicode, aliases, options, unknown-message fallback and HTML-safe export. See [the corpus](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.1-rmele.1/RedPandaIDE/test/gcc_diagnostic_samples.json).

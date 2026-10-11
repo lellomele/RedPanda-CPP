@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2006 Ing. prof. Raffaele Mele
+// Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)
 // Native launcher: keep IDE DLLs inside app/, without adding them to child PATH.
 #ifndef UNICODE
 #define UNICODE

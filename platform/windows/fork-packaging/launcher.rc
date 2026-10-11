@@ -2,8 +2,8 @@
 1 ICON "../../../RedPandaIDE/images/devcpp.ico"
 1 RT_MANIFEST "launcher.manifest"
 1 VERSIONINFO
-FILEVERSION 3,5,0,0
-PRODUCTVERSION 3,5,0,0
+FILEVERSION 3,5,1,0
+PRODUCTVERSION 3,5,1,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -15,10 +15,10 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "Red Panda C++"
    VALUE "ProductName", "Red Panda C++"
-   VALUE "FileVersion", "3.5.0.0"
-   VALUE "ProductVersion", "3.5.0 rmele"
+   VALUE "FileVersion", "3.5.1.0"
+   VALUE "ProductVersion", "3.5.1 rmele"
    VALUE "OriginalFilename", "RedPandaIDE.exe"
-   VALUE "LegalCopyright", "© 2006 Ing. prof. Raffaele Mele; upstream © 2021-2026 Roy Qu"
+   VALUE "LegalCopyright", "Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com); upstream © 2021-2026 Roy Qu"
   END
  END
  BLOCK "VarFileInfo"

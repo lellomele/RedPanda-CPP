@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>710</width>
-    <height>620</height>
+    <height>740</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -67,6 +67,13 @@
     </widget>
    </item>
    <item>
+    <widget class="QLabel" name="lblUpstreamScope">
+     <property name="text"><string notr="true"/></property>
+     <property name="textFormat"><enum>Qt::PlainText</enum></property>
+     <property name="wordWrap"><bool>true</bool></property>
+    </widget>
+   </item>
+   <item>
     <widget class="QLabel" name="label">
      <property name="font">
       <font>
@@ -80,6 +87,13 @@
     </widget>
    </item>
    <item>
+    <widget class="QLabel" name="lblForkScope">
+     <property name="text"><string notr="true"/></property>
+     <property name="textFormat"><enum>Qt::PlainText</enum></property>
+     <property name="wordWrap"><bool>true</bool></property>
+    </widget>
+   </item>
+   <item>
     <layout class="QHBoxLayout" name="forkCopyrightLayout">
      <property name="spacing"><number>6</number></property>
      <item>
@@ -89,7 +103,7 @@
      </item>
      <item>
       <widget class="QLabel" name="lblForkCopyright">
-       <property name="text"><string notr="true">© 2006 Ing. prof. Raffaele Mele</string></property>
+       <property name="text"><string notr="true">Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)</string></property>
        <property name="textFormat"><enum>Qt::PlainText</enum></property>
        <property name="wordWrap"><bool>true</bool></property>
       </widget>
@@ -105,7 +119,7 @@
       </font>
      </property>
      <property name="text">
-      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Homepage: &lt;a href="Homepage: https://sourceforge.net/projects/dev-cpp-2020/"&gt;https://sourceforge.net/projects/dev-cpp-2020/&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+      <string>Website: &lt;a href="%1"&gt;%1&lt;/a&gt;</string>
      </property>
      <property name="openExternalLinks">
       <bool>true</bool>

@@ -36,8 +36,8 @@ Il testo delle righe viene adattato allo sfondo effettivamente disegnato, compre
 
 ## Manutenzione del catalogo
 
-La risorsa sorgente è [`gcc-it.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/resources/diagnostics/gcc-it.json). È incorporata nell'eseguibile: modificarla richiede la ricompilazione dell'IDE. Questa versione non importa cataloghi dalle preferenze durante l'esecuzione.
+La risorsa sorgente è [`gcc-it.json`](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.1-rmele.1/RedPandaIDE/resources/diagnostics/gcc-it.json). È incorporata nell'eseguibile: modificarla richiede la ricompilazione dell'IDE. Questa versione non importa cataloghi dalle preferenze durante l'esecuzione.
 
 Ogni regola comprende identificatore stabile, espressione ancorata all'intero messaggio, template italiano con `{1}`, `{2}`, ecc. ed esempi. Tutti i valori acquisiti devono essere conservati. La sostituzione dei parametri avviene una volta, evitando di reinterpretare percentuali o parentesi graffe negli identificatori. Le regole vengono validate/compilate una sola volta; ogni riga memorizza la sua traduzione.
 
-Il catalogo è limitato a 512 KiB e il singolo messaggio a 16.384 unità UTF-16 per la traduzione. Le verifiche coprono esempi e diagnostici reali, originali esatti, coerenza fra pannello e tooltip, Unicode, alias, opzioni, messaggi sconosciuti ed esportazione HTML sicura. Consulta il [corpus](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.0-rmele.1/RedPandaIDE/test/gcc_diagnostic_samples.json).
+Il catalogo è limitato a 512 KiB e il singolo messaggio a 16.384 unità UTF-16 per la traduzione. Le verifiche coprono esempi e diagnostici reali, originali esatti, coerenza fra pannello e tooltip, Unicode, alias, opzioni, messaggi sconosciuti ed esportazione HTML sicura. Consulta il [corpus](https://github.com/lellomele/RedPanda-CPP/blob/v3.5.1-rmele.1/RedPandaIDE/test/gcc_diagnostic_samples.json).

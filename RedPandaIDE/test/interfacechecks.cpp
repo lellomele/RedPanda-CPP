@@ -116,9 +116,14 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         check("About artwork is visible at a useful size", art && art->isVisible() && art->width() >= 192 && !art->property("pixmap").value<QPixmap>().isNull());
         auto *copyright = about.findChild<QLabel *>("lblForkCopyright");
         auto *flag = about.findChild<QLabel *>("lblForkFlag");
-        check("Fork copyright is exact and independent of interface language", copyright && copyright->text() == QStringLiteral("© 2006 Ing. prof. Raffaele Mele") && copyright->textFormat() == Qt::PlainText);
+        check("Fork copyright is exact and independent of interface language", copyright && copyright->text() == QStringLiteral("Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)") && copyright->textFormat() == Qt::PlainText);
         const auto *upstreamCopyright = about.findChild<QLabel *>("label");
         check("Original copyright remains visible", upstreamCopyright && upstreamCopyright->text().contains("royqh1979@gmail.com"));
+        const auto *homepage = about.findChild<QLabel *>("lblHomepage");
+        check("About website points to the fork in every interface language", homepage && homepage->text().contains(QStringLiteral("href=\"https://github.com/lellomele/RedPanda-CPP\"")) && !homepage->text().contains("sourceforge.net"));
+        const auto *upstreamScope = about.findChild<QLabel *>("lblUpstreamScope");
+        const auto *forkScope = about.findChild<QLabel *>("lblForkScope");
+        check("About separates original and fork ownership", upstreamScope && upstreamScope->isVisible() && upstreamScope->text().contains("Roy Qu") && forkScope && forkScope->isVisible() && forkScope->text().contains("Raffaele Mele"));
         check("Italian flag has the height of the copyright characters", copyright && flag && flag->isVisible() && flag->height() == copyright->fontMetrics().capHeight());
         if (flag && copyright) {
             const QImage image = flag->property("pixmap").value<QPixmap>().toImage();

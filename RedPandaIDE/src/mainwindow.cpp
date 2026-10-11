@@ -10195,11 +10195,7 @@ void MainWindow::on_actionGit_Push_triggered()
 
 void MainWindow::on_actionWebsite_triggered()
 {
-    if (pSettings->environment().language()=="zh_CN") {
-        QDesktopServices::openUrl(QUrl("http://royqh.net/redpandacpp/"));
-    } else {
-        QDesktopServices::openUrl(QUrl("https://sourceforge.net/projects/redpanda-cpp/"));
-    }
+    QDesktopServices::openUrl(QUrl(AppIdentity::website()));
 }
 
 void MainWindow::on_actionFilesView_Hide_Non_Support_Files_toggled(bool /* arg1 */)

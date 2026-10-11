@@ -27,6 +27,14 @@
     <context>
         <name>AboutDialog</name>
         <message>
+            <source>Original Red Panda C++ / QSynEdit: Roy Qu (royqh1979) and contributors. Inherited editor, C/C++ support and shared Qt infrastructure.</source>
+            <translation>Progetto originale Red Panda C++ / QSynEdit: Roy Qu (royqh1979) e contributori. Editor, supporto C/C++ e infrastruttura Qt ereditati.</translation>
+        </message>
+        <message>
+            <source>Fork enhancements by Raffaele Mele: Italian localization, themes and icons, snippets, diagnostic translation, document recovery and stability improvements. Third-party components retain their own copyrights and licenses.</source>
+            <translation>Modifiche del fork di Raffaele Mele: interfaccia italiana, temi e icone, snippet, traduzione dei diagnostici, recupero dei documenti e miglioramenti di stabilità. I componenti di terze parti mantengono i rispettivi copyright e licenze.</translation>
+        </message>
+        <message>
             <source>Italian flag</source>
             <translation>Bandiera italiana</translation>
         </message>

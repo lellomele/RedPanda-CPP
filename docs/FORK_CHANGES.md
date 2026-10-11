@@ -119,3 +119,7 @@ Repository initialization checks the actual Git result before generating ignore 
 Closing a modified buffer now requires an explicit save or discard decision, including empty modified documents. An unexpected dialog result preserves the buffer. Failed clipboard copying reports a recoverable status message and keeps the selected original diagnostic available for retry.
 
 Generated Windows/MinGW Make recipes now select the absolute system cmd.exe and /d /c explicitly for clean and build. Rebuild therefore removes old objects even when inherited shell settings prefer sh; custom Makefiles and Unix recipes retain their selected shell.
+
+Windows distributions retain the required notices for the actual bundled runtimes, Artistic Style and embedded Lua. Packaging verifies matching ICU/formatter versions, rejects missing required notices and records their SHA-256 values in `licenses/COMPONENTS.json`.
+
+The Windows Git credential helper is installed beside the IDE core, matching the path used by Git integration.

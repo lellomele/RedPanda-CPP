@@ -1,0 +1,11 @@
+Artistic Style 3.6.19
+Copyright (c) 2026 The Artistic Style Authors.
+MIT license: see LICENSE.md, retained unchanged from the upstream tag.
+
+Source / Sorgenti:
+https://gitlab.com/saalen/astyle/-/tree/3.6.19
+License source / Origine della licenza:
+https://gitlab.com/saalen/astyle/-/raw/3.6.19/AStyle/LICENSE.md
+
+The version is checked against astyle.exe --version during packaging.
+La versione viene verificata con astyle.exe --version durante il packaging.

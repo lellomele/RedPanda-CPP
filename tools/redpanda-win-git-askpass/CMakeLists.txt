@@ -23,7 +23,7 @@ endif()
 
 install(TARGETS redpanda-win-git-askpass
     BUNDLE DESTINATION .
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    RUNTIME DESTINATION .)
 
 add_test(NAME test-windows-askpass-encoding COMMAND redpanda-win-git-askpass --self-test)
 set_tests_properties(test-windows-askpass-encoding PROPERTIES TIMEOUT 15 LABELS "infrastructure;functional")

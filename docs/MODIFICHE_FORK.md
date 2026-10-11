@@ -119,3 +119,7 @@ L’inizializzazione verifica l’esito effettivo di Git prima di generare le re
 La chiusura di un buffer modificato richiede ora una scelta esplicita di salvataggio o scarto, anche quando il documento è vuoto. Un esito inatteso della finestra conserva il buffer. Se la copia negli appunti fallisce, un messaggio recuperabile nella barra di stato mantiene disponibile il diagnostico originale selezionato per riprovare.
 
 Le ricette Make generate per Windows/MinGW selezionano esplicitamente cmd.exe di sistema con percorso assoluto e /d /c, sia per la pulizia sia per la compilazione. Ricompila tutto elimina quindi i vecchi oggetti anche quando le impostazioni ereditate preferiscono sh; Makefile personalizzati e ricette Unix conservano la shell scelta.
+
+Le distribuzioni Windows conservano i notice richiesti per i runtime effettivamente inclusi, Artistic Style e Lua incorporato. Il packaging verifica le versioni corrispondenti di ICU/formatter, rifiuta notice necessari mancanti e registra le impronte SHA-256 in `licenses/COMPONENTS.json`.
+
+Il helper Windows per le credenziali Git viene installato accanto al core dell’IDE, nel percorso usato dall’integrazione Git.

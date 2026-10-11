@@ -1,5 +1,5 @@
 Artistic Style 3.6.19
-Copyright (c) 2026 The Artistic Style Authors.
+Copyright (c) 2023 The Artistic Style Authors.
 MIT license: see LICENSE.md, retained unchanged from the upstream tag.
 
 Source / Sorgenti:

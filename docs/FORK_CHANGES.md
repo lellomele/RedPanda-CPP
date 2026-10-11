@@ -103,3 +103,5 @@ Snippet expansion preserves read-only state, source order of cursor/replacement 
 QSynEdit rescans folding only when block boundaries or structure change, preserving collapsed blocks and undo/redo. Search/replace uses original regex match context, with multi-line coordinate updates and checked scopes. The diagnostic handler supports reconfiguration and shutdown without losing its predecessor; recovery rejects malformed caret metadata without replacing existing documents.
 
 A [multi-level testing guide](TESTING.md) documents unit/component suites, failure injection, deterministic malformed inputs, bilingual application checks, actual GCC output, distribution checks and editing/file-I/O measurements. Performance measurements describe their workloads and scope; they do not establish a universal speedup for the entire IDE. xmake includes the contrast service and RPM manifests include all supplied raster icons.
+
+A recoverable save failure while closing rejects the close event, restores shutdown flags and keeps unsaved editors available for correction or retry.

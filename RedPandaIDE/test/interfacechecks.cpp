@@ -29,6 +29,8 @@
 #include <QMimeData>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QCloseEvent>
+#include <QPointer>
 #include <QMenu>
 #include <QTreeWidget>
 #include <QDialogButtonBox>
@@ -735,7 +737,83 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     check("Project layout failure is reported and original saved layout remains", rejected && readBytes(layout + ".saved") == previousLayout);
     check("Project layout retry target prepared", QDir().rmdir(layout) && QFile::rename(layout + ".saved", layout));
     project.saveLayout();
+
     check("Project layout can save after a previous failure", QJsonDocument::fromJson(readBytes(layout)).isArray());
+
+    // Exercise the native close-event path, not merely Project::saveLayout.
+    // A project-layout failure occurs before closeAll can prompt for a separate
+    // unsaved editor; retries must still run those document prompts.
+    const bool oldAutoLoad = pSettings->editor().autoLoadLastFiles();
+    pSettings->editor().setAutoLoadLastFiles(false);
+    auto restoreAutoLoad = finally([&] { pSettings->editor().setAutoLoadLastFiles(oldAutoLoad); });
+    const QString closeProjectPath = files.filePath("close-workflow.dev");
+    check("Close workflow project fixture written", writeBytes(closeProjectPath,
+          "[Project]\nVer=3\nName=Close workflow\nUnitCount=0\nType=0\nModelType=0\n"));
+    int stage = 0, layoutErrors = 0, cancelledDocumentPrompts = 0;
+    QTimer handleCloseMessages;
+    QObject::connect(&handleCloseMessages, &QTimer::timeout, [&] {
+        if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            if (stage == 1 && message->text().contains("close-workflow.layout"))
+                ++layoutErrors;
+            if (stage == 2 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
+                ++cancelledDocumentPrompts;
+                message->done(QMessageBox::Cancel);
+            } else
+                message->accept();
+        }
+    });
+    handleCloseMessages.start(10);
+    window.openProject(closeProjectPath, false);
+    const auto closeProject = window.project();
+    check("Close workflow opens a real project", closeProject && closeProject->filename() == closeProjectPath);
+    if (closeProject) {
+        QPointer<Editor> extra = window.editorManager()->newEditor(files.filePath("unsaved-extra.cpp"),
+                ENCODING_UTF8, FileType::CppSource, QString(), false, true);
+        check("Close workflow has an independent unsaved editor", extra && !extra->inProject());
+        if (extra) {
+            extra->setContent(QStringList{"int keep_unsaved = 350;"});
+            extra->setModified(true);
+            const QString unsavedText = extra->text();
+            const int originalEditorCount = window.editorManager()->pageCount();
+            const QString closeLayout = files.filePath("close-workflow.layout");
+            closeProject->saveLayout();
+            check("Close workflow deterministic layout failure prepared",
+                  QFile::rename(closeLayout, closeLayout + ".saved") && QDir().mkdir(closeLayout));
+            stage = 1;
+            QCloseEvent rejectedClose;
+            QApplication::sendEvent(&window, &rejectedClose);
+            check("Failed main-window close reports the layout error", layoutErrors == 1);
+            check("Failed main-window close rejects the close event", !rejectedClose.isAccepted());
+            check("Failed main-window close restores all shutdown flags",
+                  !window.isQuitting() && !window.isClosingAll() && !window.closingProject());
+            check("Failed main-window close preserves project editors and visibility",
+                  window.project() == closeProject && window.isVisible()
+                  && window.editorManager()->pageCount() == originalEditorCount);
+            check("Failed main-window close preserves the independent unsaved buffer",
+                  extra && extra->modified() && extra->text() == unsavedText
+                  && window.editorManager()->getOpenedEditor(extra->filename()) == extra);
+            check("Failed main-window close preserves the previous layout bytes",
+                  !readBytes(closeLayout + ".saved").isEmpty());
+            check("Close workflow retry destination restored",
+                  QDir().rmdir(closeLayout) && QFile::rename(closeLayout + ".saved", closeLayout));
+            stage = 2;
+            QCloseEvent cancelledRetry;
+            QApplication::sendEvent(&window, &cancelledRetry);
+            check("Close retry reaches unsaved-document prompts instead of bypassing them", cancelledDocumentPrompts > 0);
+            check("Cancelling close retry keeps the window open and flags reset",
+                  !cancelledRetry.isAccepted() && window.isVisible()
+                  && !window.isQuitting() && !window.isClosingAll() && !window.closingProject());
+            check("Cancelling close retry preserves the independent unsaved buffer",
+                  extra && extra->modified() && extra->text() == unsavedText);
+            check("Close retry commits a valid layout before document cancellation",
+                  QJsonDocument::fromJson(readBytes(closeLayout)).isArray());
+            if (extra)
+                window.editorManager()->forceCloseEditor(extra);
+        }
+        if (window.project())
+            window.closeProject(false);
+    }
+    handleCloseMessages.stop();
 }
 
     QFile result(QDir(outputDirectory).filePath("ui-results.json"));

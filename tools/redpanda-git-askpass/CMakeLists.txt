@@ -1,4 +1,8 @@
-qt_add_executable(redpanda-git-askpass MACOSX_BUNDLE main.cpp)
+if(QT_VERSION_MAJOR GREATER_EQUAL 6)
+    qt_add_executable(redpanda-git-askpass MACOSX_BUNDLE main.cpp)
+else()
+    add_executable(redpanda-git-askpass MACOSX_BUNDLE main.cpp)
+endif()
 
 target_ui_classes(redpanda-git-askpass dialog)
 

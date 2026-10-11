@@ -421,7 +421,7 @@ void TestCppParser::test_reparse_replaces_obsolete_symbols()
     CppParser::parseFileBlocking(mParser, "incremental-edit.cpp", false, "");
     QVERIFY(mParser->findStatement("before"));
     QVERIFY(mParser->findStatement("Holder::first"));
-    contents = {"struct Holder { double second; };", "int after = 2;"};
+    contents = QStringList{"struct Holder { double second; };", "int after = 2;"};
     mParser->invalidateFile("incremental-edit.cpp");
     CppParser::parseFileBlocking(mParser, "incremental-edit.cpp", false, "");
     QVERIFY(!mParser->findStatement("before"));

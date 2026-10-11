@@ -4,7 +4,7 @@
 #include <QObject>
 #include <QFileInfo>
 #include <QSet>
-#include "utils.h"
+#include "../utils.h"
 #include "gitutils.h"
 
 class GitError: public BaseError {

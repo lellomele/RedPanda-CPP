@@ -123,3 +123,5 @@ Generated Windows/MinGW Make recipes now select the absolute system cmd.exe and 
 Windows distributions retain the required notices for the actual bundled runtimes, Artistic Style and embedded Lua. Packaging verifies matching ICU/formatter versions, rejects missing required notices and records their SHA-256 values in `licenses/COMPONENTS.json`.
 
 The Windows Git credential helper is installed beside the IDE core, matching the path used by Git integration.
+
+Windows can delay native process creation inside QProcess before the worker can act on a stop request. Cancellation requests remain pending until startup returns; termination of an already running child has bounded waits. Application closure waits up to eight seconds for workers. If they remain active, the close request is rejected and documents stay alive for another attempt.

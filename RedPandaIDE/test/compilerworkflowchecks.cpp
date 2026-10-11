@@ -434,18 +434,28 @@ int main(int argc, char **argv) {
     QObject cancellationScope;
     const auto cancellationConnection = QObject::connect(manager, &CompilerManager::compileFinished, &cancellationScope,
         [&](const QString &filename, bool syntax) { if (!syntax && filename == cancelSource) cancellationFinished = true; });
+    QElapsedTimer compilerStartup; compilerStartup.start();
     manager->compile(cancelSource, FileType::CppSource, ENCODING_UTF8, false, CppCompileType::Normal);
-    const bool compilerStarted = waitUntil([&] { return readBytes(compilerMarker) == "Compiler waiting\n"; }, 5000);
+    // Native process creation can pause before there is a child to stop. Keep
+    // fixture preparation separate from the unchanged running-child deadline.
+    const bool startupReached = waitUntil([&] {
+        return readBytes(compilerMarker) == "Compiler waiting\n" || cancellationFinished || !manager->compiling();
+    }, 15000);
+    const qint64 startupMilliseconds = compilerStartup.elapsed();
+    const bool compilerStarted = startupReached && readBytes(compilerMarker) == "Compiler waiting\n";
+    const bool startupWithinDeadline = compilerStarted && startupMilliseconds <= 15000;
     const bool compilerWasRunning = manager->compiling() && !cancellationFinished;
+    record("owned compiler fixture reaches its running marker within startup deadline", startupWithinDeadline && compilerWasRunning);
     QElapsedTimer compilerStop; compilerStop.start();
     manager->stopCompile();
     const bool compilerCancelled = waitUntil([&] { return cancellationFinished && !manager->compiling(); }, 5000);
     QObject::disconnect(cancellationConnection);
     workflowTrace.append(QJsonObject{{"phase", "compiler-cancellation"}, {"started", compilerStarted},
+        {"startupMilliseconds", double(startupMilliseconds)}, {"startupWithinDeadline", startupWithinDeadline},
         {"wasRunning", compilerWasRunning}, {"finished", compilerCancelled}, {"milliseconds", double(compilerStop.elapsed())},
         {"markerHex", QString::fromLatin1(readBytes(compilerMarker).toHex())}});
     captureCompile("cancelled", compilerCancelled, !compilerCancelled, manager->compileErrorCount(), manager->compileIssueCount());
-    record("real FileCompiler subprocess cancellation is bounded", compilerStarted && compilerWasRunning && compilerCancelled && compilerStop.elapsed() < 5000);
+    record("real FileCompiler subprocess cancellation is bounded", startupWithinDeadline && compilerWasRunning && compilerCancelled && compilerStop.elapsed() < 5000);
     if (!compilerCancelled) { retainFixtureState = true; return; }
     fixtureSet->setCppCompiler(originalCompiler); fixtureSet->setCustomCompileParams(originalParameters);
     const auto afterCancellation = compile(source);

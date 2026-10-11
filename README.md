@@ -51,6 +51,8 @@ Recovery is best-effort: native crashes, memory corruption, unavailable storage 
 
 Project builds use Make timestamps. Use **Rebuild All** when files were copied with older timestamps or changed within the toolchain’s timestamp resolution.
 
+Windows may delay native process creation. A close request waits up to eight seconds for workers; if they have not stopped, closure is cancelled and documents remain open.
+
 The officially validated distribution targets **Windows x64 with Qt 6.11.2**. Qt 5 code paths are retained as secondary compatibility; they are not a release requirement.
 
 ## Build from source

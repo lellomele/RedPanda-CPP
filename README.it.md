@@ -51,6 +51,8 @@ Il recupero è una misura di protezione: crash nativi, corruzione della memoria,
 
 La compilazione dei progetti usa i timestamp di Make. Usa **Ricompila tutto** quando i file sono stati copiati con date precedenti o modificati entro la risoluzione temporale della toolchain.
 
+Windows può ritardare la creazione nativa dei processi. La chiusura attende fino a otto secondi i worker: se non si fermano, viene annullata e i documenti restano aperti.
+
 La distribuzione verificata ufficialmente usa **Windows x64 con Qt 6.11.2**. I percorsi Qt 5 restano come compatibilità secondaria e non sono un requisito per il rilascio.
 
 ## Compilazione dai sorgenti

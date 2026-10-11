@@ -549,6 +549,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     // Exercise compiler -> diagnostic parser -> panel -> editor with actual GCC output.
     const QString compiler = qEnvironmentVariable("REDPANDA_QA_COMPILER");
     if (!compiler.isEmpty()) {
+        const QByteArray ideProcessPath = qgetenv("PATH");
+        const bool ideProcessHasPath = qEnvironmentVariableIsSet("PATH");
         for (const bool valid : {true, false}) {
             const QString path = QDir(outputDirectory).filePath(valid ? "gcc-real-warning.cpp" : "gcc-real-error.cpp");
             QFile file(path); const QByteArray source = valid ? "int main() { int unused_value; return 0; }\n" : "int main() { return; }\n";
@@ -556,7 +558,13 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             check("Real GCC fixture written", written);
             Editor *editor = written ? window.openFile(path) : nullptr;
             check("Real GCC source opened in editor", editor != nullptr);
-            QProcess process; auto environment = QProcessEnvironment::systemEnvironment(); environment.insert("LC_ALL", "C"); process.setProcessEnvironment(environment);
+            QProcess process;
+            auto environment = QProcessEnvironment::systemEnvironment();
+            environment.insert("LC_ALL", "C");
+            const QString inheritedPath = environment.value("PATH");
+            environment.insert("PATH", QFileInfo(compiler).absolutePath()
+                               + (inheritedPath.isEmpty() ? QString() : QDir::listSeparator() + inheritedPath));
+            process.setProcessEnvironment(environment);
             const QString object = QDir(outputDirectory).filePath(valid ? "gcc-real-warning.o" : "gcc-real-error.o");
             process.start(compiler, {"-std=c++17", "-Wall", "-Wextra", "-fdiagnostics-color=never", "-fmessage-length=0", "-c", path, "-o", object});
             const bool finished = process.waitForStarted(5000) && process.waitForFinished(15000);
@@ -580,6 +588,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 }
             }
         }
+        check("Direct GCC checks preserve the IDE process PATH", qgetenv("PATH") == ideProcessPath
+              && qEnvironmentVariableIsSet("PATH") == ideProcessHasPath);
     }
 
 {

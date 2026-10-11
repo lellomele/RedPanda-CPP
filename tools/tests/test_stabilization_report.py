@@ -45,10 +45,26 @@ class GuiReportValidation(unittest.TestCase):
         r=copy.deepcopy(self.good)
         required=runner.COMPILER_WORKFLOW_CHECKS | runner.WINDOWS_MANAGED_PATH_CHECKS | runner.VCS_WORKFLOW_CHECKS
         r['checks'] += [{'name':name,'passed':True} for name in sorted(required)]
-        self.assertEqual(runner.validate_gui_results(r,'en',True,compiler=True,git=True)[0],31)
+        self.assertEqual(runner.validate_gui_results(r,'en',True,compiler=True,git=True)[0],33)
+    def test_compiler_request_rejects_missing_running_marker(self):
+        missing='Production compiler workflow: owned compiler fixture reaches its running marker within startup deadline'
+        required=runner.COMPILER_WORKFLOW_CHECKS | runner.WINDOWS_MANAGED_PATH_CHECKS | runner.VCS_WORKFLOW_CHECKS
+        required.remove(missing)
+        r=copy.deepcopy(self.good)
+        r['checks'] += [{'name':name,'passed':True} for name in sorted(required)]
+        with self.assertRaisesRegex(ValueError,'owned compiler fixture reaches its running marker within startup deadline'):
+            runner.validate_gui_results(r,'en',True,compiler=True,git=True)
+    def test_compiler_request_rejects_missing_ide_process_path_check(self):
+        missing='Direct GCC checks preserve the IDE process PATH'
+        required=runner.COMPILER_WORKFLOW_CHECKS | runner.WINDOWS_MANAGED_PATH_CHECKS | runner.VCS_WORKFLOW_CHECKS
+        required.remove(missing)
+        r=copy.deepcopy(self.good)
+        r['checks'] += [{'name':name,'passed':True} for name in sorted(required)]
+        with self.assertRaisesRegex(ValueError,'Direct GCC checks preserve the IDE process PATH'):
+            runner.validate_gui_results(r,'en',True,compiler=True,git=True)
     def test_windows_compiler_request_requires_managed_path_checks(self):
         r=copy.deepcopy(self.good)
         r['checks'] += [{'name':name,'passed':True} for name in sorted(runner.COMPILER_WORKFLOW_CHECKS)]
-        self.assertEqual(runner.validate_gui_results(r,'en',False,compiler=True)[0],11)
+        self.assertEqual(runner.validate_gui_results(r,'en',False,compiler=True)[0],13)
         with self.assertRaises(ValueError): runner.validate_gui_results(r,'en',True,compiler=True)
 if __name__=='__main__': unittest.main(verbosity=2)

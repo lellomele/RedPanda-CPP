@@ -54,7 +54,7 @@ I pacchetti non sono firmati digitalmente. Una scansione antivirus locale riguar
 
 ## Ricompilazione
 
-Requisiti: CMake/Ninja, GCC MinGW-w64, Qt 6.11.2 (base, SVG, tools e traduzioni), Python 3, NSIS e astyle. I sorgenti del packaging sono in [`platform/windows/fork-packaging`](https://github.com/lellomele/RedPanda-CPP/tree/v3.5.0-rmele.1/platform/windows/fork-packaging).
+Requisiti: CMake/Ninja, GCC MinGW-w64, Qt 6.11.2 (base, SVG, tools e traduzioni), Python 3.9+, NSIS e astyle. I sorgenti del packaging sono in [`platform/windows/fork-packaging`](https://github.com/lellomele/RedPanda-CPP/tree/v3.5.0-rmele.1/platform/windows/fork-packaging).
 
 1. Configura due build dell'IDE: `PORTABLE_CONFIG=oui` per il portabile e `PORTABLE_CONFIG=non` per l'installabile; entrambe usano `FILESYSTEM_LAYOUT=flat` e `MAKE_INTERFACE=mingw32`.
 2. Installa ciascuna build in `payload/portable/app` oppure `payload/installed/app`, aggiungi astyle e denomina il backend distribuito `app/RedPandaIDE-core.exe`.

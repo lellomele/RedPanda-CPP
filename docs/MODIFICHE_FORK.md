@@ -123,3 +123,5 @@ Le ricette Make generate per Windows/MinGW selezionano esplicitamente cmd.exe di
 Le distribuzioni Windows conservano i notice richiesti per i runtime effettivamente inclusi, Artistic Style e Lua incorporato. Il packaging verifica le versioni corrispondenti di ICU/formatter, rifiuta notice necessari mancanti e registra le impronte SHA-256 in `licenses/COMPONENTS.json`.
 
 Il helper Windows per le credenziali Git viene installato accanto al core dell’IDE, nel percorso usato dall’integrazione Git.
+
+Windows può ritardare la creazione nativa del processo dentro QProcess, prima che il worker possa applicare una richiesta di arresto. La richiesta resta pendente finché l’avvio non ritorna; l’arresto di un processo già attivo ha attese limitate. La chiusura dell’applicazione attende fino a otto secondi i worker: se restano attivi, la chiusura viene rifiutata e i documenti rimangono disponibili per riprovare.

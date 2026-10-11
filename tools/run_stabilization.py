@@ -18,13 +18,14 @@ COMPILER_WORKFLOW_CHECKS = {
         'production ExecutableRunner completes without a visible console',
         'real slow runner cancellation is bounded and joins its worker',
         'stop immediately after start is not lost',
+        'owned compiler fixture reaches its running marker within startup deadline',
         'real FileCompiler subprocess cancellation is bounded',
         'real GCC compilation succeeds after compiler-process cancellation',
         'project workflow has the real Make executable',
         'production ProjectCompiler builds multiple units through Make',
         'project rebuild succeeds after a previous unit error',
     )
-}
+} | {'Direct GCC checks preserve the IDE process PATH'}
 WINDOWS_MANAGED_PATH_CHECKS = {
     'Production compiler workflow: managed run retains the compiler runtime path',
     'Production compiler workflow: managed run excludes IDE app and private library paths',

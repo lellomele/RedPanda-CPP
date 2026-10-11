@@ -39,7 +39,7 @@ private:
     QString mFolder;
     QStringList mRemotes;
     bool mChooseMode;
-    IconsManager *mIconsManager,
+    IconsManager *mIconsManager;
 };
 
 #endif // GITREMOTEDIALOG_H

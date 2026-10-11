@@ -43,23 +43,23 @@ QString AStyleReformatter::refomat(const QString &content, QString &errorMessage
         mLoggerFunc(tr("- Astyle: %1").arg(mAstylePath));
         mLoggerFunc(tr("- Command: %1").arg(command));
     }
-    auto [newContent, astyleError, processError] =
+    const ProcessOutput processOutput =
         runAndGetOutput(mAstylePath, extractFileDir(mAstylePath), mArgs, byteContent, true);
-    if (!astyleError.isEmpty()) {
+    if (!processOutput.standardError.isEmpty()) {
 #ifdef Q_OS_WIN
-        errorMessage = QString::fromLocal8Bit(astyleError);
+        errorMessage = QString::fromLocal8Bit(processOutput.standardError);
 #else
-        errorMessage = QString::fromUtf8(astyleError);
+        errorMessage = QString::fromUtf8(processOutput.standardError);
 #endif
         if (mLoggerFunc)
             mLoggerFunc(errorMessage);
         return QString();
     }
-    if (!processError.isEmpty()) {
+    if (!processOutput.errorMessage.isEmpty()) {
         if (mLoggerFunc)
-            mLoggerFunc(processError);
+            mLoggerFunc(processOutput.errorMessage);
         return QString();
     }
     isOk = true;
-    return QString::fromUtf8(newContent);
+    return QString::fromUtf8(processOutput.standardOutput);
 }

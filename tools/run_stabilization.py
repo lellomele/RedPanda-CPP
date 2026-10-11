@@ -11,6 +11,7 @@ def main():
     parser.add_argument('--ui',action='store_true')
     parser.add_argument('--ide',type=Path)
     parser.add_argument('--compiler',type=Path)
+    parser.add_argument('--git',type=Path)
     parser.add_argument('--benchmark',action='store_true')
     args=parser.parse_args()
     build=args.build_dir.resolve();report=args.report_dir.resolve()
@@ -60,6 +61,7 @@ def main():
             environment=os.environ.copy()
             environment['QT_QPA_PLATFORM']='windows' if os.name=='nt' else 'offscreen'
             if args.compiler:environment['REDPANDA_QA_COMPILER']=str(args.compiler.resolve())
+            if args.git:environment['REDPANDA_QA_GIT']=str(args.git.resolve())
             ok,_=run('ui-'+language,[ide,'--ui-test-output',profile],environment,120)
             if ok:
                 try:

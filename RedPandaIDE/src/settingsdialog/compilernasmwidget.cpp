@@ -67,10 +67,10 @@ void CompilerNASMWidget::on_btnTestNASM_clicked()
     ui->lblNASMInfo->setText("");
     QStringList args;
     args.append("--version");
-    auto [nasmOutput, nasmError, processError]  = runAndGetOutput(
+    const ProcessOutput processOutput = runAndGetOutput(
                 fileInfo.absoluteFilePath(),
                 fileInfo.absolutePath(),
                 args);
-    ui->lblNASMInfo->setText(nasmOutput);
+    ui->lblNASMInfo->setText(QString::fromUtf8(processOutput.standardOutput));
 }
 

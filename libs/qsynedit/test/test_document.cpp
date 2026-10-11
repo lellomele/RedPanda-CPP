@@ -722,6 +722,15 @@ void TestDocument::test_load_encoding_newline_matrix_data()
         << utf32LeBom + encodeFixture("UTF-32LE", unicode.join("\n"))
         << QByteArray(ENCODING_UTF32_BOM) << QByteArray(ENCODING_UTF32_BOM)
         << unicode << int(NewlineType::Unix) << false;
+    const QStringList literalBomLines{QString(QChar(0xfeff)) + "int a;", QString(QChar(0xfeff)) + "int b;"};
+    for (const QByteArray &codec : {QByteArray("UTF-16LE"), QByteArray("UTF-16BE"), QByteArray("UTF-32LE"), QByteArray("UTF-32BE")}) {
+        const QByteArray signature = codec == "UTF-16LE" ? utf16LeBom : codec == "UTF-16BE" ? utf16BeBom
+            : codec == "UTF-32LE" ? utf32LeBom : utf32BeBom;
+        const QByteArray name = codec + "-literal-feff-in-body";
+        QTest::newRow(name.constData()) << signature + encodeFixture(codec, literalBomLines.join("\n"))
+            << autoDetect << QByteArray(codec.startsWith("UTF-16") ? ENCODING_UTF16_BOM : ENCODING_UTF32_BOM)
+            << literalBomLines << int(NewlineType::Unix) << false;
+    }
     const QString unicodeBoundaries = QString::fromUtf8(QByteArray::fromHex("ed9fbfee8080f48fbfbf"));
     QTest::newRow("utf32-be-valid-scalar-boundaries")
         << QByteArray::fromHex("0000feff0000d7ff0000e0000010ffff")
@@ -1066,6 +1075,86 @@ void TestDocument::test_loaded_file_round_trip_bytes()
         QCOMPARE(readFixture(path), original);
         QCOMPARE(savedEncoding, encoding);
     }
+}
+
+} // namespace QSynedit
+
+namespace QSynedit {
+
+void TestDocument::test_codec_encoder_stateless_data()
+{
+    QTest::addColumn<QByteArray>("codec");
+    QTest::addColumn<QString>("text");
+    QTest::addColumn<QByteArray>("bytes");
+    QTest::addColumn<bool>("valid");
+    const QString palm = QString::fromUtf8("🌴");
+    QTest::newRow("utf8-ascii-no-implicit-bom") << QByteArray(ENCODING_UTF8) << QString("int a;\n") << QByteArray("int a;\n") << true;
+    QTest::newRow("utf8-unicode-no-implicit-bom") << QByteArray(ENCODING_UTF8) << palm << QByteArray::fromHex("f09f8cb4") << true;
+    QTest::newRow("utf16-le-scalar-no-bom") << QByteArray("UTF-16LE") << palm << QByteArray::fromHex("3cd834df") << true;
+    QTest::newRow("utf16-be-scalar-no-bom") << QByteArray("UTF-16BE") << palm << QByteArray::fromHex("d83cdf34") << true;
+    QTest::newRow("utf32-le-scalar-no-tail") << QByteArray("UTF-32LE") << palm << QByteArray::fromHex("34f30100") << true;
+    QTest::newRow("utf32-be-scalar-no-tail") << QByteArray("UTF-32BE") << palm << QByteArray::fromHex("0001f334") << true;
+    QTest::newRow("utf32-le-multiple-surrogate-pairs") << QByteArray("UTF-32LE") << "a" + palm + "b" + palm << QByteArray::fromHex("6100000034f301006200000034f30100") << true;
+    QTest::newRow("utf32-be-multiple-surrogate-pairs") << QByteArray("UTF-32BE") << "a" + palm + "b" + palm << QByteArray::fromHex("000000610001f334000000620001f334") << true;
+    const QString marker = QString(QChar(0xfeff)) + "x";
+    QTest::newRow("utf8-literal-feff-is-content") << QByteArray(ENCODING_UTF8) << marker << QByteArray::fromHex("efbbbf78") << true;
+    QTest::newRow("utf16-literal-feff-is-content") << QByteArray("UTF-16LE") << marker << QByteArray::fromHex("fffe7800") << true;
+    QTest::newRow("utf32-literal-feff-is-content") << QByteArray("UTF-32BE") << marker << QByteArray::fromHex("0000feff00000078") << true;
+    QTest::newRow("utf8-empty-no-bom") << QByteArray(ENCODING_UTF8) << QString() << QByteArray() << true;
+    QTest::newRow("utf16-empty-no-bom") << QByteArray("UTF-16LE") << QString() << QByteArray() << true;
+    QTest::newRow("utf32-empty-no-bom") << QByteArray("UTF-32LE") << QString() << QByteArray() << true;
+    QTest::newRow("utf32-le-rejects-high-surrogate") << QByteArray("UTF-32LE") << QString(QChar(0xd800)) << QByteArray() << false;
+    QTest::newRow("utf32-be-rejects-low-surrogate") << QByteArray("UTF-32BE") << QString(QChar(0xdc00)) << QByteArray() << false;
+}
+
+void TestDocument::test_codec_encoder_stateless()
+{
+    QFETCH(QByteArray, codec);
+    QFETCH(QString, text);
+    QFETCH(QByteArray, bytes);
+    QFETCH(bool, valid);
+    TextEncoder encoder(codec);
+    QVERIFY(encoder.isValid());
+    const auto first = encoder.encode(text);
+    QCOMPARE(first.first, valid);
+    QCOMPARE(first.second, bytes);
+    const auto second = encoder.encode(text);
+    QCOMPARE(second.first, valid);
+    QCOMPARE(second.second, bytes);
+    const auto retried = encoder.encode("A");
+    QVERIFY(retried.first);
+    const QByteArray expectedA = codec == "UTF-32LE" ? QByteArray::fromHex("41000000")
+        : codec == "UTF-32BE" ? QByteArray::fromHex("00000041")
+        : codec == "UTF-16LE" ? QByteArray::fromHex("4100")
+        : codec == "UTF-16BE" ? QByteArray::fromHex("0041") : QByteArray("A");
+    QCOMPARE(retried.second, expectedA);
+}
+
+void TestDocument::test_codec_decoder_truncated_data()
+{
+    QTest::addColumn<QByteArray>("codec");
+    QTest::addColumn<QByteArray>("bytes");
+    QTest::addColumn<QByteArray>("retryBytes");
+    QTest::newRow("utf8-final-partial-sequence") << QByteArray(ENCODING_UTF8) << QByteArray::fromHex("61c3") << QByteArray("A");
+    QTest::newRow("utf8-final-partial-emoji") << QByteArray(ENCODING_UTF8) << QByteArray::fromHex("61f09f8c") << QByteArray("A");
+    QTest::newRow("utf16-final-partial-unit") << QByteArray("UTF-16LE") << QByteArray::fromHex("610061") << QByteArray::fromHex("4100");
+    QTest::newRow("utf32-le-final-partial-unit") << QByteArray("UTF-32LE") << QByteArray::fromHex("610000") << QByteArray::fromHex("41000000");
+    QTest::newRow("utf32-be-final-partial-unit") << QByteArray("UTF-32BE") << QByteArray::fromHex("000061") << QByteArray::fromHex("00000041");
+}
+
+void TestDocument::test_codec_decoder_truncated()
+{
+    QFETCH(QByteArray, codec);
+    QFETCH(QByteArray, bytes);
+    QFETCH(QByteArray, retryBytes);
+    TextDecoder decoder(codec);
+    QVERIFY(decoder.isValid());
+    const auto broken = decoder.decode(bytes);
+    QVERIFY(!broken.first);
+    QVERIFY(broken.second.isEmpty());
+    const auto retry = decoder.decode(retryBytes);
+    QVERIFY(retry.first);
+    QCOMPARE(retry.second, QString("A"));
 }
 
 } // namespace QSynedit

@@ -64,7 +64,13 @@ ProcessOutput runAndGetOutput(const QString &cmd, const QString& workingDir, con
         process.write(inputContent);
     }
     process.closeWriteChannel();
-    process.waitForFinished();
+    const bool finished = process.waitForFinished();
+    // Collect any final bytes not delivered by readyRead before completion.
+    if (process.isOpen()) {
+        standardOutput.append(process.readAllStandardOutput());
+        if (separateStderr)
+            standardError.append(process.readAllStandardError());
+    }
     if (errorOccurred) {
         switch(process.error()) {
         case QProcess::FailedToStart:
@@ -88,7 +94,9 @@ ProcessOutput runAndGetOutput(const QString &cmd, const QString& workingDir, con
         }
         errorMessage += process.errorString();
     }
-    return {standardOutput, standardError, errorMessage};
+    return {standardOutput, standardError, errorMessage,
+            finished ? process.exitCode() : -1,
+            finished && process.exitStatus() == QProcess::NormalExit};
 }
 
 void executeFile(const QString &fileName, const QStringList &params, const QString &workingDir, const QString &tempFile)

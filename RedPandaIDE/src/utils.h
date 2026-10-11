@@ -42,6 +42,8 @@ struct ProcessOutput
     QByteArray standardOutput;
     QByteArray standardError;
     QString errorMessage;
+    int exitCode = -1;
+    bool normalExit = false;
 };
 
 ProcessOutput runAndGetOutput(const QString& cmd, const QString& workingDir, const QStringList& arguments,

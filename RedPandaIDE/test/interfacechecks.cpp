@@ -4,6 +4,10 @@
 #include "src/parser/cppparser.h"
 #include <QCheckBox>
 #include <QTemporaryDir>
+#include <QStandardPaths>
+#ifdef ENABLE_VCS
+#include "src/vcs/gitmanager.h"
+#endif
 #include <QFileSystemWatcher>
 #include <qsynedit/syntaxer/cpp.h>
 #include "interfacechecks.h"
@@ -811,10 +815,126 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 window.editorManager()->forceCloseEditor(extra);
         }
         if (window.project())
-            window.closeProject(false);
+            QMetaObject::invokeMethod(&window, "on_actionClose_Project_triggered", Qt::DirectConnection);
     }
     handleCloseMessages.stop();
 }
+
+
+#ifdef ENABLE_VCS
+    // Real Git commands run only in a throwaway offline repository. Disable
+    // signing and hooks locally so a user's global Git settings cannot launch
+    // external programs during the smoke checks.
+    {
+        QString git = qEnvironmentVariable("REDPANDA_QA_GIT");
+        if (git.isEmpty())
+            git = QStandardPaths::findExecutable("git");
+        const bool usableGit = !git.isEmpty() && QFileInfo(git).isFile();
+        check("VCS smoke has a real Git executable", usableGit);
+        if (usableGit) {
+            const QString previousGitPath = pSettings->vcs().gitPath();
+            auto restoreGit = finally([&] { pSettings->vcs().setGitPath(previousGitPath); });
+            pSettings->vcs().setGitPath(QFileInfo(git).absoluteFilePath());
+            // A CI report directory may itself be inside the checked-out Git
+            // repository. Use the system temp directory to avoid its parent
+            // worktree, and clear repository overrides during this test only.
+            const QList<QByteArray> gitOverrides{
+                "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
+                "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"};
+            QHash<QByteArray, QByteArray> savedOverrides;
+            QSet<QByteArray> presentOverrides;
+            for (const QByteArray &name : gitOverrides) {
+                if (qEnvironmentVariableIsSet(name.constData())) {
+                    presentOverrides.insert(name);
+                    savedOverrides.insert(name, qgetenv(name.constData()));
+                }
+                qunsetenv(name.constData());
+            }
+            auto restoreOverrides = finally([&] {
+                for (const QByteArray &name : gitOverrides) {
+                    if (presentOverrides.contains(name))
+                        qputenv(name.constData(), savedOverrides.value(name));
+                    else
+                        qunsetenv(name.constData());
+                }
+            });
+            QTemporaryDir repository(QDir::tempPath() + "/" +
+                    QString::fromUtf8("RedPanda vcs spazi-\xC3\xA0-\xF0\x9F\x90\xBC-XXXXXX"));
+            check("VCS smoke creates an isolated directory with spaces and Unicode", repository.isValid());
+            if (repository.isValid()) {
+                GitManager manager;
+                QString output;
+                bool initialized = false;
+                try {
+                    manager.createRepository(repository.path());
+                    QString branch;
+                    initialized = manager.hasRepository(repository.path(), branch);
+                    check("VCS smoke initializes and recognizes an offline repository", initialized && !branch.isEmpty());
+                } catch (const BaseError &) {
+                    check("VCS smoke initializes and recognizes an offline repository", false);
+                }
+                if (initialized) {
+                    const QString hooks = repository.filePath("disabled hooks");
+                    const bool configured = QDir().mkpath(hooks)
+                            && manager.setConfig(repository.path(), "core.hooksPath", hooks, output)
+                            && manager.setConfig(repository.path(), "commit.gpgSign", "false", output)
+                            && manager.setUserName(repository.path(), "RedPanda GUI test", output)
+                            && manager.setUserEmail(repository.path(), "redpanda-test@example.invalid", output);
+                    check("VCS smoke configures local identity and disables hooks and signing", configured);
+                    if (configured) {
+                        const QString name = QString::fromUtf8("file prova-citt\xC3\xA0-\xF0\x9F\x90\xBC.cpp");
+                        const QByteArray contents("int main() { return 0; }\n");
+                        QFile file(repository.filePath(name));
+                        const bool written = file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
+                        file.close();
+                        check("VCS smoke writes a source filename with spaces and Unicode", written);
+                        const bool staged = written && manager.add(repository.path(), name, output);
+                        check("VCS smoke stages a filename with spaces and Unicode", staged);
+                        if (staged) {
+                            check("VCS smoke lists the exact Unicode filename", manager.listStagedFiles(repository.path()).contains(name));
+                            const QString message = "QA offline commit";
+                            const bool committed = manager.commit(repository.path(), message, false, output);
+                            check("VCS smoke commits the staged source offline", committed);
+                            const auto history = manager.log(repository.path(), 0, 1);
+                            check("VCS smoke reads HEAD log and commit title", committed && history.size() == 1
+                                  && !history.first()->commitHash.isEmpty() && history.first()->title == message);
+                            const QString head = history.isEmpty() ? QString() : history.first()->commitHash;
+                            output.clear();
+                            check("VCS smoke rejects a nonzero normal exit with no pending commit",
+                                  !manager.commit(repository.path(), "must not create another commit", false, output)
+                                  && output.contains("fatal:") && !output.trimmed().isEmpty());
+                            output.clear();
+                            const bool failed = !manager.add(repository.path(), "does-not-exist.cpp", output);
+                            check("VCS smoke rejects missing paths with a nonempty diagnostic", failed && !output.trimmed().isEmpty());
+                            const auto afterFailure = manager.log(repository.path(), 0, 1);
+                            check("VCS smoke failed operation preserves HEAD", !head.isEmpty() && afterFailure.size() == 1
+                                  && afterFailure.first()->commitHash == head);
+                            pSettings->vcs().setGitPath(repository.filePath("missing git.exe"));
+                            output.clear();
+                            check("VCS smoke missing executable cannot report empty success",
+                                  !manager.add(repository.path(), name, output) && output.startsWith("fatal:")
+                                  && !output.trimmed().isEmpty());
+                            const QString invalidGit = repository.filePath("invalid git.exe");
+                            QFile invalid(invalidGit);
+                            const bool invalidWritten = invalid.open(QIODevice::WriteOnly)
+                                    && invalid.write("not an executable") == 17;
+                            invalid.close();
+                            check("VCS smoke prepares an invalid executable fixture", invalidWritten);
+                            if (invalidWritten) {
+                                pSettings->vcs().setGitPath(invalidGit);
+                                output.clear();
+                                check("VCS smoke reports process-start failure as an error",
+                                      !manager.add(repository.path(), name, output) && output.startsWith("fatal:")
+                                      && !output.trimmed().isEmpty());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif
 
     QFile result(QDir(outputDirectory).filePath("ui-results.json"));
     if (!result.open(QIODevice::WriteOnly)) return 2; const auto report = QJsonDocument(QJsonObject{{"language", language}, {"checks", checks}, {"failures", failures}}).toJson(); if (result.write(report) != report.size()) return 2;

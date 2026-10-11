@@ -105,3 +105,5 @@ QSynEdit rescans folding only when block boundaries or structure change, preserv
 A [multi-level testing guide](TESTING.md) documents unit/component suites, failure injection, deterministic malformed inputs, bilingual application checks, actual GCC output, distribution checks and editing/file-I/O measurements. Performance measurements describe their workloads and scope; they do not establish a universal speedup for the entire IDE. xmake includes the contrast service and RPM manifests include all supplied raster icons.
 
 A recoverable save failure while closing rejects the close event, restores shutdown flags and keeps unsaved editors available for correction or retry.
+
+The checked text-codec wrappers now share the same Unicode framing and stateless BOM policy under Qt 5 and Qt 6. UTF-32 saves validate scalar boundaries and omit uninitialized encoder tails; truncated final units are rejected. Git integration exposes process exit status, reports nonzero exits and startup failures, and has offline repository regression checks with Unicode paths and commits.

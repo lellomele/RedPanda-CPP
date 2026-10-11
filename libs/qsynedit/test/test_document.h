@@ -34,6 +34,10 @@ private slots:
     void cleanup();
     void initTestCase();
     void cleanupTestCase();
+    void test_codec_encoder_stateless_data();
+    void test_codec_encoder_stateless();
+    void test_codec_decoder_truncated_data();
+    void test_codec_decoder_truncated();
     void test_load_encoding_newline_matrix_data();
     void test_load_encoding_newline_matrix();
     void test_load_failure_preserves_document_data();

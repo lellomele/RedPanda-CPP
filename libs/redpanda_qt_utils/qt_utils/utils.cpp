@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "utils.h"
+#include <limits>
 #include <QApplication>
 #include <QByteArray>
 #include <QDir>
@@ -782,18 +783,44 @@ std::pair<bool, QByteArray> TextEncoder::encode(const QString &text)
 {
     if (!isValid())
         return {false, QByteArray()};
+    int utf32Bytes = -1;
+    if (name().toUpper().startsWith("UTF-32")) {
+        int scalarCount = 0;
+        for (int i = 0; i < text.length(); ++i) {
+            if (text[i].isHighSurrogate()) {
+                if (i + 1 >= text.length() || !text[i + 1].isLowSurrogate())
+                    return {false, QByteArray()};
+                ++i;
+            } else if (text[i].isLowSurrogate()) {
+                return {false, QByteArray()};
+            }
+            ++scalarCount;
+        }
+        if (scalarCount > std::numeric_limits<int>::max() / 4)
+            return {false, QByteArray()};
+        utf32Bytes = scalarCount * 4;
+    }
     QByteArray result;
 #if QT_VERSION_MAJOR >= 6
     result = mEncoder(text);
-    if (mEncoder.hasError()) {
+    if (mEncoder.hasError() || (utf32Bytes >= 0 && result.size() != utf32Bytes)) {
         mEncoder.resetState();
         return {false, QByteArray()};
     }
 #else
-    QTextCodec::ConverterState state;
+    // Like QStringEncoder in Qt 6, this wrapper emits no implicit BOM.
+    // The document serializer owns the optional file signature.
+    QTextCodec::ConverterState state(QTextCodec::IgnoreHeader);
     result = mCodec->fromUnicode(text.constData(), text.length(), &state);
-    if (state.invalidChars > 0)
+    if (state.invalidChars > 0 || state.remainingChars > 0)
         return {false, QByteArray()};
+    if (utf32Bytes >= 0) {
+        // Qt 5 sizes UTF-32 output by UTF-16 units without shrinking it after
+        // surrogate pairs; discard the uninitialized tail, not valid scalars.
+        if (result.size() < utf32Bytes)
+            return {false, QByteArray()};
+        result.truncate(utf32Bytes);
+    }
 #endif
     return {true, result};
 }
@@ -895,6 +922,10 @@ std::pair<bool, QString> TextDecoder::decode(const QByteArray &text)
 {
     if (!isValid())
         return {false, QString()};
+    const QByteArray codecName = name().toUpper();
+    if ((codecName.startsWith("UTF-16") && text.size() % 2 != 0)
+            || (codecName.startsWith("UTF-32") && text.size() % 4 != 0))
+        return {false, QString()};
     QString result;
 #if QT_VERSION_MAJOR >= 6
     result = mDecoder(text);
@@ -905,7 +936,9 @@ std::pair<bool, QString> TextDecoder::decode(const QByteArray &text)
 #else
     QTextCodec::ConverterState state;
     result = mCodec->toUnicode(text.constData(), text.length(), &state);
-    if (state.invalidChars > 0)
+    // The wrapper is stateless: a pending final sequence is truncated input,
+    // not data that a later call is allowed to complete.
+    if (state.invalidChars > 0 || state.remainingChars > 0)
         return {false, QString()};
 #endif
     return {true, result};

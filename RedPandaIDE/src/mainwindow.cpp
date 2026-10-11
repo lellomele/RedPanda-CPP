@@ -1410,16 +1410,16 @@ void MainWindow::executeTool(PToolItem item)
             QString cmd="cmd";
             QStringList args{"/C",file.fileName()};
             command = escapeCommandForPlatformShell(cmd, args);
-            auto [o, _, em] = runAndGetOutput(cmd, workDir, args, inputContent);
-            output = o;
-            errorMessage = em;
+            const ProcessOutput processOutput = runAndGetOutput(cmd, workDir, args, inputContent);
+            output = processOutput.standardOutput;
+            errorMessage = processOutput.errorMessage;
         }
     } else {
 #endif
         command = escapeCommandForPlatformShell(program, params);
-        auto [o, _, em] = runAndGetOutput(program, workDir, params, inputContent);
-        output = o;
-        errorMessage = em;
+        const ProcessOutput processOutput = runAndGetOutput(program, workDir, params, inputContent);
+        output = processOutput.standardOutput;
+        errorMessage = processOutput.errorMessage;
 #ifdef Q_OS_WIN
     }
 #endif
@@ -10061,7 +10061,7 @@ void MainWindow::on_actionGit_Remotes_triggered()
     }
     if (folder.isEmpty())
         return;
-    GitRemoteDialog dialog(folder);
+    GitRemoteDialog dialog(folder, mIconsManager.get(), this);
     dialog.exec();
 }
 
@@ -10102,7 +10102,7 @@ void MainWindow::on_actionGit_Pull_triggered()
     QString remote = manager.getBranchRemote(folder,branch);
     QString output;
     if (remote.isEmpty()) {
-        GitRemoteDialog dialog(folder);
+        GitRemoteDialog dialog(folder, mIconsManager.get(), this);
         QString remote = dialog.chooseRemote();
         if (remote.trimmed().isEmpty())
             return;
@@ -10137,7 +10137,7 @@ void MainWindow::on_actionGit_Push_triggered()
     QString remote = manager.getBranchRemote(folder,branch);
     QString output;
     if (remote.isEmpty()) {
-        GitRemoteDialog dialog(folder);
+        GitRemoteDialog dialog(folder, mIconsManager.get(), this);
         QString remote = dialog.chooseRemote();
         if (remote.trimmed().isEmpty())
             return;

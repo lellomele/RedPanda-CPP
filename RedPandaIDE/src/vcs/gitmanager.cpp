@@ -579,7 +579,7 @@ bool GitManager::isValid()
 QString GitManager::runGit(const QString& workingFolder, const QStringList &args)
 {
     if (!isValid())
-        return "";
+        return "fatal: git doesn't exist";
     QFileInfo fileInfo(pSettings->vcs().gitPath());
     if (!fileInfo.exists())
         return "fatal: git doesn't exist";
@@ -599,14 +599,26 @@ QString GitManager::runGit(const QString& workingFolder, const QStringList &args
     env.insert("LANGUAGE","");
     env.insert("GIT_ASKPASS",includeTrailingPathDelimiter(pSettings->dirs().appLibexecDir())+"redpanda-git-askpass");
 #endif
-    QString output = runAndGetOutput(
+    const ProcessOutput processOutput = runAndGetOutput(
                 fileInfo.absoluteFilePath(),
                 workingFolder,
                 args,
                 "",
                 false,
+                false,
                 env);
-    output = escapeUTF8String(output.toUtf8());
+    QString output = escapeUTF8String(processOutput.standardOutput);
+    QString processFailure = processOutput.errorMessage;
+    if (processFailure.isEmpty() && !processOutput.normalExit)
+        processFailure = QStringLiteral("git did not exit normally");
+    else if (processFailure.isEmpty() && processOutput.exitCode != 0)
+        processFailure = QStringLiteral("git exited with code %1").arg(processOutput.exitCode);
+    if (!processFailure.isEmpty()) {
+        if (!output.isEmpty() && !output.endsWith('\n'))
+            output.append('\n');
+        // Keep Git's error prefix recognizable by isSuccess() and its callers.
+        output.append(QStringLiteral("fatal: ") + processFailure);
+    }
 //    qDebug()<<output;
     emit gitCmdFinished(output);
 //    if (output.startsWith("fatal:"))

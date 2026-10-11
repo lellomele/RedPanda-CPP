@@ -1343,7 +1343,7 @@ static QByteArray getCompilerOutput(const QString &binDir, const QString &binFil
     env.insert("LC_ALL", "C");
     QString path = binDir;
     env.insert("PATH",path);
-    auto [result, _, errorMessage] = runAndGetOutput(
+    const ProcessOutput processOutput = runAndGetOutput(
                 getFilePath(binDir, binFile),
                 binDir,
                 arguments,
@@ -1351,7 +1351,7 @@ static QByteArray getCompilerOutput(const QString &binDir, const QString &binFil
                 false,
                 false,
                 env);
-    return result.trimmed();
+    return processOutput.standardOutput.trimmed();
 }
 
 bool CompilerSet::forceEnglishOutput() const

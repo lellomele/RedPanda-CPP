@@ -342,19 +342,19 @@ void FormatterGeneralWidget::updateDemo()
 
     CodeFormatterSettings formatter(nullptr);
     updateCodeFormatter(formatter);
-    auto [newContent, astyleError, processError] =
+    const ProcessOutput processOutput =
         runAndGetOutput(astyle, extractFileDir(astyle), formatter.getArguments(), content, true);
     QString display;
-    if (!processError.isEmpty())
-        display += processError + '\n';
-    if (!astyleError.isEmpty()) {
+    if (!processOutput.errorMessage.isEmpty())
+        display += processOutput.errorMessage + '\n';
+    if (!processOutput.standardError.isEmpty()) {
 #ifdef Q_OS_WIN
-        display += QString::fromLocal8Bit(astyleError) + '\n';
+        display += QString::fromLocal8Bit(processOutput.standardError) + '\n';
 #else
-        display += QString::fromUtf8(astyleError) + '\n';
+        display += QString::fromUtf8(processOutput.standardError) + '\n';
 #endif
     }
-    display += newContent;
+    display += processOutput.standardOutput;
     ui->editDemo->setContent(display);
 }
 

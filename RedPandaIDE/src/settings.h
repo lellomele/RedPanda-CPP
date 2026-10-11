@@ -71,7 +71,7 @@ public:
     CompileSettings &compile();
     UISettings &ui();
 #ifdef ENABLE_VCS
-    VCS &vcs();
+    VCSSettings &vcs();
 #endif
     LanguageSettings &languages();
     QString filename() const;
@@ -90,7 +90,7 @@ private:
     CompileSettings mCompile;
     UISettings mUI;
 #ifdef ENABLE_VCS
-    VCSSetting mVCS;
+    VCSSettings mVCS;
 #endif
     LanguageSettings mLanguages;
 };

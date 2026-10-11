@@ -7617,7 +7617,11 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Can't save file %1</source>
             <translation>Impossibile salvare il file %1</translation>
         </message>
-    </context>
+        <message>
+        <source>Cannot save '%1': %2</source>
+        <translation>Impossibile salvare '%1': %2</translation>
+    </message>
+</context>
     <context>
         <name>ProjectAlreadyOpenDialog</name>
         <message>
@@ -11694,4 +11698,19 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <translation>Caricamento dell'ambiente di sviluppo…</translation>
         </message>
     </context>
+<context>
+    <name>QSynedit::Document</name>
+    <message>
+        <source>Text cannot be represented by codec '%1' without losing data.</source>
+        <translation>Il testo contiene caratteri non rappresentabili con la codifica '%1'. Scegli una codifica adatta per evitare la perdita di dati.</translation>
+    </message>
+    <message>
+        <source>Invalid text encoding in file: %1</source>
+        <translation>Il file contiene sequenze non valide per la codifica selezionata: %1</translation>
+    </message>
+    <message>
+        <source>Invalid Unicode data in file: %1</source>
+        <translation>Il file contiene dati Unicode non validi: %1</translation>
+    </message>
+</context>
 </TS>

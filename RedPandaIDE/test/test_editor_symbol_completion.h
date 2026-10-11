@@ -68,6 +68,31 @@ private slots:
 
     void test_input_docstring();
     void test_input_after_cpp_comment();
+
+    void test_read_only_symbol_completion_data();
+    void test_read_only_symbol_completion();
+    void test_snippet_read_only_preserves_selection();
+    void test_snippet_mixed_tab_stops_follow_source_order();
+    void test_snippet_multiline_unicode_tab_stops();
+    void test_snippet_failed_macro_preserves_document();
+    void test_snippet_replacement_single_undo();
+    void test_snippet_prefix_boundaries_and_stale_requests();
+    void test_snippet_partial_prefix_requires_selected_candidate();
+    void test_completion_popup_without_parser_data();
+    void test_completion_popup_without_parser();
+    void test_completion_popup_keywords_after_cancel();
+    void test_completion_list_optional_callbacks();
+    void test_header_completion_without_parser();
+    void test_header_completion_preserves_include_precedence();
+
+    void test_failed_save_as_preserves_editor_identity_data();
+    void test_failed_save_as_preserves_editor_identity();
+    void test_failed_encoding_conversion_preserves_document();
+    void test_encoding_reload_cancel_preserves_edits();
+    void test_encoding_reload_failure_preserves_state();
+    void test_save_as_encoding_observer_sees_committed_identity();
+
+
 };
 
 #endif

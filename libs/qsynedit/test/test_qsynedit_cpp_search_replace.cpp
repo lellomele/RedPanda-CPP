@@ -1,5 +1,7 @@
 #include <QTest>
 #include <QCoreApplication>
+#include <stdexcept>
+#include <QScopeGuard>
 
 #include "test_qsynedit_cpp_search_replace.h"
 #include "qsynedit/qsynedit.h"
@@ -4684,6 +4686,348 @@ void TestQSyneditCppSearchReplace::test_replace_backward_scope()
                          nullptr);
     QCOMPARE(mEdit->content(),text3);
     QCOMPARE(newEndPos,CharPos(18,2));
+}
+
+
+namespace {
+SearchAction replaceEveryMatch(const QString &, const QString &, const CharPos &, int)
+{
+    return SearchAction::ReplaceAll;
+}
+
+class FailingReplacementSearcher : public BasicSearcher
+{
+public:
+    QString replace(const QString &occurrence, const QString &replacement) override
+    {
+        if (++mCalls == 2)
+            throw std::runtime_error("Injected replacement failure");
+        return BasicSearcher::replace(occurrence, replacement);
+    }
+private:
+    int mCalls = 0;
+};
+}
+
+void TestQSyneditCppSearchReplace::test_replace_all_whole_word_length_changes_data()
+{
+    QTest::addColumn<QString>("replacement");
+    QTest::addColumn<bool>("backwards");
+    for (bool backwards : {false, true}) {
+        const QByteArray direction = backwards ? "backward-" : "forward-";
+        QTest::newRow((direction + "shorter").constData()) << QString("x") << backwards;
+        QTest::newRow((direction + "longer").constData()) << QString("replacement") << backwards;
+        QTest::newRow((direction + "empty").constData()) << QString() << backwards;
+    }
+}
+
+void TestQSyneditCppSearchReplace::test_replace_all_whole_word_length_changes()
+{
+    QFETCH(QString, replacement);
+    QFETCH(bool, backwards);
+    const QStringList original{"cat cat scatter cat"};
+    mEdit->setContent(original);
+    SearchOptions options = ssoWholeWord | ssoMatchCase;
+    options.setFlag(ssoBackwards, backwards);
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("cat", replacement, mEdit->fileBegin(),
+                                  mEdit->fileEnd(), scopeEnd, options,
+                                  mBasicSearcher.get(), replaceEveryMatch), 3);
+    const QStringList expected{replacement + " " + replacement + " scatter " + replacement};
+    QCOMPARE(mEdit->content(), expected);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    QVERIFY(!mEdit->editing());
+    QVERIFY(mEdit->canUndo());
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(!mEdit->canUndo());
+    QVERIFY(!mEdit->modified());
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), expected);
+    QVERIFY(!mEdit->canRedo());
+}
+
+void TestQSyneditCppSearchReplace::test_replace_all_multiline_data()
+{
+    QTest::addColumn<bool>("backwards");
+    QTest::addColumn<bool>("scoped");
+    QTest::addColumn<bool>("wrapped");
+    for (bool backwards : {false, true}) {
+        for (bool scoped : {false, true}) {
+            for (bool wrapped : {false, true}) {
+                const QByteArray name = QByteArray(backwards ? "backward" : "forward")
+                        + (scoped ? "-scope" : "-file") + (wrapped ? "-wrap" : "-plain");
+                QTest::newRow(name.constData()) << backwards << scoped << wrapped;
+            }
+        }
+    }
+}
+
+void TestQSyneditCppSearchReplace::test_replace_all_multiline()
+{
+    QFETCH(bool, backwards);
+    QFETCH(bool, scoped);
+    QFETCH(bool, wrapped);
+    const QStringList original{"outside foo", "foo foo", "foo", "outside foo"};
+    mEdit->setContent(original);
+    SearchOptions options = ssoMatchCase;
+    options.setFlag(ssoBackwards, backwards);
+    options.setFlag(ssoFromCaret, wrapped);
+    options.setFlag(ssoWrapAround, wrapped);
+    mEdit->setCaretXY(CharPos{4, 1});
+    const CharPos begin = scoped ? CharPos{0, 1} : mEdit->fileBegin();
+    const CharPos end = scoped ? CharPos{3, 2} : mEdit->fileEnd();
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("foo", "A\nB", begin, end, scopeEnd,
+                                  options, mBasicSearcher.get(), replaceEveryMatch), scoped ? 3 : 5);
+    const QStringList expected = scoped
+            ? QStringList{"outside foo", "A", "B A", "B", "A", "B", "outside foo"}
+            : QStringList{"outside A", "B", "A", "B A", "B", "A", "B", "outside A", "B"};
+    QCOMPARE(mEdit->content(), expected);
+    QCOMPARE(scopeEnd, scoped ? CharPos(1, 5) : mEdit->fileEnd());
+    QVERIFY(!mEdit->editing());
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(!mEdit->canUndo());
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), expected);
+}
+
+void TestQSyneditCppSearchReplace::test_replace_all_unicode_undo_redo()
+{
+    const QString panda = QString::fromUtf8("\xF0\x9F\x90\xBC");
+    const QStringList original{panda + " café " + panda, "café"};
+    mEdit->setContent(original);
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("café", panda + " italiano", mEdit->fileBegin(),
+                                  mEdit->fileEnd(), scopeEnd, ssoMatchCase,
+                                  mBasicSearcher.get(), replaceEveryMatch), 2);
+    const QStringList expected{panda + " " + panda + " italiano " + panda, panda + " italiano"};
+    QCOMPARE(mEdit->content(), expected);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), expected);
+}
+
+void TestQSyneditCppSearchReplace::test_read_only_replace_preserves_state()
+{
+    const QStringList original{"foo foo", "foo"};
+    mEdit->setContent(original);
+    mEdit->setReadOnly(true);
+    const auto reset = qScopeGuard([this] { mEdit->setReadOnly(false); });
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("foo", "longer\nreplacement", mEdit->fileBegin(),
+                                  mEdit->fileEnd(), scopeEnd, ssoNone,
+                                  mBasicSearcher.get(), replaceEveryMatch), 1);
+    QCOMPARE(mEdit->content(), original);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    QVERIFY(!mEdit->canUndo());
+    QVERIFY(!mEdit->modified());
+    QVERIFY(!mEdit->editing());
+    QCOMPARE(mEdit->searchReplace("foo", "", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoNone, mBasicSearcher.get(),
+                                  [](const QString &, const QString &, const CharPos &, int) {
+        return SearchAction::Skip;
+    }), 3);
+}
+
+void TestQSyneditCppSearchReplace::test_invalid_scope_preserves_state()
+{
+    const QStringList original{"foo foo"};
+    mEdit->setContent(original);
+    mEdit->setCaretXY(CharPos{2, 0});
+    const CharPos caret = mEdit->caretXY();
+    CharPos scopeEnd;
+    for (const auto &scope : QList<QPair<CharPos, CharPos>>{
+             {CharPos{-1, 0}, mEdit->fileEnd()},
+             {mEdit->fileBegin(), CharPos{0, 2}},
+             {mEdit->fileEnd(), mEdit->fileBegin()}}) {
+        QCOMPARE(mEdit->searchReplace("foo", "bar", scope.first, scope.second,
+                                      scopeEnd, ssoNone, mBasicSearcher.get(), replaceEveryMatch), 0);
+        QCOMPARE(mEdit->content(), original);
+        QCOMPARE(mEdit->caretXY(), caret);
+        QVERIFY(!mEdit->canUndo());
+        QVERIFY(!mEdit->editing());
+    }
+    scopeEnd = CharPos{-1, -1};
+    QCOMPARE(mEdit->searchReplace("", "", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoNone, mBasicSearcher.get()), 0);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    scopeEnd = CharPos{-1, -1};
+    QCOMPARE(mEdit->searchReplace("foo", "", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoNone, nullptr), 0);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+}
+
+void TestQSyneditCppSearchReplace::test_search_failure_keeps_editor_usable()
+{
+    const QStringList original{"foo foo"};
+    mEdit->setContent(original);
+    FailingReplacementSearcher searcher;
+    CharPos scopeEnd;
+    bool failed = false;
+    try {
+        mEdit->searchReplace("foo", "bar", mEdit->fileBegin(), mEdit->fileEnd(),
+                            scopeEnd, ssoNone, &searcher, replaceEveryMatch);
+    } catch (const std::runtime_error &) {
+        failed = true;
+    }
+    QVERIFY(failed);
+    QVERIFY(!mEdit->editing());
+    QVERIFY(mEdit->getOptions().testFlag(EditorOption::AutoIndent));
+    QCOMPARE(mEdit->content(), QStringList{"bar foo"});
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    mEdit->setCaretXY(mEdit->fileEnd());
+    mEdit->processCommand(EditCommand::Input, QString("!"));
+    QCOMPARE(mEdit->content(), QStringList{"foo foo!"});
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+}
+
+void TestQSyneditCppSearchReplace::test_search_invalid_regex_preserves_document()
+{
+    const QStringList original{"foo foo"};
+    mEdit->setContent(original);
+    mEdit->setCaretXY(CharPos{2, 0});
+    const CharPos caret = mEdit->caretXY();
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("[", "bar", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoNone, mRegexSearcher.get(), replaceEveryMatch), 0);
+    QCOMPARE(mEdit->content(), original);
+    QCOMPARE(mEdit->caretXY(), caret);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    QVERIFY(!mEdit->canUndo());
+    QVERIFY(!mEdit->editing());
+}
+
+void TestQSyneditCppSearchReplace::test_wrap_cancel_preserves_document()
+{
+    const QStringList original{"foo", "tail"};
+    mEdit->setContent(original);
+    mEdit->setCaretXY(mEdit->fileEnd());
+    const CharPos caret = mEdit->caretXY();
+    int wrapCalls = 0;
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("foo", "bar", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoFromCaret | ssoWrapAround, mBasicSearcher.get(),
+                                  replaceEveryMatch, [&wrapCalls] { ++wrapCalls; return false; }), 0);
+    QCOMPARE(wrapCalls, 1);
+    QCOMPARE(mEdit->content(), original);
+    QCOMPARE(mEdit->caretXY(), caret);
+    QVERIFY(!mEdit->canUndo());
+    QVERIFY(!mEdit->editing());
+}
+
+void TestQSyneditCppSearchReplace::test_large_document_replace_undo_redo()
+{
+    QStringList original;
+    original.reserve(3000);
+    for (int line = 0; line < 3000; ++line)
+        original.append(QString("int token_%1 = token + token;").arg(line));
+    mEdit->setContent(original);
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace("token", "value_name", mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, ssoWholeWord | ssoMatchCase,
+                                  mBasicSearcher.get(), replaceEveryMatch), 6000);
+    QStringList expected;
+    expected.reserve(original.size());
+    for (int line = 0; line < original.size(); ++line)
+        expected.append(QString("int token_%1 = value_name + value_name;").arg(line));
+    QCOMPARE(mEdit->content(), expected);
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    QVERIFY(!mEdit->editing());
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(!mEdit->canUndo());
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), expected);
+}
+
+
+void TestQSyneditCppSearchReplace::test_regex_replacement_keeps_original_context_data()
+{
+    QTest::addColumn<QString>("source");
+    QTest::addColumn<QString>("pattern");
+    QTest::addColumn<QString>("replacement");
+    QTest::addColumn<bool>("backwards");
+    for (bool backwards : {false, true}) {
+        const QByteArray prefix = backwards ? "backward-" : "forward-";
+        QTest::newRow((prefix + "lookarounds").constData())
+                << QString("prefix_12_suffix prefix_345_suffix")
+                << QString("(?<=prefix_)(\\d+)(?=_suffix)") << QString("n\\1") << backwards;
+        QTest::newRow((prefix + "capture-in-lookbehind").constData())
+                << QString("prefix_12 prefix_345")
+                << QString("(?<=(prefix_))(\\d+)") << QString("\\1(\\2)") << backwards;
+        QTest::newRow((prefix + "zero-width-lookahead").constData())
+                << QString("a cat cat") << QString("(?=cat)") << QString("X") << backwards;
+        QTest::newRow((prefix + "beginning-anchor").constData())
+                << QString("cat dog") << QString("^") << QString("start ") << backwards;
+        QTest::newRow((prefix + "end-anchor").constData())
+                << QString("cat dog") << QString("$") << QString(" end") << backwards;
+        QTest::newRow((prefix + "optional-groups").constData())
+                << QString("ab a ab") << QString("(a)(b)?") << QString("[\\2-\\1]") << backwards;
+        QTest::newRow((prefix + "empty-nonempty-matches").constData())
+                << QString("baab") << QString("a*") << QString("X") << backwards;
+        QTest::newRow((prefix + "numbered-captures").constData())
+                << QString("abcdefghijkl abcdefghijkl")
+                << QString("(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)")
+                << QString("\\12/\\1/\\2/\\0/\\99/\\\\1") << backwards;
+    }
+}
+
+void TestQSyneditCppSearchReplace::test_regex_replacement_keeps_original_context()
+{
+    QFETCH(QString, source);
+    QFETCH(QString, pattern);
+    QFETCH(QString, replacement);
+    QFETCH(bool, backwards);
+    const QRegularExpression regex(pattern);
+    QVERIFY(regex.isValid());
+    QString expected = source;
+    expected.replace(regex, replacement);
+    int count = 0;
+    auto matches = regex.globalMatch(source);
+    while (matches.hasNext()) {
+        matches.next();
+        ++count;
+    }
+    const QStringList original{source};
+    mEdit->setContent(original);
+    SearchOptions options = ssoMatchCase;
+    options.setFlag(ssoBackwards, backwards);
+    CharPos scopeEnd;
+    QCOMPARE(mEdit->searchReplace(pattern, replacement, mEdit->fileBegin(), mEdit->fileEnd(),
+                                  scopeEnd, options, mRegexSearcher.get(), replaceEveryMatch), count);
+    QCOMPARE(mEdit->content(), QStringList{expected});
+    QCOMPARE(scopeEnd, mEdit->fileEnd());
+    QVERIFY(!mEdit->editing());
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(!mEdit->canUndo());
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), QStringList{expected});
+}
+
+void TestQSyneditCppSearchReplace::test_regex_result_cache_cleared()
+{
+    RegexSearcher searcher;
+    searcher.setPattern("(a)");
+    QCOMPARE(searcher.findAll("a a"), 2);
+    QCOMPARE(searcher.replaceResult(1, "a", "\\1!"), QString("a!"));
+    searcher.setPattern("");
+    QCOMPARE(searcher.findAll("a a"), 0);
+    QCOMPARE(searcher.resultCount(), 0);
+    QCOMPARE(searcher.replaceResult(0, "keep", "replace"), QString("keep"));
+    searcher.setPattern("[");
+    QCOMPARE(searcher.findAll("a a"), 0);
+    QCOMPARE(searcher.resultCount(), 0);
+    searcher.setPattern("(a)");
+    QCOMPARE(searcher.findAll("a"), 1);
+    searcher.setOptions(ssoMatchCase);
+    QCOMPARE(searcher.resultCount(), 0);
 }
 
 }

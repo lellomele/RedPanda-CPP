@@ -107,11 +107,11 @@ Q_OBJECT
     // QAbstractItemModel interface
 public:
     explicit SearchResultTreeModel(SearchResultModel* model,QObject* parent=nullptr);
-    QModelIndex index(int row, int column, const QModelIndex &parent) const override;
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
     QModelIndex parent(const QModelIndex &child) const override;
-    int rowCount(const QModelIndex &parent) const override;
-    int columnCount(const QModelIndex &parent) const override;
-    QVariant data(const QModelIndex &index, int role) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     SearchResultModel *searchResultModel() const;
     bool getItemFileAndLineChar(
             const QModelIndex&index,
@@ -157,8 +157,8 @@ public:
     void setCurrentIndex(int index);
     void clear();
     void removeSearchResults(int index);
-    int rowCount(const QModelIndex &parent) const override;
-    QVariant data(const QModelIndex &index, int role) const override;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     SearchResultTreeModel *treeModel() const;
 signals:
     void currentIndexChanged();
@@ -166,6 +166,7 @@ private:
     QList<PSearchResults> mSearchResults;
     int mCurrentIndex;
     SearchResultTreeModel *mTreeModel;
+    bool mUpdating = false;
 };
 
 

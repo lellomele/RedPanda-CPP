@@ -12,3 +12,5 @@
 Upstream build instructions / Istruzioni di compilazione upstream: [BUILD.md](../BUILD.md).
 
 License and attribution / Licenza e attribuzione: [LICENSE](../LICENSE), [FORK_NOTICE.txt](../FORK_NOTICE.txt).
+
+[Testing and editing measurements](TESTING.md) · [Test e misure dell’editing](TEST_IT.md)

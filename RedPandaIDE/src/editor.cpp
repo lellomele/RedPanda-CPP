@@ -251,7 +251,7 @@ void Editor::loadFile(QString filename, bool parse) {
     }
 }
 
-void Editor::saveFile(QString filename) {
+void Editor::saveFile(QString filename, bool notifyEncodingChange) {
     Q_ASSERT(mEditorEncoding!=ENCODING_AUTO_DETECT);
     Q_ASSERT(mEditorEncoding!=ENCODING_PROJECT);
     QSaveFile file(filename);
@@ -264,17 +264,22 @@ void Editor::saveFile(QString filename) {
     if (!file.commit())
         throw FileError(tr("Cannot save '%1': %2").arg(filename, file.errorString()));
     mFileEncoding = detectedEncoding;
-    if (oldFileEncoding != mFileEncoding)
+    if (notifyEncodingChange && oldFileEncoding != mFileEncoding)
         emit fileEncodingChanged(this);
 }
 
 void Editor::convertToEncoding(const QByteArray &encoding)
 {
-    if (mEditorEncoding == encoding)
+    if (readOnly() || mEditorEncoding == encoding)
         return;
+    const QByteArray previousEncoding = mEditorEncoding;
     mEditorEncoding = encoding;
-    setModified(true);
-    save();
+    // save() writes even an otherwise unmodified document. Do not clear undo
+    // history or manufacture a modified state just to perform a conversion.
+    if (!save()) {
+        mEditorEncoding = previousEncoding;
+        return;
+    }
     emit editorEncodingChanged(this);
 }
 
@@ -368,67 +373,58 @@ bool Editor::saveAs(const QString &name, bool doCheckSyntax){
                 }
             }
         }
-        QDir::setCurrent(extractFileDir(newName));
     }
 
-    if (mGetOpennedEditorFunc && mGetOpennedEditorFunc(newName)!=nullptr) {
+    Editor *alreadyOpened = mGetOpennedEditorFunc ? mGetOpennedEditorFunc(newName) : nullptr;
+    if (alreadyOpened && alreadyOpened != this) {
         QMessageBox::critical(parentWidget(),tr("Error"),
                                       tr("File %1 already opened!").arg(newName));
         return false;
     }
-    // Update project information
-
-    clearSyntaxIssues();
-    if (mCodeCompletionEnabled && mParser && !inProject()) {
-        mParser->invalidateFile(mFilename);
-    }
-
-    if (mEditorSettings->autoFormatWhenSaved()) {
-        reformat(false);
-    } else if (mEditorSettings->removeTrailingSpacesWhenSaved()) {
-        trimTrailingSpaces();
-    }
-    mFilename = newName;
-    setFileType(getFileType(mFilename));
-    if (!syntaxer() || syntaxer()->language() != QSynedit::ProgrammingLanguage::CPP) {
-        mSyntaxIssues.clear();
-    }
-    reparse();
-    if (doCheckSyntax) {
-        if (mEditorSettings->syntaxCheckWhenSave())
-            checkSyntaxInBack();
-    }
-    reparseTodo();
-    if (!shouldOpenInReadonly()) {
-        setReadOnly(false);
-    }
-    setStatusChanged(QSynedit::StatusChange::Custom0);
-
-    if (mFileSystemWatcher)
-        mFileSystemWatcher->removePath(oldName);
-
-    emit fileSaveAsed(this, oldName, newName);
-
+    // Write and commit the candidate first. Failed Save As must not rename the
+    // editor, invalidate its parser, or detach the original file watcher.
+    const QByteArray previousFileEncoding = mFileEncoding;
     try {
-        // must emit fileSaving/fileSaved signal out of saveFile(),
-        // to let fileSystemWatcher's addPath/removePath() invoked out of the saveFile().
-        // If not, fileSystemWatcher would generate fileChanged signal when saving files.
-        emit fileSaving(this, mFilename);
-        saveFile(mFilename);
-        emit fileSaved(this, mFilename);
-        if (mFileSystemWatcher)
-            mFileSystemWatcher->addPath(mFilename);
-        mIsNew = false;
-        setModified(false);
-        setStatusChanged(QSynedit::StatusChange::Custom0);
-    }  catch (FileError& exception) {
-        if (mFileSystemWatcher)
-            mFileSystemWatcher->addPath(mFilename);
-        QMessageBox::critical(parentWidget(),tr("Save Error"), exception.reason());
-        emit fileSaveError(this, mFilename, exception.reason());
+        if (mEditorSettings->autoFormatWhenSaved()) {
+            reformat(false);
+        } else if (mEditorSettings->removeTrailingSpacesWhenSaved()) {
+            trimTrailingSpaces();
+        }
+        emit fileSaving(this, newName);
+        saveFile(newName, false);
+    } catch (FileError& exception) {
+        QMessageBox::critical(parentWidget(), tr("Save Error"), exception.reason());
+        emit fileSaveError(this, newName, exception.reason());
         return false;
     }
 
+    clearSyntaxIssues();
+    if (mCodeCompletionEnabled && mParser && !inProject())
+        mParser->invalidateFile(oldName);
+    mFilename = newName;
+    mIsNew = false;
+    setFileType(getFileType(mFilename), false);
+    if (!syntaxer() || syntaxer()->language() != QSynedit::ProgrammingLanguage::CPP)
+        mSyntaxIssues.clear();
+    if (mFileSystemWatcher) {
+        mFileSystemWatcher->removePath(oldName);
+        mFileSystemWatcher->addPath(newName);
+    }
+    setModified(false);
+    if (!shouldOpenInReadonly())
+        setReadOnly(false);
+    if (name.isEmpty())
+        QDir::setCurrent(extractFileDir(newName));
+    setStatusChanged(QSynedit::StatusChange::Custom0);
+    if (previousFileEncoding != mFileEncoding)
+        emit fileEncodingChanged(this);
+    emit fileSaveAsed(this, oldName, newName);
+    emit fileSaved(this, newName);
+    setCppParser();
+    reparse();
+    if (doCheckSyntax && mEditorSettings->syntaxCheckWhenSave())
+        checkSyntaxInBack();
+    reparseTodo();
     initAutoBackup();
     return true;
 }
@@ -478,11 +474,10 @@ const QByteArray& Editor::editorEncoding() const noexcept{
 void Editor::setEditorEncoding(const QByteArray& encoding) noexcept{
     if (encoding.isEmpty())
         return;
-    QByteArray newEncoding=encoding;
     Q_ASSERT(encoding!=ENCODING_PROJECT);
-    if (mEditorEncoding == newEncoding)
+    if (mEditorEncoding == encoding)
         return;
-    mEditorEncoding = newEncoding;
+    const QByteArray previousEncoding = mEditorEncoding;
     if (!isNew()) {
         if (modified()) {
             if (QMessageBox::warning(this,tr("Confirm Reload File"),
@@ -490,17 +485,23 @@ void Editor::setEditorEncoding(const QByteArray& encoding) noexcept{
                            QMessageBox::Yes, QMessageBox::No)!=QMessageBox::Yes)
                 return;
         }
+        mEditorEncoding = encoding;
         try {
             loadFile();
             setModified(false);
         } catch (FileError& e) {
+            mEditorEncoding = previousEncoding;
             QMessageBox::critical(nullptr,
                                   tr("Error Load File"),
                                   e.reason());
+            return;
         }
+    } else {
+        mEditorEncoding = encoding;
     }
     emit editorEncodingChanged(this);
 }
+
 const QByteArray& Editor::fileEncoding() const noexcept{
     return mFileEncoding;
 }
@@ -3025,7 +3026,10 @@ QString Editor::snippetPrefix() const
 
 bool Editor::expandCodeSnippet(const PCodeSnippet &snippet, const QString &expectedPrefix)
 {
-    if (readOnly() || !SnippetStorage::matches(snippet, SnippetStorage::languageForFileType(fileType())) || snippetPrefix() != expectedPrefix) return false;
+    if (readOnly() || !SnippetStorage::matches(snippet, SnippetStorage::languageForFileType(fileType()))
+            || (!expectedPrefix.isEmpty() && !snippet->prefix.startsWith(expectedPrefix))
+            || snippetPrefix() != expectedPrefix)
+        return false;
     beginEditing();
     auto action = finally([this] { endEditing(); });
     if (!selAvail() && !expectedPrefix.isEmpty()) {
@@ -3038,85 +3042,73 @@ bool Editor::expandCodeSnippet(const PCodeSnippet &snippet, const QString &expec
 
 void Editor::insertCodeSnippet(const QString &code)
 {
+    if (readOnly())
+        return;
+
+    // Prepare the complete insertion before touching the selected text. A failing
+    // macro provider must leave both the document and its undo history intact.
+    const QStringList lines = textToLines(parseMacros(code, mGetMacroVarsFunc));
+    QStringList newLines;
+    newLines.reserve(lines.size());
+    QList<PTabStop> tabStops;
+    int previousLine = 0;
+    for (int i = 0; i < lines.size(); ++i) {
+        QString line = lines[i];
+        int previousEnd = i > 0 ? countLeadingWhitespaceChars(line) : 0;
+        int searchFrom = 0;
+        while (true) {
+            const int insertion = line.indexOf(USER_CODE_IN_INSERT_POS, searchFrom);
+            const int replacement = line.indexOf(USER_CODE_IN_REPL_POS_BEGIN, searchFrom);
+            if (insertion < 0 && replacement < 0)
+                break;
+            const bool isInsertion = insertion >= 0 && (replacement < 0 || insertion < replacement);
+            const int begin = isInsertion ? insertion : replacement;
+            int end = begin;
+            if (isInsertion) {
+                line.remove(begin, QString(USER_CODE_IN_INSERT_POS).size());
+            } else {
+                line.remove(begin, QString(USER_CODE_IN_REPL_POS_BEGIN).size());
+                end = line.indexOf(USER_CODE_IN_REPL_POS_END, begin);
+                if (end < 0)
+                    end = line.size();
+                else
+                    line.remove(end, QString(USER_CODE_IN_REPL_POS_END).size());
+            }
+            // Tab stops are relative to the previous stop's end. Consume both
+            // marker types in textual order so replacements can change length.
+            auto stop = std::make_shared<TabStop>();
+            stop->x = begin - previousEnd;
+            stop->endX = end - previousEnd;
+            stop->y = i - previousLine;
+            tabStops.append(stop);
+            previousEnd = end;
+            previousLine = i;
+            searchFrom = end;
+        }
+        newLines.append(line);
+    }
+    const QString insertionText = linesToText(newLines);
+
+    beginEditing();
+    auto action = finally([this] { endEditing(); });
     clearUserCodeInTabStops();
     mXOffsetSince = 0;
     mTabStopBegin = -1;
     mTabStopEnd = -1;
-    mTabStopY =0;
-    mLineBeforeTabStop = "";
-    mLineAfterTabStop = "";
-    // prevent lots of repaints
-    beginEditing();
-    auto action = finally([this]{
-        endEditing();
-    });
+    mTabStopY = 0;
+    mLineBeforeTabStop.clear();
+    mLineAfterTabStop.clear();
     if (selAvail())
         setSelText("");
-    QStringList sl = textToLines(parseMacros(code, mGetMacroVarsFunc));
-    int lastI=0;
-//    int spaceCount = GetLeftSpacing(
-//                leftSpaces(lineText()),true).length();
-    QStringList newSl;
-    for (int i=0;i<sl.count();i++) {
-        int lastPos = 0;
-        QString s = sl[i];
-        if (i>0)
-            lastPos = countLeadingWhitespaceChars(s);
-        while (true) {
-            int insertPos = s.indexOf(USER_CODE_IN_INSERT_POS);
-            if (insertPos < 0) // no %INSERT% macro in this line now
-                break;
-            PTabStop p = std::make_shared<TabStop>();
-            s.remove(insertPos, QString(USER_CODE_IN_INSERT_POS).length());
-            //insertPos--;
-            p->x = insertPos - lastPos;
-            p->endX = p->x ;
-            p->y = i - lastI;
-            lastPos = insertPos;
-            lastI = i;
-            mUserCodeInTabStops.append(p);
-        }
-        lastPos = 0;
-        if (i>0)
-            lastPos = countLeadingWhitespaceChars(s);
-        while (true) {
-            int insertPos = s.indexOf(USER_CODE_IN_REPL_POS_BEGIN);
-            if (insertPos < 0) // no %INSERT% macro in this line now
-                break;
-            PTabStop p = std::make_shared<TabStop>();
-            s.remove(insertPos, QString(USER_CODE_IN_REPL_POS_BEGIN).length());
-            //insertPos--;
-            p->x = insertPos - lastPos;
-
-            int insertEndPos = insertPos +
-                    s.mid(insertPos).indexOf(USER_CODE_IN_REPL_POS_END);
-            if (insertEndPos < insertPos) {
-                p->endX = s.length();
-            } else {
-                s.remove(insertEndPos, QString(USER_CODE_IN_REPL_POS_END).length());
-                //insertEndPos--;
-                p->endX = insertEndPos - lastPos;
-            }
-            p->y=i-lastI;
-            lastPos = insertEndPos;
-            lastI = i;
-            mUserCodeInTabStops.append(p);
-        }
-        newSl.append(s);
-    }
-
-    CharPos cursorPos = caretXY();
-    QString s = linesToText(newSl);
-    setSelText(s);
-    if (mUserCodeInTabStops.count()>0) {
-        setCaretXY(cursorPos); //restore cursor pos before insert
+    const CharPos cursorPos = caretXY();
+    setSelText(insertionText);
+    mUserCodeInTabStops = std::move(tabStops);
+    if (!mUserCodeInTabStops.isEmpty()) {
+        setCaretXY(cursorPos);
         mTabStopBegin = caretX();
         mTabStopEnd = caretX();
         popUserCodeInTabStops();
     }
-//    if (!code.isEmpty()) {
-//        mLastIdCharPressed = 0;
-//    }
 }
 
 void Editor::print()
@@ -3624,7 +3616,12 @@ bool Editor::testInFunc(const CharPos& pos)
 
 void Editor::completionInsert(bool appendFunc)
 {
-    Q_ASSERT(mCompletionPopup!=nullptr);
+    if (!mCompletionPopup)
+        return;
+    if (readOnly()) {
+        mCompletionPopup->hide();
+        return;
+    }
     PStatement statement = mCompletionPopup->selectedStatement();
     if (!statement)
         return;
@@ -3720,7 +3717,12 @@ void Editor::completionInsert(bool appendFunc)
 
 void Editor::headerCompletionInsert()
 {
-    Q_ASSERT(mHeaderCompletionPopup!=nullptr);
+    if (!mHeaderCompletionPopup)
+        return;
+    if (readOnly()) {
+        mHeaderCompletionPopup->hide();
+        return;
+    }
     QString headerName = mHeaderCompletionPopup->selectedFilename(true);
     if (headerName.isEmpty()) {
         mHeaderCompletionPopup->hide();

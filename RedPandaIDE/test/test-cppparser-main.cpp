@@ -1,27 +1,12 @@
 #include <QTest>
-#include <QGuiApplication>
+#include <QApplication>
 #include "test_cppparser.h"
 #include "test_cpppreprocessor.h"
 #include "test_cpptokenizer.h"
-
-int main(int argc, char *argv[]) {
-    int status = 0;
-    QTest::setMainSourcePath(__FILE__, QT_TESTCASE_BUILDDIR); // Optional: for source path resolution
-
-    QApplication app(argc,argv);
-    initParser();
-    {
-        TestCppPreprocessor tc;
-        status |= QTest::qExec(&tc, argc, argv);
-    }
-    {
-        TestCppTokenizer tc;
-        status |= QTest::qExec(&tc, argc, argv);
-    }
-    {
-        TestCppParser tc;
-        status |= QTest::qExec(&tc, argc, argv);
-    }
-
-    return status;
+#include "../../tests/qtest_suite_runner.h"
+int main(int argc, char **argv) {
+    QTest::setMainSourcePath(__FILE__, QT_TESTCASE_BUILDDIR);
+    QApplication app(argc,argv); initParser();
+    using namespace TestSuites;
+    return run(argc,argv,{suite<TestCppPreprocessor>("preprocessor"),suite<TestCppTokenizer>("tokenizer"),suite<TestCppParser>("parser")});
 }

@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <QCoreApplication>
-#include <QFile>
+#include <QSaveFile>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <qsynedit/document.h>
@@ -110,6 +110,8 @@ static QString fullParentName(PStatement statement) {
 }
 void CppRefacter::renameSymbol(Editor *editor, const CharPos &pos, const QString &newWord)
 {
+    if (!editor || !editor->parser())
+        return;
     if (!editor->parser()->freeze())
         return;
     auto action = finally([&editor]{
@@ -158,7 +160,7 @@ void CppRefacter::renameSymbol(Editor *editor, const CharPos &pos, const QString
 
 void CppRefacter::renameUndefinedLocalVariable(Editor *editor, const CharPos &pos, const QString &newWord)
 {
-    if (!editor)
+    if (!editor || !editor->parser())
         return;
     if (!editor->parser()->freeze())
         return;
@@ -384,101 +386,80 @@ PSearchResultTreeItem CppRefacter::findOccurenceInFile(
     return parentItem;
 }
 
-void CppRefacter::renameSymbolInFile(const QString &filename, const PStatement &statement,  const QString &newWord, const PCppParser &parser)
+void CppRefacter::renameSymbolInFile(const QString &filename, const PStatement &statement,
+                                      const QString &newWord, const PCppParser &parser)
 {
-    QStringList buffer;
-    Editor * oldEditor=mMainWindow->editorManager()->getOpenedEditor(filename);
-    if (oldEditor){
-        QSynedit::PSyntaxer syntaxer = SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP);
-        int posY = 0;
-        oldEditor->clearSelection();
-        oldEditor->beginEditing();
-        while (posY < oldEditor->lineCount()) {
-            QString line = oldEditor->lineText(posY);
-            QString newLine;
-            oldEditor->startParseLine(syntaxer.get(), posY);
-            while (!syntaxer->eol()) {
-                QString token = syntaxer->getToken();
-                if (token == statement->command) {
-                    //same name symbol , test if the same statement;
-                    CharPos p;
-                    p.line = posY;
-                    p.ch = syntaxer->getTokenPos();
-
-                    QStringList expression = oldEditor->getExpressionAtPosition(p);
-                    PStatement tokenStatement = parser->findStatementOf(
-                                filename,
-                                expression, p.line);
-                    if (tokenStatement
-                            && (tokenStatement->line == statement->line)
-                            && (tokenStatement->fileName == statement->fileName)) {
-                        token = newWord;
-                    }
-                }
-                newLine += token;
-                syntaxer->next();
-            }
-            if (newLine!=line)
-                oldEditor->replaceLine(posY,newLine);
-            posY++;
+    Editor temporary(nullptr);
+    temporary.setEditorSettings(&pSettings->editor());
+    temporary.setCodeCompletionSettings(&pSettings->codeCompletion());
+    Editor *openedEditor = mMainWindow->editorManager()->getOpenedEditor(filename);
+    Editor *editor = openedEditor ? openedEditor : &temporary;
+    if (editor->readOnly()) {
+        QMessageBox::critical(mMainWindow, tr("Rename Symbol Error"), tr("Cannot modify a read-only file."));
+        return;
+    }
+    QByteArray encoding;
+    if (!openedEditor) {
+        try {
+            editor->loadFromFile(filename, ENCODING_AUTO_DETECT, encoding);
+        } catch (const FileError &error) {
+            QMessageBox::critical(mMainWindow, tr("Rename Symbol Error"), error.reason());
+            return;
         }
-        oldEditor->setCaretXY(oldEditor->ensureCharPosValid(oldEditor->caretXY()));
-        oldEditor->endEditing();
+        editor->setSyntaxer(SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP));
+    }
+
+    // Calculate every replacement before changing the visible document. A
+    // parser failure must not leave a half-renamed editor or an editing lock.
+    const auto syntaxer = SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP);
+    QStringList newContents;
+    bool changed = false;
+    for (int lineIndex = 0; lineIndex < editor->lineCount(); ++lineIndex) {
+        const QString line = editor->lineText(lineIndex);
+        QString newLine;
+        editor->startParseLine(syntaxer.get(), lineIndex);
+        while (!syntaxer->eol()) {
+            QString token = syntaxer->getToken();
+            const auto attribute = syntaxer->getTokenAttribute();
+            if (attribute && attribute->tokenType() == QSynedit::TokenType::Identifier
+                    && token == statement->command) {
+                const CharPos position{syntaxer->getTokenPos(), lineIndex};
+                const auto expression = editor->getExpressionAtPosition(position);
+                const auto tokenStatement = parser->findStatementOf(filename, expression, lineIndex);
+                if (tokenStatement && tokenStatement->line == statement->line
+                        && tokenStatement->fileName == statement->fileName)
+                    token = newWord;
+            }
+            newLine += token;
+            syntaxer->next();
+        }
+        changed = changed || newLine != line;
+        newContents.append(newLine);
+    }
+    if (!changed)
+        return;
+    if (openedEditor) {
+        editor->clearSelection();
+        editor->beginEditing();
+        auto cleanup = finally([editor] { editor->endEditing(); });
+        for (int i = 0; i < newContents.size(); ++i) {
+            if (newContents[i] != editor->lineText(i))
+                editor->replaceLine(i, newContents[i]);
+        }
+        editor->setCaretXY(editor->ensureCharPosValid(editor->caretXY()));
     } else {
-        Editor editor(nullptr);
-        QByteArray encoding;
-        QSynedit::PSyntaxer pSyntaxer = SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP);
-        editor.setSyntaxer(pSyntaxer);
+        editor->setContent(newContents);
+        QSaveFile file(filename);
+        file.setDirectWriteFallback(false);
+        QByteArray savedEncoding;
         try {
-            editor.loadFromFile(filename,ENCODING_AUTO_DETECT,encoding);
-        } catch(FileError e) {
-            QMessageBox::critical(mMainWindow,
-                        tr("Rename Symbol Error"),
-                        e.reason());
+            editor->saveToFile(file, encoding == ENCODING_ASCII ? QByteArray(ENCODING_UTF8) : encoding,
+                               savedEncoding);
+            if (!file.commit())
+                throw FileError(tr("Cannot save '%1': %2").arg(filename, file.errorString()));
+        } catch (const FileError &error) {
+            QMessageBox::critical(mMainWindow, tr("Rename Symbol Error"), error.reason());
             return;
         }
-
-        QStringList newContents;
-        int posY = 0;
-        while (posY < editor.lineCount()) {
-            QString line = editor.lineText(posY);
-            QString newLine;
-            editor.startParseLine(pSyntaxer.get(), posY);
-            while (!pSyntaxer->eol()) {
-                QString token = pSyntaxer->getToken();
-                if (token == statement->command) {
-                    //same name symbol , test if the same statement;
-                    CharPos p;
-                    p.line = posY;
-                    p.ch = pSyntaxer->getTokenPos();
-
-                    QStringList expression = editor.getExpressionAtPosition(p);
-                    PStatement tokenStatement = parser->findStatementOf(
-                                filename,
-                                expression, p.line);
-                    if (tokenStatement
-                            && (tokenStatement->line == statement->line)
-                            && (tokenStatement->fileName == statement->fileName)) {
-                        token = newWord;
-                    }
-                }
-                newLine += token;
-                pSyntaxer->next();
-            }
-            newContents.append(newLine);
-            posY++;
-        }
-        QByteArray realEncoding;
-        QFile file(filename);
-        try {
-            editor.saveToFile(file,editor.editorEncoding(),
-                                       realEncoding);
-        } catch(FileError e) {
-            QMessageBox::critical(mMainWindow,
-                        tr("Rename Symbol Error"),
-                        e.reason());
-            return;
-        }
-
     }
 }

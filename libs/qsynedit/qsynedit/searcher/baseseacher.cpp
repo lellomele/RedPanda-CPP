@@ -32,6 +32,13 @@ void Searcher::setPattern(const QString &value)
     mPattern = value;
 }
 
+QString Searcher::replaceResult(int resultIndex, const QString &occurrence,
+                               const QString &replacement)
+{
+    Q_UNUSED(resultIndex);
+    return replace(occurrence, replacement);
+}
+
 SearchOptions Searcher::options() const
 {
     return mOptions;

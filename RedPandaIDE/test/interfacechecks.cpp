@@ -1,3 +1,11 @@
+#include "src/cpprefacter.h"
+#include "src/project.h"
+#include "src/syntaxermanager.h"
+#include "src/parser/cppparser.h"
+#include <QCheckBox>
+#include <QTemporaryDir>
+#include <QFileSystemWatcher>
+#include <qsynedit/syntaxer/cpp.h>
 #include "interfacechecks.h"
 #include "src/mainwindow.h"
 #include "src/sessionrecovery.h"
@@ -45,6 +53,8 @@
 #include <QFrame>
 #include <QSet>
 #include <QAction>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QAbstractButton>
 #include <algorithm>
 
@@ -482,6 +492,252 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
 
         }
     }
+
+    // Real editor creation failure paths preserve tabs and destroy candidates.
+    {
+        const int pages = window.editorManager()->pageCount();
+        const int children = window.findChildren<Editor *>().size();
+        bool rejected = false;
+        try { window.editorManager()->newEditor(QDir(outputDirectory).filePath("missing-parent/no-source.cpp"), ENCODING_AUTO_DETECT, FileType::CppSource, {}, false, false); }
+        catch (const FileError &) { rejected = true; }
+        check("Failed file open reports an error", rejected);
+        check("Failed file open preserves tabs", window.editorManager()->pageCount() == pages);
+        check("Failed file open destroys the candidate editor", window.findChildren<Editor *>().size() == children);
+    }
+    // Exercise compiler -> diagnostic parser -> panel -> editor with actual GCC output.
+    const QString compiler = qEnvironmentVariable("REDPANDA_QA_COMPILER");
+    if (!compiler.isEmpty()) {
+        for (const bool valid : {true, false}) {
+            const QString path = QDir(outputDirectory).filePath(valid ? "gcc-real-warning.cpp" : "gcc-real-error.cpp");
+            QFile file(path); const QByteArray source = valid ? "int main() { int unused_value; return 0; }\n" : "int main() { return; }\n";
+            const bool written = file.open(QIODevice::WriteOnly) && file.write(source) == source.size(); file.close();
+            check("Real GCC fixture written", written);
+            Editor *editor = written ? window.openFile(path) : nullptr;
+            check("Real GCC source opened in editor", editor != nullptr);
+            QProcess process; auto environment = QProcessEnvironment::systemEnvironment(); environment.insert("LC_ALL", "C"); process.setProcessEnvironment(environment);
+            const QString object = QDir(outputDirectory).filePath(valid ? "gcc-real-warning.o" : "gcc-real-error.o");
+            process.start(compiler, {"-std=c++17", "-Wall", "-Wextra", "-fdiagnostics-color=never", "-fmessage-length=0", "-c", path, "-o", object});
+            const bool finished = process.waitForStarted(5000) && process.waitForFinished(15000);
+            if (!finished) { process.kill(); process.waitForFinished(5000); }
+            check("Real GCC process completes within timeout", finished);
+            check("Real GCC exit status matches valid/invalid source", finished && process.exitStatus() == QProcess::NormalExit && (valid ? process.exitCode() == 0 : process.exitCode() != 0));
+            check("Real GCC creates object only for valid source", QFile::exists(object) == valid);
+            const QString diagnostics = QString::fromLocal8Bit(process.readAllStandardError());
+            auto *table = window.findChild<IssuesTable *>();
+            if (table && editor) {
+                table->clearIssues(); GccDiagnosticParserProbe parser;
+                QObject::connect(&parser, &Compiler::compileIssue, &window, &MainWindow::onCompileIssue);
+                for (const QString &line : diagnostics.split('\n')) parser.feed(line); parser.finish();
+                auto *model = table->issuesModel();
+                check("Actual GCC diagnostic reaches panel", model->count() > 0);
+                if (model->count() > 0) {
+                    const auto issue = model->issue(model->count() - 1);
+                    check("Actual GCC severity is preserved", issue && issue->type == (valid ? CompileIssueType::Warning : CompileIssueType::Error));
+                    check("Actual GCC original remains available", model->originalDescription(model->count() - 1).contains(valid ? "unused" : "return"));
+                    if (language == "it_IT") check("Actual GCC diagnostic has local Italian translation", !model->translatedDescription(model->count() - 1).isEmpty());
+                }
+            }
+        }
+    }
+
+{
+    QTemporaryDir files(QDir(outputDirectory).filePath("document-workflows-XXXXXX"));
+    check("Document workflows use an isolated directory", files.isValid());
+    const auto writeBytes = [](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+    };
+    const auto readBytes = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    struct Selection { int line; int start; int length; QString original; };
+    const auto selectResults = [&](const QString &path, const QString &keyword,
+                                   const QList<Selection> &selections, bool regex = false) {
+        auto *model = window.searchResultModel();
+        auto result = model->addSearchResults(keyword, QSynedit::ssoMatchCase, regex, SearchFileScope::Folder);
+        auto parent = std::make_shared<SearchResultTreeItem>();
+        parent->filename = path;
+        parent->parent = nullptr;
+        parent->selected = false;
+        for (const auto &selected : selections) {
+            auto child = std::make_shared<SearchResultTreeItem>();
+            child->filename = path;
+            child->line = selected.line;
+            child->start = selected.start;
+            child->len = selected.length;
+            child->text = selected.original;
+            child->text.replace('\t', ' ');
+            child->selected = true;
+            child->parent = parent.get();
+            parent->results.append(child);
+        }
+        model->addResultToSearchResults(result, parent);
+    };
+    auto *openFiles = window.findChild<QCheckBox *>("chkOpenFileInEditors");
+    auto *replacement = window.findChild<QComboBox *>("cbReplaceInHistory");
+    check("Batch replacement controls exist", openFiles && replacement);
+    if (openFiles && replacement && files.isValid()) {
+        const bool oldOpenFiles = openFiles->isChecked();
+        const QString oldReplacement = replacement->currentText();
+        openFiles->setChecked(false);
+        replacement->setEditText("bar");
+        const QByteArray bom = QByteArray::fromHex("efbbbf");
+        const QString closedPath = files.filePath(QString::fromUtf8("closed città.cpp"));
+        check("Closed batch source fixture written", writeBytes(closedPath, bom + "foo foo\r\nint tail;"));
+        // Deliberately reversed input order proves descending-coordinate application.
+        selectResults(closedPath, "foo", {{0, 4, 3, "foo foo"}, {0, 0, 3, "foo foo"}});
+        check("Closed batch replacement invocation", QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection));
+        check("Closed batch replacement uses zero-based coordinates and retains BOM CRLF EOF", readBytes(closedPath) == bom + "bar bar\r\nint tail;");
+        check("Closed batch replacement does not open an editor", !window.editorManager()->getOpenedEditor(closedPath));
+
+        const QString openedPath = files.filePath("opened.cpp");
+        check("Opened batch source fixture written", writeBytes(openedPath, "foo foo\n"));
+        Editor *opened = window.openFile(openedPath);
+        check("Opened batch source editor exists", opened != nullptr);
+        if (opened) {
+            selectResults(openedPath, "foo", {{0, 4, 3, "foo foo"}, {0, 0, 3, "foo foo"}});
+            check("Opened batch replacement invocation", QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection));
+            check("Opened batch replacement leaves disk unchanged", readBytes(openedPath) == "foo foo\n");
+            check("Opened batch replacement is modified and undoable", opened->lineText(0) == "bar bar" && opened->modified() && opened->canUndo());
+            opened->undo();
+            check("Opened batch replacement is undone as one operation", opened->lineText(0) == "foo foo" && !opened->modified() && !opened->canUndo());
+            const QString original = opened->text();
+            const bool originalModified = opened->modified();
+            const bool originalUndo = opened->canUndo();
+            // First result is valid; second is stale. Nothing may be applied.
+            selectResults(openedPath, "foo", {{0, 4, 3, "foo foo"}, {0, 0, 3, "stale line"}});
+            int errors = 0;
+            QTimer dismiss;
+            QObject::connect(&dismiss, &QTimer::timeout, [&] {
+                for (auto *widget : QApplication::topLevelWidgets()) {
+                    if (auto *message = qobject_cast<QMessageBox *>(widget)) {
+                        ++errors;
+                        message->accept();
+                    }
+                }
+            });
+            dismiss.start(20);
+            const bool invoked = QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection);
+            dismiss.stop();
+            check("Stale batch replacement reports an error", invoked && errors == 1);
+            check("Stale batch replacement preserves document undo and modified state", opened->text() == original && opened->modified() == originalModified && opened->canUndo() == originalUndo);
+            check("Stale batch replacement preserves the disk file", readBytes(openedPath) == "foo foo\n");
+            opened->setCaretXY({0, 0});
+            opened->processCommand(QSynedit::EditCommand::Input, "X");
+            check("Editing remains responsive after failed batch replacement", opened->lineText(0).startsWith("Xfoo"));
+            opened->undo();
+{
+    const QString beforeReadOnly = opened->text();
+    const bool beforeModified = opened->modified();
+    const bool beforeUndo = opened->canUndo();
+    const bool beforeRedo = opened->canRedo();
+    const auto beforeCaret = opened->caretXY();
+    replacement->setEditText("bar");
+    selectResults(openedPath, "foo", {{0, 4, 3, "foo foo"}, {0, 0, 3, "foo foo"}});
+    const bool previousReadOnly = opened->readOnly();
+    opened->setReadOnly(true);
+    int readOnlyErrors = 0;
+    QTimer dismissReadOnly;
+    QObject::connect(&dismissReadOnly, &QTimer::timeout, [&] {
+        for (auto *widget : QApplication::topLevelWidgets()) {
+            if (auto *message = qobject_cast<QMessageBox *>(widget)) {
+                ++readOnlyErrors;
+                message->accept();
+            }
+        }
+    });
+    dismissReadOnly.start(20);
+    const bool invokedReadOnly = QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection);
+    dismissReadOnly.stop();
+    check("Read-only batch replacement is reported before editing", invokedReadOnly && readOnlyErrors == 1);
+    check("Read-only batch replacement preserves content undo redo caret and modified state",
+          opened->text() == beforeReadOnly && opened->modified() == beforeModified
+          && opened->canUndo() == beforeUndo && opened->canRedo() == beforeRedo
+          && opened->caretXY() == beforeCaret && opened->readOnly());
+    check("Read-only batch replacement preserves the disk file", readBytes(openedPath) == "foo foo\n");
+    opened->setReadOnly(previousReadOnly);
+}
+
+            window.editorManager()->forceCloseEditor(opened);
+        }
+
+        const QString regexPath = files.filePath("regex.cpp");
+        check("Regex batch source fixture written", writeBytes(regexPath, "x1 x22\n"));
+        replacement->setEditText("[\\1]");
+        selectResults(regexPath, "(?<=x)(\\d+)", {{0, 4, 2, "x1 x22"}, {0, 1, 1, "x1 x22"}}, true);
+        check("Regex batch replacement invocation", QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection));
+        check("Regex batch replacement keeps lookbehind context lengths and captures", readBytes(regexPath) == "x[1] x[22]\n");
+
+        const QString invalidPath = files.filePath("invalid-replacement.cpp");
+        const QByteArray invalidOriginal = bom + "foo\r\n";
+        check("Failed batch save source fixture written", writeBytes(invalidPath, invalidOriginal));
+        replacement->setEditText(QString(QChar(0xd800)));
+        selectResults(invalidPath, "foo", {{0, 0, 3, "foo"}});
+        int rejectedSaves = 0;
+        QTimer dismissSave;
+        QObject::connect(&dismissSave, &QTimer::timeout, [&] {
+            for (auto *widget : QApplication::topLevelWidgets()) {
+                if (auto *message = qobject_cast<QMessageBox *>(widget)) {
+                    ++rejectedSaves;
+                    message->accept();
+                }
+            }
+        });
+        dismissSave.start(20);
+        const bool invokedInvalid = QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection);
+        dismissSave.stop();
+        check("Batch save conversion failure is reported", invokedInvalid && rejectedSaves == 1);
+        check("Batch save conversion failure preserves original bytes", readBytes(invalidPath) == invalidOriginal);
+        replacement->setEditText("bar");
+        check("Batch save retries successfully after conversion failure", QMetaObject::invokeMethod(&window, "on_btnReplace_clicked", Qt::DirectConnection) && readBytes(invalidPath) == bom + "bar\r\n");
+
+        openFiles->setChecked(oldOpenFiles);
+        replacement->setEditText(oldReplacement);
+    }
+
+    const QString renamePath = files.filePath("rename.cpp");
+    const QByteArray beforeRename = "int before = 1;\nint f() { return before; }\n";
+    check("Closed rename source fixture written", writeBytes(renamePath, beforeRename));
+    auto parser = std::make_shared<CppParser>();
+    parser->setOnGetFileStream(nullptr);
+    CppParser::parseFileBlocking(parser, renamePath, false, QString(), false, false);
+    Editor probe(nullptr);
+    probe.setEditorSettings(&pSettings->editor());
+    probe.setCodeCompletionSettings(&pSettings->codeCompletion());
+    probe.setFilename(renamePath);
+    probe.setSyntaxer(SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP));
+    QByteArray encoding;
+    probe.loadFromFile(renamePath, ENCODING_AUTO_DETECT, encoding);
+    probe.setCppParser(parser);
+    CppRefacter refactor(&window);
+    refactor.renameSymbol(&probe, {4, 0}, "after");
+    check("Closed symbol rename applies the calculated contents", readBytes(renamePath) == "int after = 1;\nint f() { return after; }\n");
+    check("Closed symbol rename does not change the caller editor buffer", probe.lineText(0) == "int before = 1;");
+    check("Closed symbol rename does not create a registered editor", !window.editorManager()->getOpenedEditor(renamePath));
+    check("Symbol rename with no parser is a recoverable no-op", [&] {
+        Editor noParser(nullptr);
+        refactor.renameSymbol(&noParser, {0, 0}, "name");
+        refactor.renameUndefinedLocalVariable(&noParser, {0, 0}, "name");
+        return true;
+    }());
+
+    QFileSystemWatcher watcher;
+    Project project(files.filePath("project.dev"), "Document workflow test", window.editorManager(), window.iconsManager(), &watcher);
+    const QString layout = files.filePath("project.layout");
+    project.saveLayout();
+    check("Project layout saves valid JSON", QJsonDocument::fromJson(readBytes(layout)).isArray());
+    // A directory is a deterministic unwritable destination on Windows and Linux.
+    const QByteArray previousLayout = readBytes(layout);
+    check("Project layout fault fixture prepared", QFile::rename(layout, layout + ".saved") && QDir().mkdir(layout));
+    bool rejected = false;
+    try { project.saveLayout(); } catch (const FileError &) { rejected = true; }
+    check("Project layout failure is reported and original saved layout remains", rejected && readBytes(layout + ".saved") == previousLayout);
+    check("Project layout retry target prepared", QDir().rmdir(layout) && QFile::rename(layout + ".saved", layout));
+    project.saveLayout();
+    check("Project layout can save after a previous failure", QJsonDocument::fromJson(readBytes(layout)).isArray());
+}
+
     QFile result(QDir(outputDirectory).filePath("ui-results.json"));
     if (!result.open(QIODevice::WriteOnly)) return 2; const auto report = QJsonDocument(QJsonObject{{"language", language}, {"checks", checks}, {"failures", failures}}).toJson(); if (result.write(report) != report.size()) return 2;
     for (int i = 0; i < window.editorManager()->pageCount(); ++i) if (auto *editor = (*window.editorManager())[i]) editor->setModified(false);

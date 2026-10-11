@@ -62,6 +62,8 @@ ctest --test-dir build --output-on-failure
 
 See [BUILD.md](BUILD.md) for upstream build routes and [Windows packaging](docs/WINDOWS_DISTRIBUTION.md#building-distributions) for this fork's installer and portable layout.
 
+See [Testing and editing measurements](docs/TESTING.md) for isolated application checks and repeatable benchmarks.
+
 ## License and copyright
 
 GNU GPL version 3 or later: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Original authors and contributors retain their copyrights; third-party components retain their respective licenses.

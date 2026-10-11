@@ -27,6 +27,7 @@
 #include "debugger/debugger.h"
 #include "utils/parser.h"
 #include <QApplication>
+#include <memory>
 
 EditorManager::EditorManager(QTabWidget* leftPageWidget,
       QTabWidget* rightPageWidget,
@@ -53,12 +54,13 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
         parentPageControl = getNewEditorPageControl();
     else
         parentPageControl = page;
-    if (fileExists(filename)) {
-        pMainWindow->fileSystemWatcher()->addPath(filename);
-    }
+    if (!parentPageControl)
+        return nullptr;
 
-    // parentPageControl takes the owner ship
-    Editor * e = new Editor(parentPageControl);
+    // A failed load must not leave an invisible editor owned by the tab widget.
+    // Transfer ownership only after the complete initialization succeeds.
+    auto candidate = std::make_unique<Editor>(parentPageControl);
+    Editor *e = candidate.get();
     e->setEditorSettings(&pSettings->editor());
     e->setCodeCompletionSettings(&pSettings->codeCompletion());
     e->setColorManager(pMainWindow->colorManager());
@@ -127,6 +129,8 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
         }
     }
     e->setAutoBackupEnabled(true);
+    if (fileExists(filename))
+        pMainWindow->fileSystemWatcher()->addPath(filename);
     parentPageControl->addTab(e, e->caption());
     updateLayout();
     e->setFunctionTooltip(pMainWindow->functionTip());
@@ -167,7 +171,7 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
         }
         //checkSyntaxInBack();
     }
-    return e;
+    return candidate.release();
 }
 
 QTabWidget*  EditorManager::getNewEditorPageControl() const {

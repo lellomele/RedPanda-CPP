@@ -258,6 +258,7 @@ target_qt_plain_cpp(test-editor
     src/buildartifacts
     src/diagnosticcatalog
     src/sessionstore
+    src/diagnostics
     src/syntaxermanager
     src/iconsmanager
     src/systemconsts
@@ -285,6 +286,9 @@ target_moc_classes(test-editor
     test/test_editor_symbol_completion
     test/test_settingswidget
     test/test_ide_services
+    test/test_service_failure_paths
+    src/widgets/searchresultview
+    test/test_search_models
 )
 target_sources(test-editor PRIVATE defaultconfigs.qrc)
 target_include_directories(test-editor PRIVATE
@@ -320,9 +324,10 @@ target_compile_definitions(test-editor PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-add_test(
-    NAME test-editor
-    COMMAND test-editor)
+foreach(suite IN ITEMS search-models ide-services failure-paths settings smart-editing)
+    add_test(NAME test-editor-${suite} COMMAND test-editor --suite ${suite})
+    set_tests_properties(test-editor-${suite} PROPERTIES TIMEOUT 120 LABELS "ide;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endforeach()
 
 add_dependencies(all-test-targets test-editor)
 
@@ -363,8 +368,8 @@ endif()
 add_custom_command(
     TARGET test-cppparser POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "$<TARGET_PROPERTY:test-editor,SOURCE_DIR>/test/resources"
-        "$<TARGET_PROPERTY:test-editor,BINARY_DIR>/resources")
+        "$<TARGET_PROPERTY:test-cppparser,SOURCE_DIR>/test/resources"
+        "$<TARGET_PROPERTY:test-cppparser,BINARY_DIR>/resources")
 
 target_compile_definitions(test-cppparser PRIVATE
     ${GLOBAL_COMPILE_DEFINITIONS}
@@ -374,9 +379,10 @@ target_compile_definitions(test-cppparser PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-add_test(
-    NAME test-cppparser
-    COMMAND test-cppparser)
+foreach(suite IN ITEMS preprocessor tokenizer parser)
+    add_test(NAME test-cppparser-${suite} COMMAND test-cppparser --suite ${suite})
+    set_tests_properties(test-cppparser-${suite} PROPERTIES TIMEOUT 120 LABELS "parser;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endforeach()
 
 add_dependencies(all-test-targets test-cppparser)
 
@@ -603,3 +609,10 @@ if(QT_VERSION_MAJOR GREATER_EQUAL 6 AND NOT QT_FEATURE_static)
         target_embed_qtbase_translations(RedPandaIDE QM_FILES "${ITALIAN_QTBASE_TRANSLATION}")
     endif()
 endif()
+
+foreach(selector_case IN ITEMS missing empty unknown duplicate list-conflict)
+    add_test(NAME test-runner-${selector_case}
+        COMMAND ${CMAKE_COMMAND} -DCASE=${selector_case} -DTEST_PROGRAM=$<TARGET_FILE:test-editor>
+            -P ${CMAKE_SOURCE_DIR}/tests/check_qtest_selector.cmake)
+    set_tests_properties(test-runner-${selector_case} PROPERTIES TIMEOUT 15 LABELS "infrastructure" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endforeach()

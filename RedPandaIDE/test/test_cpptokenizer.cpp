@@ -292,3 +292,68 @@ void TestCppTokenizer::test_parse_u8_char()
     QCOMPARE(mTokenizer[2]->text,"\'\'");
     QCOMPARE(mTokenizer[3]->text,";");
 }
+
+
+void TestCppTokenizer::test_truncated_literal_resilience_data()
+{
+    QTest::addColumn<QString>("literal");
+    QTest::addColumn<QString>("normalized");
+    for (const QString &prefix : {QString(""), QString("L"), QString("u"), QString("U"), QString("u8")}) {
+        QTest::newRow(qPrintable(prefix + "-string-escape")) << (prefix + "\"unfinished\\") << QString("\"\"");
+        QTest::newRow(qPrintable(prefix + "-char-escape")) << (prefix + "'\\") << QString("''");
+    }
+    QTest::newRow("raw-open-delimiter") << QString("R\"marker(") << QString("\"\"");
+    QTest::newRow("raw-truncated-terminator") << QString("R\"marker(text)mar") << QString("\"\"");
+}
+
+void TestCppTokenizer::test_truncated_literal_resilience()
+{
+    QFETCH(QString, literal);
+    QFETCH(QString, normalized);
+    mTokenizer.tokenize({literal});
+    QCOMPARE(mTokenizer.tokenCount(), 1);
+    QCOMPARE(mTokenizer[0]->text, normalized);
+    QCOMPARE(mTokenizer[0]->matchIndex, -1);
+    // Every editing state can be followed by a valid parse without stale tokens.
+    mTokenizer.tokenize({"int recovered;"});
+    QCOMPARE(mTokenizer.tokenCount(), 3);
+    QCOMPARE(mTokenizer[0]->text, QString("int"));
+    QCOMPARE(mTokenizer[1]->text, QString("recovered"));
+    QCOMPARE(mTokenizer[2]->text, QString(";"));
+}
+
+void TestCppTokenizer::test_every_edit_prefix_keeps_token_links_valid()
+{
+    const QStringList corpus{
+        "auto f = [x](int y) { return x + y; };",
+        "template<class T> struct Box { T values[2]; };",
+        "const char* value = \"escaped\\\" quote\";",
+        "char value = '\\\\';",
+        "const char* value = R\"delim([ { quoted text } ])delim\";",
+        QString::fromUtf8("int caffè = 1;\nconst char* 結果 = u8\"😀\";"),
+        "void f() { if (true) { f(); }\n}",
+        "#include \"unfinished\\"
+    };
+    int examined = 0;
+    for (const QString &sample : corpus) {
+        for (int length = 0; length <= sample.size(); ++length) {
+            const QString prefix = sample.left(length);
+            mTokenizer.tokenize(prefix.split('\n'));
+            QVERIFY2(mTokenizer.tokenCount() <= prefix.size() * 2 + 3, qPrintable(prefix));
+            for (int i = 0; i < mTokenizer.tokenCount(); ++i) {
+                const auto token = mTokenizer[i];
+                QVERIFY(token);
+                QVERIFY(!token->text.isEmpty());
+                QVERIFY(token->line >= 0);
+                if (token->matchIndex >= 0) {
+                    QVERIFY2(token->matchIndex < mTokenizer.tokenCount(), qPrintable(prefix));
+                    QCOMPARE(mTokenizer[token->matchIndex]->matchIndex, i);
+                }
+            }
+            ++examined;
+        }
+    }
+    QVERIFY(examined > 250);
+    mTokenizer.tokenize({});
+    QCOMPARE(mTokenizer.tokenCount(), 0);
+}

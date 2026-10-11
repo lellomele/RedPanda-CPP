@@ -13,6 +13,12 @@ private slots:
     void loadDemoFile();
 
     void test_next_char();
+    void test_local_edits_do_not_rescan_unchanged_folds();
+    void test_fold_boundaries_undo_redo();
+    void test_fold_structure_changes_with_same_block_count();
+    void test_folding_reenabled_after_hidden_edits();
+    void test_incremental_parse_large_document();
+    void test_move_collapsed_block_preserves_state();
     void test_get_token_data();
     void test_get_token();
     void test_token_begin_data();

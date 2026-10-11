@@ -164,7 +164,7 @@ public:
     bool isNew() const noexcept;
 
     void loadFile(QString filename = "", bool parse = true);
-    void saveFile(QString filename);
+    void saveFile(QString filename, bool notifyEncodingChange = true);
     bool save(bool force=false, bool doRreparse=true);
     bool saveAs(const QString& name="", bool doCheckSyntax = true);
     void rename(const QString& newName);

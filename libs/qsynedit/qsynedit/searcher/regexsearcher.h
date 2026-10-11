@@ -34,14 +34,15 @@ public:
     int resultCount() override;
     int findAll(const QString &text) override;
     QString replace(const QString &aOccurrence, const QString &aReplacement) override;
+    QString replaceResult(int resultIndex, const QString &occurrence,
+                          const QString &replacement) override;
     void setPattern(const QString &value) override;
     void setOptions(const SearchOptions &options) override;
 private:
     void updateRegexOptions();
 private:
     QRegularExpression mRegex;
-    QList<int> mLengths;
-    QList<int> mResults;
+    QList<QRegularExpressionMatch> mMatches;
 };
 
 }

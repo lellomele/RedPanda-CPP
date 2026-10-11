@@ -32,7 +32,8 @@
 CodeCompletionPopup::CodeCompletionPopup(ColorManager *colorManager,IconsManager *iconsManager,QWidget *parent) :
     QWidget(parent),
     mListView(nullptr),
-    mMutex()
+    mMutex(),
+    mSymbolUsageManager(nullptr)
 {
     setWindowFlags(Qt::Popup);
     mColorManager = colorManager;
@@ -88,7 +89,18 @@ void CodeCompletionPopup::prepareSearch(
         const QSet<QString>& customKeywords)
 {
     QMutexLocker locker(&mMutex);
+    mFullCompletionStatementList.clear();
+    mCompletionStatementList.clear();
+    mIncludedFiles.clear();
+    mUsings.clear();
+    mAddedStatements.clear();
+    mModel->notifyUpdated();
     if (!isEnabled())
+        return;
+    // hideEvent releases the parser; queued search requests may arrive afterwards.
+    const bool parserOptional = type == CodeCompletionType::KeywordsOnly
+            || type == CodeCompletionType::ComplexKeyword;
+    if (!mParser && !parserOptional)
         return;
     QCursor oldCursor = cursor();
     setCursor(Qt::CursorShape::WaitCursor);
@@ -1382,7 +1394,7 @@ PStatement CodeCompletionListModel::statement(const QModelIndex &index) const
 
 QPixmap CodeCompletionListModel::statementIcon(const QModelIndex &index, int size) const
 {
-    if (!index.isValid())
+    if (!mIconsManager || !index.isValid())
         return QPixmap();
     if (index.row()>=mStatements->count())
         return QPixmap();

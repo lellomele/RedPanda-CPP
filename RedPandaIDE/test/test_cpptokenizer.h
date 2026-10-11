@@ -30,6 +30,11 @@ private slots:
     void test_parse_scope_resolution_operators3();
     void test_parse_unend_char_literal();
     void test_parse_unend_string_literal();
+
+    void test_truncated_literal_resilience_data();
+    void test_truncated_literal_resilience();
+    void test_every_edit_prefix_keeps_token_links_valid();
+
 protected:
     CppTokenizer mTokenizer;
 };

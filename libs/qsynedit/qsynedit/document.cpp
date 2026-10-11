@@ -18,7 +18,6 @@
 #include "qt_utils/utils.h"
 #include <QDataStream>
 #include <QFile>
-#include <QTextStream>
 #include <QMutexLocker>
 #include <stdexcept>
 #include <QMessageBox>
@@ -267,7 +266,7 @@ void Document::setText(const QString &text)
                 break;
             if (text[pos] == '\r')
                 pos++;
-            if (text[pos] == '\n')
+            if (pos<text.length() && text[pos] == '\n')
                 pos++;
         }
         mIndexOfLongestLine = -1;
@@ -495,87 +494,144 @@ void Document::insertLines(int index, int numLines)
     mIndexOfLongestLine = -1;
 }
 
-bool Document::tryLoadFileByEncoding(QByteArray encodingName, QFile& file) {
-    TextDecoder decoder(encodingName);
-    if (!decoder.isValid())
-        return false;
-    file.reset();
-    internalClear();
-    while (true) {
-        if (file.atEnd()){
-            break;
-        }
-        QByteArray line = file.readLine();
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-        if (line.endsWith("\r\n")) {
-            line.remove(line.length()-2,2);
-        } else if (line.endsWith("\r")) {
-            line.remove(line.length()-1,1);
-        } else if (line.endsWith("\n")){
-            line.remove(line.length()-1,1);
-        }
-        auto [ok, newLine] = decoder.decode(line);
-        if (!ok) {
+// A decoded document must never contain isolated UTF-16 surrogate halves.
+// Some codecs can accept them without reporting a conversion error.
+static bool hasValidUtf16(const QString &text)
+{
+    for (int i = 0; i < text.length(); ++i) {
+        if (text[i].isHighSurrogate()) {
+            if (i + 1 >= text.length() || !text[i + 1].isLowSurrogate())
+                return false;
+            ++i;
+        } else if (text[i].isLowSurrogate()) {
             return false;
         }
-        addItem(newLine);
     }
     return true;
 }
 
-void Document::loadUTF16BOMFile(QFile &file)
+void Document::addDecodedLines(const QString &text, bool &foundLineBreak)
 {
-    TextDecoder decoder = TextDecoder::decoderForUtf16();
+    int start = 0;
+    int pos = 0;
+    while (pos < text.length()) {
+        if (text[pos] != '\r' && text[pos] != '\n') {
+            ++pos;
+            continue;
+        }
+        addItem(text.mid(start, pos - start));
+        const bool cr = text[pos] == '\r';
+        const bool crlf = cr && pos + 1 < text.length() && text[pos + 1] == '\n';
+        if (!foundLineBreak) {
+            mNewlineType = crlf ? NewlineType::Windows
+                : cr ? NewlineType::MacOld : NewlineType::Unix;
+            foundLineBreak = true;
+        }
+        pos += crlf ? 2 : 1;
+        start = pos;
+    }
+    if (start < text.length())
+        addItem(text.mid(start));
+    mAppendNewLineAtEOF = !text.isEmpty()
+        && (text.endsWith('\n') || text.endsWith('\r'));
+}
+
+bool Document::tryLoadFileByEncoding(const QByteArray &encodingName, QFile &file,
+                                     qint64 offset, bool *allAscii)
+{
+    TextDecoder decoder(encodingName);
     if (!decoder.isValid())
-        return;
-    file.reset();
+        return false;
+    if (!file.seek(offset))
+        throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
     internalClear();
-    QByteArray buf = file.readAll();
-        if (file.error() != QFile::NoError)
+    mNewlineType = NewlineType::Windows;
+    mAppendNewLineAtEOF = false;
+    bool foundLineBreak = false;
+    const bool utf8Codec = encodingName.compare(ENCODING_UTF8, Qt::CaseInsensitive) == 0;
+    const QByteArray utf8Signature = QByteArray::fromHex("efbbbf");
+    if (allAscii)
+        *allAscii = true;
+    while (!file.atEnd()) {
+        const QByteArray line = file.readLine();
+        if (file.error() != QFile::NoError || (line.isEmpty() && !file.atEnd()))
             throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-    if (buf.length()<2)
-        return;
-    QString text = decoder.decodeUnchecked(buf.mid(2));
-    this->setText(text);
+        bool asciiLine = true;
+        for (unsigned char byte : line) {
+            if (byte == 0)
+                throw BinaryFileError(tr("'%1' is a binaray File!").arg(file.fileName()));
+            if (byte > 127)
+                asciiLine = false;
+        }
+        QString decoded;
+        if (utf8Codec && asciiLine) {
+            // ASCII cannot contain malformed UTF-8 or surrogate halves.
+            // Avoid repeating Unicode validation for ordinary source lines.
+            decoded = QString::fromLatin1(line);
+        } else {
+            auto result = decoder.decode(line);
+            if (!result.first || !hasValidUtf16(result.second))
+                return false;
+            decoded = std::move(result.second);
+            // The file signature is skipped via offset. U+FEFF at the start
+            // of a later line is content, not another file signature.
+            if (utf8Codec && line.startsWith(utf8Signature))
+                decoded.prepend(QChar(0xfeff));
+        }
+        if (allAscii && *allAscii)
+            *allAscii = asciiLine;
+        addDecodedLines(decoded, foundLineBreak);
+    }
+    return true;
 }
 
-void Document::loadUTF32BOMFile(QFile &file)
+void Document::loadUnicodeFile(QFile &file, const QByteArray &encodingName, int unitSize)
 {
-    TextDecoder decoder = TextDecoder::decoderForUtf32();
+    TextDecoder decoder(encodingName);
     if (!decoder.isValid())
-        return;
-    file.reset();
+        throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(encodingName)));
+    if (!file.seek(0))
+        throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
+    const QByteArray data = file.readAll();
+    if (file.error() != QFile::NoError)
+        throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
+    const auto invalidData = [&file, &encodingName] {
+        throw FileError(tr("File '%1' contains invalid or incomplete data for codec '%2'.")
+                            .arg(file.fileName(), QString::fromLatin1(encodingName)));
+    };
+    if (data.size() % unitSize != 0)
+        invalidData();
+    if (unitSize == 4) {
+        // Qt/ICU may silently discard invalid UTF-32 scalars without reporting
+        // a decoder error. Validate the original units before decoding.
+        const QByteArray codec = encodingName.toUpper();
+        bool bigEndian = Q_BYTE_ORDER == Q_BIG_ENDIAN;
+        if (codec.endsWith("BE"))
+            bigEndian = true;
+        else if (codec.endsWith("LE"))
+            bigEndian = false;
+        else if (data.startsWith(QByteArray::fromHex("0000feff")))
+            bigEndian = true;
+        else if (data.startsWith(QByteArray::fromHex("fffe0000")))
+            bigEndian = false;
+        for (int i = 0; i < data.size(); i += 4) {
+            const auto byte = [&data](int offset) { return quint32(quint8(data[offset])); };
+            const quint32 scalar = bigEndian
+                ? (byte(i) << 24) | (byte(i + 1) << 16) | (byte(i + 2) << 8) | byte(i + 3)
+                : byte(i) | (byte(i + 1) << 8) | (byte(i + 2) << 16) | (byte(i + 3) << 24);
+            if (scalar > 0x10ffff || (scalar >= 0xd800 && scalar <= 0xdfff))
+                invalidData();
+        }
+    }
+    auto [ok, decoded] = decoder.decode(data);
+    if (!ok || !hasValidUtf16(decoded))
+        invalidData();
+    if (decoded.contains(QChar(0)))
+        throw BinaryFileError(tr("'%1' is a binaray File!").arg(file.fileName()));
     internalClear();
-    QByteArray buf = file.readAll();
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-    if (buf.length()<4)
-        return;
-    QString text = decoder.decodeUnchecked(buf.mid(4));
-    this->setText(text);
-}
-
-void Document::saveUTF16File(QFileDevice &file, TextEncoder &encoder) const
-{
-    if (!encoder.isValid())
-        return;
-    QString text=getTextStr();
-    const QByteArray data = encoder.encodeUnchecked(text);
-    if (file.write(data) != data.size())
-        throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
-}
-
-void Document::saveUTF32File(QFileDevice &file, TextEncoder &encoder) const
-{
-    if (!encoder.isValid())
-        return;
-    QString text=getTextStr();
-    const QByteArray data = encoder.encodeUnchecked(text);
-    if (file.write(data) != data.size())
-        throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
+    mNewlineType = NewlineType::Windows;
+    bool foundLineBreak = false;
+    addDecodedLines(decoded, foundLineBreak);
 }
 
 PDocumentLine Document::findLineBySeq(size_t lineSeq) const
@@ -632,11 +688,13 @@ void Document::replaceWith(Document &source)
     mLines.swap(source.mLines);
     mLineSeqIndice.swap(source.mLineSeqIndice);
     mNewlineType = source.mNewlineType;
+    mAppendNewLineAtEOF = source.mAppendNewLineAtEOF;
     mIndexOfLongestLine = -1;
     ensureHasLine();
 }
 
-void Document::loadFromFileInPlace(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding)
+void Document::loadFromFileInPlace(const QString &filename, const QByteArray &encoding,
+                                   QByteArray &realEncoding)
 {
     QMutexLocker locker(&mMutex);
     QFile file(filename);
@@ -644,207 +702,147 @@ void Document::loadFromFileInPlace(const QString& filename, const QByteArray& en
         throw FileError(tr("Can't open file '%1' for read!").arg(file.fileName()));
     beginUpdate();
     internalClear();
-    auto action = finally([this]{
+    auto action = finally([this] {
         ensureHasLine();
         endUpdate();
     });
-    //test for utf8 / utf 8 bom
+    const QByteArray prefix = file.peek(4);
+    if (file.error() != QFile::NoError)
+        throw FileError(tr("Failed to read file: %1").arg(filename));
+    const bool utf8Bom = prefix.startsWith(QByteArray::fromHex("efbbbf"));
+    const bool utf32Bom = prefix.startsWith(QByteArray::fromHex("fffe0000"))
+        || prefix.startsWith(QByteArray::fromHex("0000feff"));
+    const bool utf16Bom = prefix.startsWith(QByteArray::fromHex("fffe"))
+        || prefix.startsWith(QByteArray::fromHex("feff"));
+    QByteArray detectedEncoding = encoding;
     if (encoding == ENCODING_AUTO_DETECT) {
-        if (file.atEnd()) {
-            realEncoding = ENCODING_ASCII;
-            return;
-        }
-        QByteArray line = file.readLine();
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-        std::optional<TextDecoder> decoder;
-        bool needReread = false;
-        bool allAscii = true;
-        //test for BOM
-        if ((line.length()>=3) && ((unsigned char)line[0]==0xEF) && ((unsigned char)line[1]==0xBB) && ((unsigned char)line[2]==0xBF) ) {
-            realEncoding = ENCODING_UTF8_BOM;
-            line = line.mid(3);
-            decoder = TextDecoder::decoderForUtf8();
-        } else if ((line.length()>=4) && ((unsigned char)line[0]==0xFF) && ((unsigned char)line[1]==0xFE)
-                   && ((unsigned char)line[2]==0x00)
-                   && ((unsigned char)line[3]==0x00)) {
-            realEncoding = ENCODING_UTF32_BOM;
-            loadUTF32BOMFile(file);
-            return;
-        } else if ((line.length()>=2) && ((unsigned char)line[0]==0xFF) && ((unsigned char)line[1]==0xFE)) {
-            realEncoding = ENCODING_UTF16_BOM;
-            loadUTF16BOMFile(file);
-            return;
-        } else {
-            realEncoding = ENCODING_UTF8;
-            decoder = TextDecoder::decoderForUtf8();
-        }
-        if (!decoder.has_value())
-            throw FileError(tr("Can't load codec '%1'!").arg(QString(realEncoding)));
-        if (line.endsWith("\r\n")) {
-            mNewlineType = NewlineType::Windows;
-        } else if (line.endsWith("\n")) {
-            mNewlineType = NewlineType::Unix;
-        } else if (line.endsWith("\r")) {
-            mNewlineType = NewlineType::MacOld;
-        }
-
-        internalClear();
-        while (true) {
-            if (line.endsWith("\r\n")) {
-                line.remove(line.length()-2,2);
-            } else if (line.endsWith("\r")) {
-                line.remove(line.length()-1,1);
-            } else if (line.endsWith("\n")){
-                line.remove(line.length()-1,1);
+        if (utf32Bom)
+            detectedEncoding = ENCODING_UTF32_BOM;
+        else if (utf16Bom)
+            detectedEncoding = ENCODING_UTF16_BOM;
+        else if (utf8Bom)
+            detectedEncoding = ENCODING_UTF8_BOM;
+        else {
+            bool allAscii = false;
+            if (tryLoadFileByEncoding(ENCODING_UTF8, file, 0, &allAscii)) {
+                realEncoding = allAscii ? ENCODING_ASCII : ENCODING_UTF8;
+                return;
             }
-            if (isBinaryContent(line))
-                throw BinaryFileError(tr("'%1' is a binaray File!").arg(filename));
-            if (allAscii) {
-                allAscii = isTextAllAscii(line);
+            // A BOM fixes the codec. Only files without a BOM may be tried
+            // with the system's legacy encodings after UTF-8 validation fails.
+            if (!pCharsetInfoManager)
+                throw FileError(tr("File '%1' contains invalid or incomplete data for codec '%2'.")
+                                    .arg(filename, QString::fromLatin1(ENCODING_UTF8)));
+            detectedEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
+            if (tryLoadFileByEncoding(detectedEncoding, file)) {
+                realEncoding = detectedEncoding;
+                return;
             }
-            if (allAscii) {
-                addItem(QString::fromLatin1(line));
-            } else {
-                auto [ok, newLine] = decoder->decode(line);
-                if (!ok) {
-                    needReread = true;
-                    break;
-                }
-                addItem(newLine);
-            }
-            if (file.atEnd()){
-                break;
-            }
-            line = file.readLine();
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-        }
-        if (!needReread) {
-            if (allAscii)
-                realEncoding = ENCODING_ASCII;
-            return;
-        }
-        realEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
-        if (tryLoadFileByEncoding(realEncoding,file)) {
-            return;
-        }
-        QList<PCharsetInfo> charsets = pCharsetInfoManager->findCharsetByLocale(pCharsetInfoManager->localeName());
-        if (!charsets.isEmpty()) {
-
-            QSet<QByteArray> encodingSet;
-            for (int i=0;i<charsets.size();i++) {
-                encodingSet.insert(charsets[i]->name);
-            }
-            encodingSet.remove(realEncoding);
-            foreach (const QByteArray& encodingName,encodingSet) {
-                if (encodingName == ENCODING_UTF8)
+            const QList<PCharsetInfo> charsets =
+                pCharsetInfoManager->findCharsetByLocale(pCharsetInfoManager->localeName());
+            QSet<QByteArray> tried{detectedEncoding, ENCODING_UTF8};
+            for (const auto &charset : charsets) {
+                if (tried.contains(charset->name))
                     continue;
-                if (tryLoadFileByEncoding(encodingName,file)) {
-                    //qDebug()<<encodingName;
-                    realEncoding = encodingName;
+                tried.insert(charset->name);
+                if (tryLoadFileByEncoding(charset->name, file)) {
+                    realEncoding = charset->name;
                     return;
                 }
             }
+            throw FileError(tr("File '%1' contains invalid or incomplete data for codec '%2'.")
+                                .arg(filename, QString::fromLatin1(detectedEncoding)));
         }
-    } else {
-        realEncoding = encoding;
     }
-
-    if (realEncoding == ENCODING_SYSTEM_DEFAULT) {
-        realEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
+    if (detectedEncoding == ENCODING_SYSTEM_DEFAULT) {
+        if (!pCharsetInfoManager)
+            throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(detectedEncoding)));
+        detectedEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
     }
-    file.reset();
-    QByteArray data = file.readAll();
-        if (file.error() != QFile::NoError)
-            throw FileError(tr("Failed to read file: %1").arg(file.fileName()));
-    QString text;
-    QTextStream textStream(&text);
-    if (realEncoding == ENCODING_UTF8_BOM) {
-        textStream.setAutoDetectUnicode(true);
-        text = QString::fromUtf8(data);
-    } else {
-        textStream.setAutoDetectUnicode(false);
-        TextDecoder decoder(realEncoding);
-        text = decoder.decodeUnchecked(data);
+    QByteArray codecName = detectedEncoding;
+    if (detectedEncoding == ENCODING_UTF16_BOM)
+        codecName = ENCODING_UTF16;
+    else if (detectedEncoding == ENCODING_UTF32_BOM)
+        codecName = ENCODING_UTF32;
+    else if (detectedEncoding == ENCODING_UTF8_BOM)
+        codecName = ENCODING_UTF8;
+    TextDecoder decoder(codecName);
+    if (!decoder.isValid())
+        throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(codecName)));
+    if (codecName.toUpper().startsWith("UTF-16")) {
+        loadUnicodeFile(file, codecName, 2);
+    } else if (codecName.toUpper().startsWith("UTF-32")) {
+        loadUnicodeFile(file, codecName, 4);
+    } else if (!tryLoadFileByEncoding(codecName, file,
+                    codecName.compare(ENCODING_UTF8, Qt::CaseInsensitive) == 0 && utf8Bom ? 3 : 0)) {
+        throw FileError(tr("File '%1' contains invalid or incomplete data for codec '%2'.")
+                            .arg(filename, QString::fromLatin1(codecName)));
     }
-    QString line;
-    internalClear();
-    while (textStream.readLineInto(&line)) {
-        if (line.endsWith("\r\n")) {
-            line.remove(line.length()-2,2);
-        } else if (line.endsWith("\r")) {
-            line.remove(line.length()-1,1);
-        } else if (line.endsWith("\n")){
-            line.remove(line.length()-1,1);
-        }
-        addItem(line);
-    }
+    realEncoding = detectedEncoding;
 }
 
-
-
-void Document::saveToFile(QFileDevice &file, const QByteArray& encoding, QByteArray& realEncoding) const
+void Document::saveToFile(QFileDevice &file, const QByteArray &encoding,
+                          QByteArray &realEncoding) const
 {
-    Q_ASSERT(encoding!=ENCODING_AUTO_DETECT);
     QMutexLocker locker(&mMutex);
-    std::optional<TextEncoder> encoder;
-    realEncoding = encoding;
-    QString codecName = realEncoding;
-    if (realEncoding == ENCODING_UTF16_BOM || realEncoding == ENCODING_UTF16) {
-        encoder = TextEncoder::encoderForUtf16();
-        codecName = ENCODING_UTF16;
-    } else if (realEncoding == ENCODING_UTF32_BOM || realEncoding == ENCODING_UTF32) {
-        encoder = TextEncoder::encoderForUtf32();
-        codecName = ENCODING_UTF32;
-    } else if (realEncoding == ENCODING_UTF8_BOM) {
-        encoder = TextEncoder::encoderForUtf8();
+    if (encoding == ENCODING_AUTO_DETECT)
+        throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(encoding)));
+    QByteArray detectedEncoding = encoding;
+    QByteArray codecName = encoding;
+    QByteArray bom;
+    if (encoding == ENCODING_UTF16 || encoding == ENCODING_UTF16_BOM) {
+        codecName = "UTF-16LE";
+        if (encoding == ENCODING_UTF16_BOM)
+            bom = QByteArray::fromHex("fffe");
+    } else if (encoding == ENCODING_UTF32 || encoding == ENCODING_UTF32_BOM) {
+        codecName = "UTF-32LE";
+        if (encoding == ENCODING_UTF32_BOM)
+            bom = QByteArray::fromHex("fffe0000");
+    } else if (encoding == ENCODING_UTF8_BOM) {
         codecName = ENCODING_UTF8;
-    } else if (realEncoding == ENCODING_SYSTEM_DEFAULT) {
-        encoder = TextEncoder::encoderForSystem();
-        codecName = realEncoding;
-    } else {
-        encoder = TextEncoder(realEncoding);
+        bom = QByteArray::fromHex("efbbbf");
+    } else if (encoding == ENCODING_SYSTEM_DEFAULT) {
+        if (!pCharsetInfoManager)
+            throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(encoding)));
+        codecName = pCharsetInfoManager->getDefaultSystemEncoding();
+        detectedEncoding = codecName;
     }
-    if (!encoder.has_value() || !encoder->isValid())
-        throw FileError(tr("Can't load codec '%1'!").arg(codecName));
-
+    TextEncoder encoder(codecName);
+    if (!encoder.isValid())
+        throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(codecName)));
+    TextDecoder roundTripDecoder(codecName);
+    const bool unicodeCodec = codecName.toUpper().startsWith("UTF-");
     if (!file.isOpen() && !file.open(QIODevice::WriteOnly))
         throw FileError(tr("Can't open file '%1' for save!").arg(file.fileName()));
-    if (mLines.isEmpty())
-        return;
-    if (realEncoding == ENCODING_UTF16) {
-        saveUTF16File(file, encoder.value());
-        return;
-    } else if (realEncoding == ENCODING_UTF32) {
-        saveUTF32File(file, encoder.value());
-        return;
-    } if (realEncoding == ENCODING_UTF8_BOM) {
-        if (!file.putChar(0xEF) || !file.putChar(0xBB) || !file.putChar(0xBF))
-            throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
-    }
+    if (!file.isWritable())
+        throw FileError(tr("Can't open file '%1' for save!").arg(file.fileName()));
+    if (!bom.isEmpty() && file.write(bom) != bom.size())
+        throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
     bool allAscii = true;
-    QByteArray data;
-    for (const PDocumentLine& line:mLines) {
-        QString text = line->lineText()+lineBreak();
-        data = encoder->encodeUnchecked(text);
-        if (allAscii) {
-            allAscii = (data==text.toLatin1());
+    for (int i = 0; i < mLines.count(); ++i) {
+        QString text = mLines[i]->lineText();
+        if (i + 1 < mLines.count() || mAppendNewLineAtEOF)
+            text += lineBreak();
+        auto [ok, data] = encoder.encode(text);
+        if (ok && !unicodeCodec) {
+            // ICU codecs can replace unrepresentable characters without
+            // setting hasError(). Verify the actual encoded result too.
+            const auto decoded = roundTripDecoder.decode(data);
+            ok = decoded.first && decoded.second == text;
         }
-        if (file.write(data)!=data.size())
-            throw FileError(tr("Data not correctly writed to file '%1'.").arg(file.fileName()));
+        if (!ok || !hasValidUtf16(text))
+            throw FileError(tr("Text cannot be represented by codec '%1' without losing data.")
+                                .arg(QString::fromLatin1(codecName)));
+        if (file.write(data) != data.size())
+            throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
+        if (allAscii)
+            allAscii = isTextAllAscii(text);
     }
-    if (allAscii) {
-        realEncoding = ENCODING_ASCII;
-    } else if (realEncoding == ENCODING_SYSTEM_DEFAULT) {
-        if (encoder->name().compare("System",Qt::CaseInsensitive)==0) {
-            realEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
-        } else {
-            realEncoding = encoder->name();
-        }
-    }
+    // Preserve explicitly selected BOM/wide/legacy codecs. ASCII is only a
+    // refinement of plain UTF-8, never a reason to discard a requested BOM.
+    if (allAscii && encoding == ENCODING_UTF8)
+        detectedEncoding = ENCODING_ASCII;
+    realEncoding = detectedEncoding;
 }
 
 QString Document::glyph(int line, int glyphIdx) const

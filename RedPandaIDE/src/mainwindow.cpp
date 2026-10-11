@@ -57,6 +57,8 @@
 #include "snippetsstorage.h"
 #include "appidentity.h"
 #include <QSaveFile>
+#include <QRegularExpression>
+#include <algorithm>
 #include "ui_mainwindow.h"
 #include "editormanager.h"
 #include "editor.h"
@@ -8763,80 +8765,147 @@ void MainWindow::applyCurrentProblemCaseChanges()
 
 void MainWindow::on_btnReplace_clicked()
 {
-    //select all items by default
-    PSearchResults results = mSearchResultModel->currentResults();
-    if (!results) {
+    const PSearchResults results = mSearchResultModel->currentResults();
+    if (!results)
         return;
+    const QString newWord = ui->cbReplaceInHistory->currentText();
+    QRegularExpression regex;
+    if (results->useRegex()) {
+        regex.setPattern(results->keyword());
+        if (!results->options().testFlag(QSynedit::SearchOption::ssoMatchCase))
+            regex.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
     }
-    QString newWord = ui->cbReplaceInHistory->currentText();
-    foreach (const PSearchResultTreeItem& file, results->results()) {
-        QVector<PSearchResultTreeItem> selections;
-        foreach(const PSearchResultTreeItem& item,file->results) {
-            if (item->selected) {
-                selections.push_back(item);
+    const auto expandCaptures = [&regex](const QString &replacement, const QRegularExpressionMatch &match) {
+        QString expanded;
+        for (int i = 0; i < replacement.size(); ++i) {
+            if (replacement[i] == '\\' && i + 1 < replacement.size()
+                    && replacement[i + 1] >= '1' && replacement[i + 1] <= '9') {
+                int capture = replacement[i + 1].digitValue();
+                int consumed = 1;
+                if (i + 2 < replacement.size() && replacement[i + 2] >= '0' && replacement[i + 2] <= '9') {
+                    const int twoDigitCapture = capture * 10 + replacement[i + 2].digitValue();
+                    if (twoDigitCapture <= regex.captureCount()) {
+                        capture = twoDigitCapture;
+                        consumed = 2;
+                    }
+                }
+                if (capture <= regex.captureCount()) {
+                    expanded += match.captured(capture);
+                    i += consumed;
+                    continue;
+                }
             }
+            expanded += replacement[i];
+        }
+        return expanded;
+    };
+    for (const auto &fileResult : results->results()) {
+        QVector<PSearchResultTreeItem> selections;
+        for (const auto &item : fileResult->results) {
+            if (item->selected)
+                selections.push_back(item);
         }
         if (selections.isEmpty())
             continue;
-        Editor* editor = nullptr;
-        if (ui->chkOpenFileInEditors->isChecked()) {
-            editor = openFile(file->filename);
-            if (!editor) {
-                QMessageBox::critical(this,
-                                      tr("Replace Error"),
-                                      tr("Can't open file '%1' for replace!").arg(file->filename));
-                return;
-            }
-        } else {
-            editor = mEditorManager->getOpenedEditor(file->filename);
+        Editor *editor = ui->chkOpenFileInEditors->isChecked()
+            ? openFile(fileResult->filename) : mEditorManager->getOpenedEditor(fileResult->filename);
+        if (!editor && ui->chkOpenFileInEditors->isChecked()) {
+            QMessageBox::critical(this, tr("Replace Error"),
+                                  tr("Can't open file '%1' for replace!").arg(fileResult->filename));
+            return;
         }
-        bool needSave=false;
-        std::shared_ptr<Editor> pEditor;
-        if (editor) {
-            editor->clearSelection();
-            editor->beginEditing();
-        } else {
-            needSave=true;
-            pEditor = std::make_shared<Editor>(nullptr);
-            editor = pEditor.get();
-            QByteArray encoding;
+        std::unique_ptr<Editor> temporary;
+        QByteArray encoding;
+        const bool needSave = editor == nullptr;
+        if (needSave) {
+            temporary = std::make_unique<Editor>(nullptr);
+            editor = temporary.get();
+            editor->setEditorSettings(&pSettings->editor());
+            editor->setCodeCompletionSettings(&pSettings->codeCompletion());
             editor->setSyntaxer(SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP));
             try {
-                editor->loadFromFile(file->filename,ENCODING_AUTO_DETECT,encoding);
-            } catch(FileError e) {
-                QMessageBox::critical(this,
-                                      tr("Replace Error"),
-                                      e.reason());
+                editor->loadFromFile(fileResult->filename, ENCODING_AUTO_DETECT, encoding);
+            } catch (const FileError &error) {
+                QMessageBox::critical(this, tr("Replace Error"), error.reason());
                 return;
             }
         }
-        while (!selections.isEmpty()) {
-            const PSearchResultTreeItem& item = selections.back();
-            selections.pop_back();
-            QString line = editor->lineText(item->line);
-            if (line.mid(item->start-1,results->keyword().length())!=results->keyword()) {
-                QMessageBox::critical(editor,
-                            tr("Replace Error"),
-                            tr("Contents has changed since last search!"));
-                if (!needSave)
-                    editor->endEditing();
+        if (editor->readOnly()) {
+            QMessageBox::critical(this, tr("Replace Error"), tr("Cannot modify a read-only file."));
+            return;
+        }
+        std::sort(selections.begin(), selections.end(), [](const auto &left, const auto &right) {
+            return left->line != right->line ? left->line > right->line : left->start > right->start;
+        });
+        QMap<int, QString> replacements;
+        int previousLine = -1;
+        int previousStart = -1;
+        int regexLine = -1;
+        QHash<int, QRegularExpressionMatch> regexMatches;
+        // Validate the entire file before changing it, including the result's
+        // original line. Coordinates in search results are zero-based.
+        for (const auto &item : selections) {
+            const QString original = editor->lineText(item->line);
+            QString displayed = original;
+            displayed.replace('\t', ' ');
+            bool valid = item->line >= 0 && item->line < editor->lineCount()
+                && item->start >= 0 && item->start <= original.size()
+                && item->len >= 0 && item->len <= original.size() - item->start
+                && displayed == item->text
+                && (item->line != previousLine || (item->start != previousStart
+                    && item->start + item->len <= previousStart));
+            QString replacement = newWord;
+            if (valid && results->useRegex()) {
+                if (regexLine != item->line) {
+                    regexLine = item->line;
+                    regexMatches.clear();
+                    auto matches = regex.globalMatch(original);
+                    while (matches.hasNext()) {
+                        const auto match = matches.next();
+                        regexMatches.insert(match.capturedStart(), match);
+                    }
+                }
+                const auto match = regexMatches.value(item->start);
+                valid = match.hasMatch() && match.capturedLength() == item->len;
+                if (valid)
+                    replacement = expandCaptures(newWord, match);
+            } else if (valid) {
+                valid = original.mid(item->start, item->len).compare(results->keyword(),
+                    results->options().testFlag(QSynedit::SearchOption::ssoMatchCase)
+                        ? Qt::CaseSensitive : Qt::CaseInsensitive) == 0;
+            }
+            if (!valid) {
+                QMessageBox::critical(this, tr("Replace Error"),
+                                      tr("Contents has changed since last search!"));
                 return;
             }
-            line.remove(item->start-1,results->keyword().length());
-            line.insert(item->start-1, newWord);
-            editor->replaceLine(item->line,line);
+            if (!replacements.contains(item->line))
+                replacements.insert(item->line, original);
+            replacements[item->line].replace(item->start, item->len, replacement);
+            previousLine = item->line;
+            previousStart = item->start;
         }
-        if (!needSave) {
-            editor->endEditing();
-        } else {
-            QByteArray realEncoding;
-            QFile toFile(file->filename);
+        editor->beginEditing();
+        {
+            auto cleanup = finally([editor] { editor->endEditing(); });
+            editor->clearSelection();
+            for (auto it = replacements.cbegin(); it != replacements.cend(); ++it) {
+                if (it.value() != editor->lineText(it.key()))
+                    editor->replaceLine(it.key(), it.value());
+            }
+        }
+        if (needSave) {
+            QSaveFile destination(fileResult->filename);
+            destination.setDirectWriteFallback(false);
+            QByteArray savedEncoding;
             try {
-                editor->saveToFile(toFile,editor->editorEncoding(), realEncoding);
-            } catch(FileError e) {
-                QMessageBox::critical(this,
-                                      tr("Replace Error"),
-                                      e.reason());
+                editor->saveToFile(destination, encoding == ENCODING_ASCII ? QByteArray(ENCODING_UTF8) : encoding,
+                                   savedEncoding);
+                if (!destination.commit())
+                    throw FileError(tr("Cannot save '%1': %2")
+                                        .arg(fileResult->filename, destination.errorString()));
+            } catch (const FileError &error) {
+                QMessageBox::critical(this, tr("Replace Error"), error.reason());
                 return;
             }
         }

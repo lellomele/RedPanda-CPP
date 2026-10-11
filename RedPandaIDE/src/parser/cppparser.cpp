@@ -1011,26 +1011,28 @@ void CppParser::invalidateFile(const QString &fileName)
     mParsing = false;
 }
 
+static bool hasIncludeDirective(const QString &line, const QString &directive)
+{
+    const QString trimmed = line.trimmed();
+    if (!trimmed.startsWith('#'))
+        return false;
+    const QString body = trimmed.mid(1).trimmed();
+    if (!body.startsWith(directive))
+        return false;
+    if (body.size() == directive.size())
+        return true;
+    const QChar next = body[directive.size()];
+    return next != '_' && !next.isLetterOrNumber();
+}
+
 bool CppParser::isIncludeLine(const QString &line) const
 {
-    QString trimmedLine = line.trimmed();
-    if ((trimmedLine.length() > 0)
-            && trimmedLine.startsWith('#')) { // it's a preprocessor line
-        if (trimmedLine.mid(1).trimmed().startsWith("include"))
-            return true;
-    }
-    return false;
+    return hasIncludeDirective(line, QStringLiteral("include")) || isIncludeNextLine(line);
 }
 
 bool CppParser::isIncludeNextLine(const QString &line) const
 {
-    QString trimmedLine = line.trimmed();
-    if ((trimmedLine.length() > 0)
-            && trimmedLine.startsWith('#')) { // it's a preprocessor line
-        if (trimmedLine.mid(1).trimmed().startsWith("include_next"))
-            return true;
-    }
-    return false;
+    return hasIncludeDirective(line, QStringLiteral("include_next"));
 }
 
 bool CppParser::isProjectHeaderFile(const QString &fileName) const

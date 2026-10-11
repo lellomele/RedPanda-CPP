@@ -47,6 +47,10 @@ public:
     virtual int resultCount() = 0;
     virtual int findAll(const QString& text) = 0;
     virtual QString replace(const QString& aOccurrence, const QString& aReplacement) = 0;
+    // Expand one result found in its original context. Literal searchers can
+    // delegate to replace(); regular expressions retain the captured groups.
+    virtual QString replaceResult(int resultIndex, const QString &occurrence,
+                                  const QString &replacement);
     SearchOptions options() const;
     virtual void setOptions(const SearchOptions &options);
 protected:

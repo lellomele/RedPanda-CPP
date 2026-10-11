@@ -1,0 +1,81 @@
+name: Stabilization gates
+on:
+  push:
+    branches: [stabilization/3.5, feature/ide-resilience-localization]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-qt5:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build qtbase5-dev qtbase5-dev-tools qttools5-dev qttools5-dev-tools libqt5svg5-dev
+      - name: Configure full application and tests
+        run: cmake -S . -B build-stable -G Ninja -DCMAKE_BUILD_TYPE=Release -DFORCE_QT5=ON -DLUA_ADDON=ON -DVCS=ON -DSDCC=ON
+      - name: Build application and every test target
+        run: cmake --build build-stable --target RedPandaIDE all-test-targets benchmark-qsynedit --parallel 2
+      - name: Run functional and failure-path suites
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build-stable --output-on-failure --timeout 120 --output-junit tests.xml
+      - name: Measure editing workloads
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: build-stable/libs/qsynedit/benchmark-qsynedit --lines 3000,30000,100000 --samples 5 --edits 40 > build-stable/editing-performance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-qt5-stabilization-evidence
+          path: |
+            build-stable/tests.xml
+            build-stable/Testing/Temporary/*.log
+            build-stable/editing-performance.json
+  windows-qt6:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-qt6-translations
+      - name: Configure full application and tests
+        shell: msys2 {0}
+        run: cmake -S . -B build-stable -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$MINGW_PREFIX" -DPORTABLE_CONFIG=oui -DLUA_ADDON=ON -DVCS=ON -DSDCC=ON
+      - name: Build application and every test target
+        shell: msys2 {0}
+        run: cmake --build build-stable --target RedPandaIDE all-test-targets benchmark-qsynedit --parallel 2
+      - name: Run functional and failure-path suites
+        shell: msys2 {0}
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build-stable --output-on-failure --timeout 120 --output-junit tests.xml
+      - name: Measure editing workloads
+        shell: msys2 {0}
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: build-stable/libs/qsynedit/benchmark-qsynedit.exe --lines 3000,30000,100000 --samples 5 --edits 40 > build-stable/editing-performance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-qt6-stabilization-evidence
+          path: |
+            build-stable/tests.xml
+            build-stable/Testing/Temporary/*.log
+            build-stable/editing-performance.json

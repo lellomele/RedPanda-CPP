@@ -117,6 +117,7 @@ target("RedPandaIDE")
         "src/settings/uisettings.cpp",
         -- utils
         "src/utils/escape.cpp",
+        "src/utils/colorcontrast.cpp",
         "src/utils/file.cpp",
         "src/utils/font.cpp",
         "src/utils/os.cpp",

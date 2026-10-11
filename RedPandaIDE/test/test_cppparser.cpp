@@ -383,3 +383,70 @@ void TestCppParser::test_structured_bindings()
     QCOMPARE(statement->type,"double");
     QCOMPARE(statement->args,"");
 }
+
+
+void TestCppParser::test_include_directive_boundaries_data()
+{
+    QTest::addColumn<QString>("line");
+    QTest::addColumn<bool>("include");
+    QTest::addColumn<bool>("includeNext");
+    QTest::newRow("angle") << QString("#include <vector>") << true << false;
+    QTest::newRow("quoted-without-space") << QString("#include\"local.h\"") << true << false;
+    QTest::newRow("space-after-hash") << QString("  # include <vector>") << true << false;
+    QTest::newRow("macro") << QString("#include HEADER") << true << false;
+    QTest::newRow("unfinished") << QString("#include") << true << false;
+    QTest::newRow("next") << QString("#include_next <vector>") << true << true;
+    QTest::newRow("next-unfinished") << QString("#include_next") << true << true;
+    QTest::newRow("identifier-prefix") << QString("#include_something <vector>") << false << false;
+    QTest::newRow("suffix-digit") << QString("#include2 <vector>") << false << false;
+    QTest::newRow("next-suffix") << QString("#include_next2 <vector>") << false << false;
+    QTest::newRow("inside-comment") << QString("// #include <vector>") << false << false;
+    QTest::newRow("ordinary-code") << QString("include(vector);") << false << false;
+}
+
+void TestCppParser::test_include_directive_boundaries()
+{
+    QFETCH(QString, line);
+    QFETCH(bool, include);
+    QFETCH(bool, includeNext);
+    QCOMPARE(mParser->isIncludeLine(line), include);
+    QCOMPARE(mParser->isIncludeNextLine(line), includeNext);
+}
+
+void TestCppParser::test_reparse_replaces_obsolete_symbols()
+{
+    init_parser();
+    QStringList contents{"struct Holder { int first; };", "int before = 1;"};
+    mParser->setOnGetFileStream([&](const QString&, QStringList& buffer) { buffer = contents; return true; });
+    CppParser::parseFileBlocking(mParser, "incremental-edit.cpp", false, "");
+    QVERIFY(mParser->findStatement("before"));
+    QVERIFY(mParser->findStatement("Holder::first"));
+    contents = {"struct Holder { double second; };", "int after = 2;"};
+    mParser->invalidateFile("incremental-edit.cpp");
+    CppParser::parseFileBlocking(mParser, "incremental-edit.cpp", false, "");
+    QVERIFY(!mParser->findStatement("before"));
+    QVERIFY(!mParser->findStatement("Holder::first"));
+    QVERIFY(mParser->findStatement("after"));
+    QVERIFY(mParser->findStatement("Holder::second"));
+    QCOMPARE(mParser->findStatement("Holder::second")->type, QString("double"));
+    QVERIFY(!mParser->parsing());
+}
+
+void TestCppParser::test_split_expression_ignores_comments_data()
+{
+    QTest::addColumn<QString>("expression");
+    QTest::addColumn<QStringList>("tokens");
+    QTest::newRow("member") << QString("object /* .fake */ . value") << QStringList{"object", ".", "value"};
+    QTest::newRow("multiline") << QString("object // .fake\n -> value") << QStringList{"object", "->", "value"};
+    QTest::newRow("nested-template") << QString("vector<vector<int>>") << QStringList{"vector", "<", "vector", "<", "int", ">", ">"};
+    QTest::newRow("unicode") << QString::fromUtf8("caffè.値") << QStringList{QString::fromUtf8("caffè"), ".", QString::fromUtf8("値")};
+    QTest::newRow("unfinished-comment") << QString("object /* unfinished") << QStringList{"object"};
+    QTest::newRow("empty") << QString("") << QStringList{};
+}
+
+void TestCppParser::test_split_expression_ignores_comments()
+{
+    QFETCH(QString, expression);
+    QFETCH(QStringList, tokens);
+    QCOMPARE(CppParser::splitExpression(expression), tokens);
+}

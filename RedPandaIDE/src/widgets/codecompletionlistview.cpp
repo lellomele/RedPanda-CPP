@@ -46,16 +46,15 @@ void CodeCompletionListView::keyPressEvent(QKeyEvent *event)
         QListView::keyPressEvent(event);
         return;
     }
-    Q_ASSERT(mKeypressedCallback != nullptr);
-    if (mKeypressedCallback!=nullptr && !mKeypressedCallback(event)) {
+    if (!mKeypressedCallback || !mKeypressedCallback(event)) {
         QListView::keyPressEvent(event);
     }
 }
 
 void CodeCompletionListView::focusInEvent(QFocusEvent *)
 {
-    Q_ASSERT(mShowEditorCaretFunc != nullptr);
-    mShowEditorCaretFunc();
+    if (mShowEditorCaretFunc)
+        mShowEditorCaretFunc();
 }
 
 void CodeCompletionListView::mouseDoubleClickEvent(QMouseEvent */*event*/)

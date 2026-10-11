@@ -62,6 +62,8 @@ ctest --test-dir build --output-on-failure
 
 Consulta [BUILD.md](BUILD.md) per le procedure upstream e [Packaging Windows](docs/DISTRIBUZIONE_WINDOWS_FORK.md#ricompilazione) per installer e struttura portabile del fork.
 
+Consulta [Test e misure dell’editing](docs/TEST_IT.md) per le verifiche con profili isolati e i benchmark ripetibili.
+
 ## Licenza e copyright
 
 GNU GPL versione 3 o successiva: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Gli autori e contributori originali conservano i propri copyright; i componenti di terze parti mantengono le rispettive licenze.

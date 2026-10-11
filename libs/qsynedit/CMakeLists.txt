@@ -159,8 +159,14 @@ if (CMAKE_HOST_LINUX AND CMAKE_COMPILER_IS_GNUCXX)
     target_link_options(test-qsynedit PRIVATE "-fsanitize=undefined")
 endif()
 
-add_test(
-    NAME test-qsynedit
-    COMMAND test-qsynedit)
+foreach(suite IN ITEMS keystrokes charpos document-helpers document syntaxer cpp-editing emoji search-replace)
+    add_test(NAME test-qsynedit-${suite} COMMAND test-qsynedit --suite ${suite})
+    set_tests_properties(test-qsynedit-${suite} PROPERTIES TIMEOUT 120 LABELS "editing;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endforeach()
 
 add_dependencies(all-test-targets test-qsynedit)
+
+# Timing measurements are explicit runs, never fragile wall-clock CTest gates.
+add_executable(benchmark-qsynedit EXCLUDE_FROM_ALL test/benchmark_qsynedit.cpp)
+target_link_libraries(benchmark-qsynedit PRIVATE qsynedit Qt::Widgets Qt::Core Qt::Gui)
+target_include_directories(benchmark-qsynedit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

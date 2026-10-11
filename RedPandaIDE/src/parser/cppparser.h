@@ -772,6 +772,7 @@ private:
 
     PParseFileCommand mLastParseFileCommand;
 
+    friend class TestCppParser; // Regression coverage of private expression tokenization.
     friend class CppFileListParserThread;
     friend class CppFileParserThread;
 

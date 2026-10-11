@@ -34,6 +34,21 @@ private slots:
     void cleanup();
     void initTestCase();
     void cleanupTestCase();
+    void test_load_encoding_newline_matrix_data();
+    void test_load_encoding_newline_matrix();
+    void test_load_failure_preserves_document_data();
+    void test_load_failure_preserves_document();
+    void test_load_missing_file_preserves_document();
+    void test_save_encoding_newline_matrix_data();
+    void test_save_encoding_newline_matrix();
+    void test_save_failure_preserves_file_data();
+    void test_save_failure_preserves_file();
+    void test_save_lossy_encoding_preserves_file_data();
+    void test_save_lossy_encoding_preserves_file();
+    void test_save_unwritable_device();
+    void test_set_text_final_cr();
+    void test_loaded_file_round_trip_bytes();
+
     void test_load_from_file();
     void test_load_from_file2();
     void test_load_from_empty_file();

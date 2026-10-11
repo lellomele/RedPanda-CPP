@@ -497,8 +497,12 @@ public:
 
     PDocumentLine findLineBySeq(size_t lineSeq) const;
 
+    // Parse a candidate first. A failed load leaves this document and realEncoding unchanged.
     void loadFromFile(const QString& filename, const QByteArray& encoding, QByteArray& realEncoding);
     void replaceWith(Document &source);
+    // Serialization checks conversions and writes but does not commit the device.
+    // For atomic replacement, pass QSaveFile with direct-write fallback disabled
+    // and check commit() only after this method returns successfully.
     void saveToFile(QFileDevice& file, const QByteArray& encoding, QByteArray& realEncoding) const;
 
     QString glyph(int line, int glyphIdx) const;
@@ -645,11 +649,10 @@ private:
     QList<int> getGlyphStartCharList(int line, const QString &lineText);
     QList<int> getGlyphStartCharList(int line);
     QList<int> getGlyphStartPositionList(int line);
-    bool tryLoadFileByEncoding(QByteArray encodingName, QFile& file);
-    void loadUTF16BOMFile(QFile& file);
-    void loadUTF32BOMFile(QFile& file);
-    void saveUTF16File(QFileDevice& file, TextEncoder &encoder) const;
-    void saveUTF32File(QFileDevice& file, TextEncoder &encoder) const;
+    void addDecodedLines(const QString &text, bool &foundLineBreak);
+    bool tryLoadFileByEncoding(const QByteArray &encodingName, QFile &file,
+                               qint64 offset = 0, bool *allAscii = nullptr);
+    void loadUnicodeFile(QFile &file, const QByteArray &encodingName, int unitSize);
 private:
     DocumentLines mLines;
     QMap<size_t,PDocumentLine> mLineSeqIndice;

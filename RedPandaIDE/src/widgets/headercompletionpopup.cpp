@@ -205,38 +205,28 @@ void HeaderCompletionPopup::filterList(const QString &member)
 
 void HeaderCompletionPopup::getCompletionFor(const QString &phrase)
 {
-    int idx = phrase.lastIndexOf('\\');
-    if (idx<0) {
-        idx = phrase.lastIndexOf('/');
-    }
+    const int idx = qMax(phrase.lastIndexOf('\\'), phrase.lastIndexOf('/'));
     mFullCompletionList.clear();
-    if (idx < 0) { // dont have basedir
-        if (mSearchLocal) {
-            QFileInfo fileInfo(mCurrentFile);
-            addFilesInPath(fileInfo.absolutePath(), HeaderCompletionListItemType::LocalHeader);
-        };
-
-        for (const QString& path: mParser->includePaths()) {
-            addFilesInPath(path, HeaderCompletionListItemType::ProjectHeader);
-        }
-
-        for (const QString& path: mParser->projectIncludePaths()) {
-            addFilesInPath(path, HeaderCompletionListItemType::SystemHeader);
-        }
-    } else {
-        QString current = phrase.mid(0,idx);
-        if (mSearchLocal) {
-            QFileInfo fileInfo(mCurrentFile);
-            addFilesInSubDir(fileInfo.absolutePath(),current, HeaderCompletionListItemType::LocalHeader);
-        }
-        for (const QString& path: mParser->includePaths()) {
-            addFilesInSubDir(path,current, HeaderCompletionListItemType::ProjectHeader);
-        }
-
-        for (const QString& path: mParser->projectIncludePaths()) {
-            addFilesInSubDir(path,current, HeaderCompletionListItemType::SystemHeader);
-        }
-    }
+    mCompletionList.clear();
+    mModel->notifyUpdated();
+    const QString subDirectory = idx < 0 ? QString() : phrase.left(idx);
+    auto addPath = [&](const QString &path, HeaderCompletionListItemType type) {
+        if (idx < 0)
+            addFilesInPath(path, type);
+        else
+            addFilesInSubDir(path, subDirectory, type);
+    };
+    // Preserve the compiler's lookup precedence: quoted local headers, then
+    // project include directories, then system directories. Cancelled popups
+    // can legitimately no longer have a parser attached.
+    if (mSearchLocal)
+        addPath(QFileInfo(mCurrentFile).absolutePath(), HeaderCompletionListItemType::LocalHeader);
+    if (!mParser)
+        return;
+    for (const QString &path : mParser->projectIncludePaths())
+        addPath(path, HeaderCompletionListItemType::ProjectHeader);
+    for (const QString &path : mParser->includePaths())
+        addPath(path, HeaderCompletionListItemType::SystemHeader);
 }
 
 void HeaderCompletionPopup::addFilesInPath(const QString &path, HeaderCompletionListItemType type)
@@ -263,7 +253,7 @@ void HeaderCompletionPopup::addFile(const QDir& dir, const QFileInfo& fileInfo, 
     QString fileName = fileInfo.fileName();
     if (fileName.isEmpty())
         return;
-    if (fileName.startsWith('.'))
+    if (fileName.startsWith('.') || mFullCompletionList.contains(fileName))
         return;
     PHeaderCompletionListItem item = std::make_shared<HeaderCompletionListItem>();
     item->filename = fileName;

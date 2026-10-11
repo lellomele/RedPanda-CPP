@@ -1,4 +1,15 @@
 #include <QTest>
+#include <QApplication>
+#include <QTemporaryDir>
+#include <QFileSystemWatcher>
+#include <QMessageBox>
+#include <QSignalSpy>
+#include <QTimer>
+#include <QStringListModel>
+#include <stdexcept>
+#include "src/codesnippetsmanager.h"
+#include "src/widgets/codecompletionpopup.h"
+#include "src/widgets/headercompletionpopup.h"
 #include "src/settings/codecompletionsettings.h"
 #include "src/settings/dirsettings.h"
 #include "src/settings/editorsettings.h"
@@ -2415,4 +2426,551 @@ void TestEditorSymbolCompletion::test_input_after_cpp_comment()
     QTest::keyPress(mEditor.get(),'{');
     QCOMPARE(mEditor->content(),text2);
 
+}
+
+
+void TestEditorSymbolCompletion::test_read_only_symbol_completion_data()
+{
+    QTest::addColumn<int>("key");
+    for (int key : {int('('), int('['), int('{'), int('\''), int('"'), int('*'), int(Qt::Key_Delete), int(Qt::Key_Backspace)})
+        QTest::newRow(qPrintable(QString::number(key))) << key;
+}
+
+void TestEditorSymbolCompletion::test_read_only_symbol_completion()
+{
+    QFETCH(int, key);
+    init_editor();
+    const QStringList text{QString::fromUtf8("int caffè = (42);")};
+    mEditor->setContent(text);
+    mEditor->setCaretXY({14, 0});
+    mEditor->setReadOnly(true);
+    const CharPos caret = mEditor->caretXY();
+    QTest::keyPress(mEditor.get(), Qt::Key(key));
+    QCOMPARE(mEditor->content(), text);
+    QCOMPARE(mEditor->caretXY(), caret);
+    QVERIFY(!mEditor->modified());
+    QVERIFY(!mEditor->canUndo());
+}
+
+void TestEditorSymbolCompletion::test_snippet_read_only_preserves_selection()
+{
+    init_editor();
+    const QStringList text{QString::fromUtf8("// αβγ 😀"), "value"};
+    mEditor->setContent(text);
+    mEditor->setSelBeginEnd({0, 0}, {5, 1});
+    const QString selected = mEditor->selText();
+    const CharPos caret = mEditor->caretXY();
+    mEditor->setReadOnly(true);
+    bool macrosCalled = false;
+    mEditor->setGetMacroVarsFunc([&] { macrosCalled = true; return QMap<QString, QString>{}; });
+    mEditor->insertCodeSnippet("%REPL_BEGIN%changed%REPL_END%%INSERT%");
+    QCOMPARE(mEditor->content(), text);
+    QCOMPARE(mEditor->selText(), selected);
+    QCOMPARE(mEditor->caretXY(), caret);
+    QVERIFY(!macrosCalled);
+    QVERIFY(!mEditor->modified());
+    QVERIFY(!mEditor->canUndo());
+}
+
+void TestEditorSymbolCompletion::test_snippet_mixed_tab_stops_follow_source_order()
+{
+    init_editor();
+    mEditor->setContent(QStringList{""});
+    mEditor->insertCodeSnippet("func(%REPL_BEGIN%left%REPL_END%, %INSERT%, %REPL_BEGIN%right%REPL_END%);");
+    QCOMPARE(mEditor->content(), QStringList{"func(left, , right);"});
+    QCOMPARE(mEditor->selText(), QString("left"));
+    mEditor->setSelText("replacement");
+    QTest::keyPress(mEditor.get(), Qt::Key_Tab);
+    QVERIFY(!mEditor->selAvail());
+    QCOMPARE(mEditor->caretX(), int(QString("func(replacement, ").size()));
+    QTest::keyPress(mEditor.get(), 'x');
+    QTest::keyPress(mEditor.get(), Qt::Key_Tab);
+    QCOMPARE(mEditor->selText(), QString("right"));
+    mEditor->setSelText("ok");
+    QTest::keyPress(mEditor.get(), Qt::Key_Tab);
+    QVERIFY(!mEditor->selAvail());
+    QCOMPARE(mEditor->content(), QStringList{"func(replacement, x, ok);"});
+}
+
+void TestEditorSymbolCompletion::test_snippet_multiline_unicode_tab_stops()
+{
+    init_editor();
+    mEditor->setContent(QStringList{""});
+    mEditor->insertCodeSnippet(QString::fromUtf8("auto %REPL_BEGIN%caffè%REPL_END% = 0;\n  %INSERT%// 😀\n  %REPL_BEGIN%終わり%REPL_END%"));
+    QCOMPARE(mEditor->selText(), QString::fromUtf8("caffè"));
+    QTest::keyPress(mEditor.get(), Qt::Key_Tab);
+    QCOMPARE(mEditor->caretY(), 1);
+    QVERIFY(!mEditor->selAvail());
+    QCOMPARE(mEditor->caretX(), mEditor->lineText().indexOf("//"));
+    QTest::keyPress(mEditor.get(), Qt::Key_Tab);
+    QCOMPARE(mEditor->caretY(), 2);
+    QCOMPARE(mEditor->selText(), QString::fromUtf8("終わり"));
+    mEditor->undo();
+    QCOMPARE(mEditor->content(), QStringList{""});
+    QVERIFY(!mEditor->canUndo());
+    mEditor->redo();
+    QVERIFY(mEditor->content().join('\n').contains(QString::fromUtf8("caffè")));
+}
+
+void TestEditorSymbolCompletion::test_snippet_failed_macro_preserves_document()
+{
+    init_editor();
+    const QStringList text{"keep this text"};
+    mEditor->setContent(text);
+    mEditor->setSelBeginEnd({5, 0}, {9, 0});
+    const QString selected = mEditor->selText();
+    const CharPos caret = mEditor->caretXY();
+    mEditor->setGetMacroVarsFunc([]() -> QMap<QString, QString> { throw std::runtime_error("macro provider failed"); });
+    QVERIFY_EXCEPTION_THROWN(mEditor->insertCodeSnippet("<FILENAME>"), std::runtime_error);
+    QCOMPARE(mEditor->content(), text);
+    QCOMPARE(mEditor->selText(), selected);
+    QCOMPARE(mEditor->caretXY(), caret);
+    QVERIFY(!mEditor->modified());
+    QVERIFY(!mEditor->canUndo());
+    mEditor->setGetMacroVarsFunc(nullptr);
+    QTest::keyPress(mEditor.get(), 'x');
+    QCOMPARE(mEditor->content(), QStringList{"keep x text"});
+    mEditor->undo();
+    QCOMPARE(mEditor->content(), text);
+}
+
+void TestEditorSymbolCompletion::test_snippet_replacement_single_undo()
+{
+    init_editor();
+    const QStringList text{QString::fromUtf8("// prima 😀"), "old value", "// after"};
+    mEditor->setContent(text);
+    mEditor->setSelBeginEnd({0, 1}, {9, 1});
+    mEditor->insertCodeSnippet(QString::fromUtf8("const char* message = \"caffè 😀\";\n%INSERT%"));
+    const QStringList expanded = mEditor->content();
+    QVERIFY(expanded.join('\n').contains(QString::fromUtf8("caffè 😀")));
+    QCOMPARE(expanded.first(), text.first());
+    QCOMPARE(expanded.last(), text.last());
+    mEditor->undo();
+    QCOMPARE(mEditor->content(), text);
+    QVERIFY(!mEditor->canUndo());
+    QVERIFY(!mEditor->modified());
+    mEditor->redo();
+    QCOMPARE(mEditor->content(), expanded);
+}
+
+void TestEditorSymbolCompletion::test_snippet_prefix_boundaries_and_stale_requests()
+{
+    init_editor();
+    mEditor->setFileType(FileType::CppSource, false);
+    CodeSnippetsManager manager(mDirSettings.get());
+    auto snippet = std::make_shared<CodeSnippet>();
+    snippet->prefix = "std::";
+    snippet->code = "std::vector<int> values;";
+    snippet->language = "cpp";
+    manager.setSnippets({snippet});
+    mEditor->setCodeSnippetsManager(&manager);
+    mEditor->setContent(QStringList{"identifierstd::"});
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QVERIFY(mEditor->snippetPrefix() != "std::");
+    QVERIFY(!mEditor->expandCodeSnippet(snippet, "std::"));
+    QCOMPARE(mEditor->content(), QStringList{"identifierstd::"});
+    mEditor->setContent(QStringList{"std::"});
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QCOMPARE(mEditor->snippetPrefix(), QString("std::"));
+    QVERIFY(!mEditor->expandCodeSnippet(snippet, "stale"));
+    snippet->enabled = false;
+    QVERIFY(!mEditor->expandCodeSnippet(snippet, "std::"));
+    snippet->enabled = true;
+    snippet->language = "asm";
+    QVERIFY(!mEditor->expandCodeSnippet(snippet, "std::"));
+    snippet->language = "cpp";
+    QVERIFY(mEditor->expandCodeSnippet(snippet, "std::"));
+    QCOMPARE(mEditor->content(), QStringList{snippet->code});
+    mEditor->undo();
+    QCOMPARE(mEditor->content(), QStringList{"std::"});
+    QVERIFY(!mEditor->canUndo());
+    mEditor->setCodeSnippetsManager(nullptr);
+}
+
+void TestEditorSymbolCompletion::test_snippet_partial_prefix_requires_selected_candidate()
+{
+    init_editor();
+    mEditor->setFileType(FileType::CppSource, false);
+    auto snippet = std::make_shared<CodeSnippet>();
+    snippet->prefix = "class";
+    snippet->code = "class Example {};";
+    snippet->language = "cpp";
+    mEditor->setContent(QStringList{"cl"});
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QVERIFY(mEditor->expandCodeSnippet(snippet, "cl"));
+    QCOMPARE(mEditor->content(), QStringList{snippet->code});
+    mEditor->undo();
+    QCOMPARE(mEditor->content(), QStringList{"cl"});
+    mEditor->setContent(QStringList{QString::fromUtf8("caffè")});
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QCOMPARE(mEditor->snippetPrefix(), QString::fromUtf8("caffè"));
+    QVERIFY(!mEditor->expandCodeSnippet(snippet, QString::fromUtf8("caffè")));
+    QCOMPARE(mEditor->content(), QStringList{QString::fromUtf8("caffè")});
+}
+
+void TestEditorSymbolCompletion::test_completion_popup_without_parser_data()
+{
+    QTest::addColumn<int>("type");
+    for (auto type : {CodeCompletionType::Normal, CodeCompletionType::Types, CodeCompletionType::FunctionWithoutDefinition,
+                      CodeCompletionType::Namespaces, CodeCompletionType::Macros, CodeCompletionType::LiteralOperators, CodeCompletionType::Labels})
+        QTest::newRow(qPrintable(QString::number(int(type)))) << int(type);
+}
+
+void TestEditorSymbolCompletion::test_completion_popup_without_parser()
+{
+    QFETCH(int, type);
+    CodeCompletionPopup popup(mColorManager.get(), nullptr);
+    popup.setShowEditorCaretFunc([] {});
+    popup.prepareSearch({}, {}, {}, {"int"}, "unsaved.cpp", 0, CodeCompletionType(type), {});
+    QVERIFY(!popup.selectedStatement());
+    QVERIFY(!popup.search("int", false, mEditorSettings->colorScheme()));
+    QVERIFY(!popup.isVisible());
+}
+
+void TestEditorSymbolCompletion::test_completion_popup_keywords_after_cancel()
+{
+    CodeCompletionPopup popup(mColorManager.get(), nullptr);
+    popup.setShowEditorCaretFunc([] {});
+    popup.prepareSearch({}, {}, {}, {}, "unsaved.cpp", 0, CodeCompletionType::KeywordsOnly, {"keywordAlpha", "keywordBeta"});
+    QVERIFY(popup.search("keywordAlpha", true, mEditorSettings->colorScheme()));
+    QVERIFY(popup.selectedStatement());
+    QCOMPARE(popup.selectedStatement()->command, QString("keywordAlpha"));
+    auto view = popup.findChild<CodeCompletionListView*>();
+    QVERIFY(view);
+    auto model = qobject_cast<CodeCompletionListModel*>(view->model());
+    QVERIFY(model);
+    QVERIFY(model->statementIcon(model->index(0, 0), 16).isNull());
+    popup.hide();
+    QVERIFY(!popup.selectedStatement());
+    popup.prepareSearch({}, {}, {}, {}, "unsaved.cpp", 0, CodeCompletionType::KeywordsOnly, {"keywordBeta"});
+    QVERIFY(!popup.search("keywordAlpha", false, mEditorSettings->colorScheme()));
+    QVERIFY(!popup.selectedStatement());
+    QVERIFY(popup.search("keywordBeta", true, mEditorSettings->colorScheme()));
+    QCOMPARE(popup.selectedStatement()->command, QString("keywordBeta"));
+    popup.hide();
+}
+
+void TestEditorSymbolCompletion::test_completion_list_optional_callbacks()
+{
+    CodeCompletionListView view;
+    QStringListModel model({"one", "two"});
+    view.setModel(&model);
+    view.show();
+    QFocusEvent focus(QEvent::FocusIn);
+    QApplication::sendEvent(&view, &focus);
+    QTest::keyPress(&view, Qt::Key_A);
+    view.setCurrentIndex(model.index(0));
+    QTest::keyPress(&view, Qt::Key_Down);
+    QCOMPARE(view.currentIndex().row(), 1);
+    view.hide();
+}
+
+void TestEditorSymbolCompletion::test_header_completion_without_parser()
+{
+    HeaderCompletionPopup popup(mColorManager.get());
+    popup.setShowEditorCaretFunc([] {});
+    popup.prepareSearch("absent/", "unsaved.cpp");
+    QVERIFY(!popup.search("absent/no-match", false, mEditorSettings->colorScheme()));
+    QVERIFY(popup.selectedFilename(false).isEmpty());
+}
+
+void TestEditorSymbolCompletion::test_header_completion_preserves_include_precedence()
+{
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir dir(temp.path());
+    for (const QString &name : {QString("local"), QString("project"), QString("system")}) {
+        QVERIFY(dir.mkdir(name));
+        QFile file(dir.filePath(name + "/common.h"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write("// header"), qint64(9));
+    }
+    auto parser = std::make_shared<CppParser>();
+    parser->addProjectIncludePath(dir.filePath("project"));
+    parser->addIncludePath(dir.filePath("system"));
+    HeaderCompletionPopup popup(mColorManager.get());
+    popup.setShowEditorCaretFunc([] {});
+    popup.setSuggestionColor(Qt::red, Qt::green, Qt::blue, Qt::yellow);
+    popup.setSearchLocal(true);
+    popup.setParser(parser);
+    popup.prepareSearch("common", dir.filePath("local/test.cpp"));
+    QVERIFY(popup.search("common", true, mEditorSettings->colorScheme()));
+    const auto view = popup.findChild<CodeCompletionListView*>();
+    QVERIFY(view);
+    QCOMPARE(view->model()->data(view->model()->index(0, 0), Qt::ForegroundRole).value<QColor>(), QColor(Qt::red));
+    popup.hide();
+    popup.setParser(parser);
+    popup.setSearchLocal(false);
+    popup.prepareSearch("common", dir.filePath("local/test.cpp"));
+    QVERIFY(popup.search("common", true, mEditorSettings->colorScheme()));
+    QCOMPARE(view->model()->data(view->model()->index(0, 0), Qt::ForegroundRole).value<QColor>(), QColor(Qt::green));
+    popup.hide();
+}
+
+
+void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity_data()
+{
+    QTest::addColumn<bool>("newDocument");
+    QTest::addColumn<bool>("directoryTarget");
+    QTest::newRow("existing-directory") << false << true;
+    QTest::newRow("existing-missing-parent") << false << false;
+    QTest::newRow("new-directory") << true << true;
+    QTest::newRow("new-missing-parent") << true << false;
+}
+
+void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity()
+{
+    QFETCH(bool, newDocument);
+    QFETCH(bool, directoryTarget);
+    init_editor();
+    mEditorSettings->setAutoFormatWhenSaved(false);
+    mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
+    mEditorSettings->setSyntaxCheckWhenSave(false);
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("original.cpp");
+    const QByteArray originalBytes("int original = 1;");
+    if (!newDocument) {
+        QFile file(original);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(originalBytes), qint64(originalBytes.size()));
+        file.close();
+    }
+    mEditor->setFilename(original);
+    mEditor->setFileType(FileType::CppSource, false);
+    if (!newDocument)
+        mEditor->loadFile({}, false);
+    else
+        mEditor->setContent(QStringList{"int original = 1;"});
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QTest::keyPress(mEditor.get(), 'x');
+    const QStringList edited = mEditor->content();
+    QVERIFY(mEditor->modified());
+    QVERIFY(mEditor->canUndo());
+    QFileSystemWatcher watcher;
+    if (!newDocument)
+        QVERIFY(watcher.addPath(original));
+    mEditor->setFileSystemWatcher(&watcher);
+    QSignalSpy renamed(mEditor.get(), &Editor::fileSaveAsed);
+    QSignalSpy saved(mEditor.get(), &Editor::fileSaved);
+    QSignalSpy failed(mEditor.get(), &Editor::fileSaveError);
+    QTimer closeErrors;
+    connect(&closeErrors, &QTimer::timeout, mEditor.get(), [] {
+        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            box->accept();
+    });
+    closeErrors.start(10);
+    const QString target = directoryTarget ? temp.path() : temp.filePath("missing/target.c");
+    QVERIFY(!mEditor->saveAs(target, false));
+    QCOMPARE(mEditor->filename(), original);
+    QCOMPARE(mEditor->fileType(), FileType::CppSource);
+    QCOMPARE(mEditor->isNew(), newDocument);
+    QCOMPARE(mEditor->content(), edited);
+    QVERIFY(mEditor->modified());
+    QVERIFY(mEditor->canUndo());
+    QCOMPARE(renamed.count(), 0);
+    QCOMPARE(saved.count(), 0);
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(watcher.files().contains(original), !newDocument);
+    if (!newDocument) {
+        QFile file(original);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), originalBytes);
+    }
+    const QString retry = temp.filePath("retry.c");
+    bool coherentSavedState = false;
+    connect(mEditor.get(), &Editor::fileSaved, mEditor.get(), [&](Editor*, const QString &filename) {
+        coherentSavedState = filename == retry && mEditor->filename() == retry
+                && mEditor->fileType() == FileType::CSource && !mEditor->isNew()
+                && !mEditor->modified();
+    });
+    QVERIFY(mEditor->saveAs(retry, false));
+    QCOMPARE(renamed.count(), 1);
+    QCOMPARE(saved.count(), 1);
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(coherentSavedState);
+    QVERIFY(watcher.files().contains(retry));
+    QVERIFY(!watcher.files().contains(original));
+    QFile file(retry);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(file.readAll().contains("int original = 1;x"));
+    mEditor->setFileSystemWatcher(nullptr);
+}
+
+void TestEditorSymbolCompletion::test_failed_encoding_conversion_preserves_document()
+{
+    init_editor();
+    mEditorSettings->setAutoFormatWhenSaved(false);
+    mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
+    mEditorSettings->setSyntaxCheckWhenSave(false);
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("encoding.cpp");
+    const QByteArray bytes = QString::fromUtf8("// caffè 😀\nint value = 1;").toUtf8();
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(bytes), qint64(bytes.size()));
+    file.close();
+    mEditor->setFilename(original);
+    mEditor->setFileType(FileType::CppSource, false);
+    mEditor->loadFile({}, false);
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QTest::keyPress(mEditor.get(), 'x');
+    const QStringList text = mEditor->content();
+    const QByteArray encoding = mEditor->editorEncoding();
+    const QByteArray fileEncoding = mEditor->fileEncoding();
+    QSignalSpy changed(mEditor.get(), &Editor::editorEncodingChanged);
+    QSignalSpy failed(mEditor.get(), &Editor::fileSaveError);
+    QTimer closeErrors;
+    connect(&closeErrors, &QTimer::timeout, mEditor.get(), [] {
+        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            box->accept();
+    });
+    closeErrors.start(10);
+    mEditor->convertToEncoding("ISO-8859-1");
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(mEditor->filename(), original);
+    QCOMPARE(mEditor->editorEncoding(), encoding);
+    QCOMPARE(mEditor->fileEncoding(), fileEncoding);
+    QCOMPARE(mEditor->content(), text);
+    QVERIFY(mEditor->modified());
+    QVERIFY(mEditor->canUndo());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), bytes);
+    file.close();
+    mEditor->undo();
+    QVERIFY(!mEditor->content().last().endsWith('x'));
+    mEditor->redo();
+    QCOMPARE(mEditor->content(), text);
+    // Retry using the original codec after the recoverable conversion failure.
+    QVERIFY(mEditor->save(false, false));
+    QVERIFY(!mEditor->modified());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QVERIFY(file.readAll().contains("int value = 1;x"));
+}
+
+
+void TestEditorSymbolCompletion::test_encoding_reload_cancel_preserves_edits()
+{
+    init_editor();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("reload.cpp");
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    const QByteArray bytes = QString::fromUtf8("// caffè 😀").toUtf8();
+    QCOMPARE(file.write(bytes), qint64(bytes.size()));
+    file.close();
+    mEditor->setFilename(original);
+    mEditor->setFileType(FileType::CppSource, false);
+    mEditor->loadFile({}, false);
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QTest::keyPress(mEditor.get(), 'x');
+    const QStringList text = mEditor->content();
+    const QByteArray encoding = mEditor->editorEncoding();
+    const QByteArray fileEncoding = mEditor->fileEncoding();
+    const CharPos caret = mEditor->caretXY();
+    QSignalSpy changed(mEditor.get(), &Editor::editorEncodingChanged);
+    QTimer cancelReload;
+    connect(&cancelReload, &QTimer::timeout, mEditor.get(), [] {
+        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            box->done(QMessageBox::No);
+    });
+    cancelReload.start(10);
+    mEditor->setEditorEncoding("ISO-8859-1");
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(mEditor->editorEncoding(), encoding);
+    QCOMPARE(mEditor->fileEncoding(), fileEncoding);
+    QCOMPARE(mEditor->content(), text);
+    QCOMPARE(mEditor->caretXY(), caret);
+    QVERIFY(mEditor->modified());
+    QVERIFY(mEditor->canUndo());
+    mEditor->undo();
+    QVERIFY(!mEditor->modified());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), bytes);
+}
+
+void TestEditorSymbolCompletion::test_encoding_reload_failure_preserves_state()
+{
+    init_editor();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("reload.cpp");
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("int value = 1;"), qint64(14));
+    file.close();
+    mEditor->setFilename(original);
+    mEditor->setFileType(FileType::CppSource, false);
+    mEditor->loadFile({}, false);
+    const QStringList text = mEditor->content();
+    const QByteArray encoding = mEditor->editorEncoding();
+    const QByteArray fileEncoding = mEditor->fileEncoding();
+    mEditor->setFilename(temp.filePath("missing.cpp"));
+    QSignalSpy changed(mEditor.get(), &Editor::editorEncodingChanged);
+    QTimer closeErrors;
+    connect(&closeErrors, &QTimer::timeout, mEditor.get(), [] {
+        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            box->accept();
+    });
+    closeErrors.start(10);
+    mEditor->setEditorEncoding("ISO-8859-1");
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(mEditor->editorEncoding(), encoding);
+    QCOMPARE(mEditor->fileEncoding(), fileEncoding);
+    QCOMPARE(mEditor->content(), text);
+    QVERIFY(!mEditor->modified());
+    QVERIFY(!mEditor->isNew());
+    mEditor->setFilename(original);
+    mEditor->setEditorEncoding(ENCODING_UTF8_BOM);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(mEditor->content(), text);
+    QVERIFY(!mEditor->modified());
+}
+
+
+void TestEditorSymbolCompletion::test_save_as_encoding_observer_sees_committed_identity()
+{
+    init_editor();
+    mEditorSettings->setAutoFormatWhenSaved(false);
+    mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
+    mEditorSettings->setSyntaxCheckWhenSave(false);
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("identity.cpp");
+    QFile source(original);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QCOMPARE(source.write("int original = 1;"), qint64(17));
+    source.close();
+    mEditor->setFilename(original);
+    mEditor->setFileType(FileType::CppSource, false);
+    // New documents choose an output codec without reloading an existing file.
+    mEditor->setContent(QStringList{"int original = 1;"});
+    QVERIFY(mEditor->isNew());
+    mEditor->setEditorEncoding(ENCODING_UTF8_BOM);
+    mEditor->setCaretXY(mEditor->fileEnd());
+    QTest::keyPress(mEditor.get(), 'x');
+    QFileSystemWatcher watcher;
+    QVERIFY(watcher.addPath(original));
+    mEditor->setFileSystemWatcher(&watcher);
+    const QString destination = temp.filePath("identity.c");
+    QSignalSpy changed(mEditor.get(), &Editor::fileEncodingChanged);
+    bool coherent = false;
+    connect(mEditor.get(), &Editor::fileEncodingChanged, mEditor.get(), [&](Editor*) {
+        coherent = mEditor->filename() == destination && mEditor->fileType() == FileType::CSource
+                && !mEditor->isNew() && !mEditor->modified()
+                && watcher.files().contains(destination) && !watcher.files().contains(original);
+        QFile committed(destination);
+        coherent = coherent && committed.open(QIODevice::ReadOnly)
+                && committed.read(3) == QByteArray::fromHex("efbbbf");
+    });
+    QVERIFY(mEditor->saveAs(destination, false));
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(coherent);
+    QCOMPARE(mEditor->fileEncoding(), QByteArray(ENCODING_UTF8_BOM));
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    QCOMPARE(source.readAll(), QByteArray("int original = 1;"));
+    mEditor->setFileSystemWatcher(nullptr);
 }

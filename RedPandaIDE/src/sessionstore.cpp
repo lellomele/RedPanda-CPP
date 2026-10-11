@@ -6,8 +6,16 @@
 #include <QJsonObject>
 #include <QDateTime>
 #include <QCoreApplication>
+#include <limits>
 namespace SessionStore {
 static QString message(const char *s) { return QCoreApplication::translate("SessionStore", s); }
+static bool validCoordinate(const QJsonObject &object, const char *name) {
+    if (!object.contains(name)) return true; // Legacy snapshots may omit caret metadata.
+    const auto value = object.value(name);
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    return number >= std::numeric_limits<int>::min() && number <= std::numeric_limits<int>::max() && number == value.toInt();
+}
 bool write(const QString &path, const QList<RecoveryDocument> &documents, QString &error) {
     if (documents.size() > 256) { error = message("Too many documents for one recovery snapshot (maximum 256)."); return false; }
     QJsonArray entries;
@@ -37,7 +45,7 @@ bool read(const QString &path, QList<RecoveryDocument> &documents, QString &erro
     for (const auto &value : entries) {
         if (!value.isObject()) { error = message("Invalid recovery document."); return false; }
         auto o = value.toObject();
-        if (!o.value("filename").isString() || !o.value("text").isString() || o.value("text").toString().size() > 32 * 1024 * 1024 || o.value("filename").toString().size() > 4096) {
+        if (!validCoordinate(o, "line") || !validCoordinate(o, "column") || !o.value("filename").isString() || !o.value("text").isString() || o.value("text").toString().size() > 32 * 1024 * 1024 || o.value("filename").toString().size() > 4096) {
             error = message("Invalid recovery document."); return false;
         }
         candidate.append({o.value("filename").toString(), o.value("text").toString(), qMax(0, o.value("line").toInt()), qMax(0, o.value("column").toInt())});

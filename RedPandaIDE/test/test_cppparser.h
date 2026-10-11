@@ -16,6 +16,13 @@ private slots:
     void test_parse_vars();
     void test_struct();
     void test_structured_bindings();
+
+    void test_include_directive_boundaries_data();
+    void test_include_directive_boundaries();
+    void test_reparse_replaces_obsolete_symbols();
+    void test_split_expression_ignores_comments_data();
+    void test_split_expression_ignores_comments();
+
 protected:
     std::shared_ptr<CppParser> mParser;
 };

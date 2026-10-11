@@ -89,3 +89,17 @@ Native crashes, memory corruption, unavailable storage and power loss may requir
 The exercised configuration is Windows x64, GCC 16.1.0, Qt 6.11.2 and CMake/Ninja. Verification covers document failure paths, rejected imports, preference cancellation, recovery, cleanup, language/identity, rendered colours and diagnostic consistency. The GCC corpus contains 164 real diagnostics from 142 small C/C++ programs, in addition to the catalog examples.
 
 Installed and portable layouts were exercised in English and Italian without SDK Qt or compiler directories in the launch PATH; installer extraction and selective uninstallation were checked in isolated folders. Conditional Qt 5.15 code paths and Linux/macOS resources remain, but this fork has not been fully validated on those combinations. This is a beta-derived fork, not a claim of a new upstream stable release.
+
+## Editing and persistence stabilization
+
+Opening validates codecs, Unicode units and UTF-32 scalars before replacing a document. Failed loads retain the previous text, line identities, encoding and newline settings; incomplete editor instances are destroyed. Saving rejects conversions that would silently lose characters. BOM, CR/LF/CRLF and final-newline presence are retained; generic UTF-16/32 BOM formats write little-endian, with explicit BE codecs available.
+
+Save As changes the name, type, watcher and notifications only after a successful atomic commit. Cancelled encoding reloads and failed conversions retain codec, text and undo history. Automatic formatting remains an undoable edit if saving fails. Closed-file symbol renaming now applies its computed contents and saves atomically; project layouts use checked atomic commits too.
+
+Search replacement validates every selected result in a file before editing, handles zero-based positions and actual regex lengths/captures, and groups open-buffer changes into one undo operation. Closed-file writes are atomic. Files commit independently; a later failure does not undo earlier files. Read-only buffers are protected. Search-history and tree models validate indexes, preserve selection and balance resets during reentrant view updates.
+
+Snippet expansion preserves read-only state, source order of cursor/replacement stops and the previous buffer when macro preparation fails. Replacement stops must occupy a single line and cursor stops must remain outside them; unsupported layouts are rejected. Completion popups tolerate missing/cancelled parsers and optional callbacks. Header suggestions keep local, project and system precedence. The tokenizer handles unfinished literals and trailing escapes safely during typing.
+
+QSynEdit rescans folding only when block boundaries or structure change, preserving collapsed blocks and undo/redo. Search/replace uses original regex match context, with multi-line coordinate updates and checked scopes. The diagnostic handler supports reconfiguration and shutdown without losing its predecessor; recovery rejects malformed caret metadata without replacing existing documents.
+
+A [multi-level testing guide](TESTING.md) documents unit/component suites, failure injection, deterministic malformed inputs, bilingual application checks, actual GCC output, distribution checks and editing/file-I/O measurements. Performance measurements describe their workloads and scope; they do not establish a universal speedup for the entire IDE. xmake includes the contrast service and RPM manifests include all supplied raster icons.

@@ -39,6 +39,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSaveFile>
 #include "customfileiconprovider.h"
 #include <QMimeData>
 #include "settings.h"
@@ -685,12 +686,13 @@ void Project::saveLayout()
     }
 
     QString jsonFilename = changeFileExt(filename(), "layout");
-    QFile file(jsonFilename);
-    if (file.open(QFile::WriteOnly|QFile::Truncate)) {
-        QJsonDocument doc(jsonLayouts);
-        file.write(doc.toJson(QJsonDocument::Indented));
-        file.close();
-    }
+    QSaveFile file(jsonFilename);
+    file.setDirectWriteFallback(false);
+    const QByteArray data = QJsonDocument(jsonLayouts).toJson(QJsonDocument::Indented);
+    if (!file.open(QIODevice::WriteOnly))
+        throw FileError(tr("Cannot save '%1': %2").arg(jsonFilename, file.errorString()));
+    if (file.write(data) != data.size() || !file.commit())
+        throw FileError(tr("Cannot save '%1': %2").arg(jsonFilename, file.errorString()));
 }
 
 void Project::renameUnit(PProjectUnit& unit, const QString &newFileName)

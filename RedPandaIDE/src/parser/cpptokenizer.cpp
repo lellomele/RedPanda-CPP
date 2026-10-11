@@ -104,6 +104,7 @@ void CppTokenizer::addToken(const QString &sText, int iLine, TokenType tokenType
     PToken token = std::make_shared<Token>();
     token->text = sText;
     token->line = iLine;
+    token->matchIndex = -1;
 //#ifdef QT_DEBUG
 //    token->matchIndex = 1000000000;
 //#endif
@@ -635,8 +636,8 @@ void CppTokenizer::skipDoubleQuotes()
 {
     mCurrent++;
     while (!(*mCurrent=='"' || *mCurrent == 0 || *mCurrent == '\r' || *mCurrent == '\n')) {
-        if (*mCurrent == '\\')
-            mCurrent+=2; // skip escaped char
+        if (*mCurrent == '\\' && !mCurrent[1].isNull())
+            mCurrent += 2; // skip a complete escape, never pass the terminator
         else
             mCurrent++;
     }
@@ -800,8 +801,8 @@ void CppTokenizer::skipSingleQuote()
 {
     mCurrent++;
     while (!(*mCurrent=='\'' || *mCurrent == 0 || *mCurrent == '\r' || *mCurrent == '\n')) {
-        if (*mCurrent == '\\')
-            mCurrent+=2; // skip escaped char
+        if (*mCurrent == '\\' && !mCurrent[1].isNull())
+            mCurrent += 2; // skip a complete escape, never pass the terminator
         else
             mCurrent++;
     }

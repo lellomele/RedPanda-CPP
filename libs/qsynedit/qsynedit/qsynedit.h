@@ -727,6 +727,7 @@ private:
     CodeFoldingOptions mCodeFolding;
     int mEditingCount;
     bool mUseCodeFolding;
+    bool mCodeBlocksDirty = true;
     bool  mAlwaysShowCaret;
     CharPos mSelectionBegin;
     CharPos mSelectionEnd;

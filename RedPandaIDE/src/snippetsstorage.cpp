@@ -35,10 +35,19 @@ bool validate(const QList<PCodeSnippet> &snippets, QString &error) {
             prefixes.insert(key);
         }
         static const QRegularExpression replacements("%REPL_BEGIN%|%REPL_END%");
-        auto tokens = replacements.globalMatch(s->code); int depth = 0;
+        auto tokens = replacements.globalMatch(s->code); int depth = 0; int replacementStart = 0;
         while (tokens.hasNext()) {
-            depth += tokens.next().captured() == "%REPL_BEGIN%" ? 1 : -1;
+            const auto match = tokens.next();
+            const bool opening = match.captured() == "%REPL_BEGIN%";
+            depth += opening ? 1 : -1;
             if (depth < 0 || depth > 1) { error = snippetError("Invalid replacement placeholders in snippet: %1").arg(s->caption); return false; }
+            if (opening) replacementStart = match.capturedEnd();
+            else {
+                const QString value = s->code.mid(replacementStart, match.capturedStart() - replacementStart);
+                if (value.contains('\n') || value.contains('\r') || value.contains("%INSERT%")) {
+                    error = snippetError("Invalid replacement placeholders in snippet: %1").arg(s->caption); return false;
+                }
+            }
         }
         if (depth != 0) { error = snippetError("Invalid replacement placeholders in snippet: %1").arg(s->caption); return false; }
     }

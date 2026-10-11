@@ -42,6 +42,7 @@ make DESTDIR="%{buildroot}" install
 /usr/share/doc/RedPandaCPP/*
 /usr/share/applications/RedPandaIDE.desktop
 /usr/share/icons/hicolor/scalable/apps/redpandaide.svg
+/usr/share/icons/hicolor/*x*/apps/redpandaide.png
 /usr/share/mime/packages/redpandaide.xml
 
 %changelog

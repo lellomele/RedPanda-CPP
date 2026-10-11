@@ -1,4 +1,5 @@
 #include <QTest>
+#include <QSignalSpy>
 #include <QCoreApplication>
 
 #include "test_qsynedit_cpp.h"
@@ -7,6 +8,7 @@
 #include "qsynedit/document.h"
 #include "qsynedit/syntaxer/cpp.h"
 #include "qsynedit/formatter/cppformatter.h"
+#include "qsynedit/syntaxer/textfile.h"
 
 namespace QSynedit {
 
@@ -11113,5 +11115,133 @@ void TestQSyneditCpp::test_auto_indent_for_if_else_3()
     QCOMPARE(mEdit->content(),text1);
 }
 
+
+void TestQSyneditCpp::test_local_edits_do_not_rescan_unchanged_folds()
+{
+    const QStringList original{"void method() {", "    int value = 1;", "}", "int tail = 0;"};
+    mEdit->setContent(original);
+    QVERIFY(mEdit->hasCodeBlock(0, 2));
+    QVERIFY(mEdit->collapse(0, 2));
+    QSignalSpy rescans(mEdit.get(), &QSynEdit::foldsRescaned);
+    mEdit->setCaretXY(CharPos{4, 3});
+    mEdit->processCommand(EditCommand::Input, QString("x"));
+    QCOMPARE(rescans.count(), 0);
+    QVERIFY(mEdit->isCollapsed(0, 2));
+    QCOMPARE(mEdit->lineText(3), QString("int xtail = 0;"));
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QCOMPARE(rescans.count(), 0);
+    QVERIFY(mEdit->isCollapsed(0, 2));
+    mEdit->redo();
+    QCOMPARE(rescans.count(), 0);
+    QVERIFY(mEdit->isCollapsed(0, 2));
+    mEdit->undo();
 }
 
+void TestQSyneditCpp::test_fold_boundaries_undo_redo()
+{
+    const QStringList original{"void method() {", "    int value = 1;", "    int other = 2;", "}", "int tail = 0;"};
+    mEdit->setContent(original);
+    QSignalSpy rescans(mEdit.get(), &QSynEdit::foldsRescaned);
+    mEdit->replaceLine(1, "    {");
+    QVERIFY(mEdit->hasCodeBlock(1, 3));
+    QVERIFY(!mEdit->hasCodeBlock(0, 3));
+    QCOMPARE(rescans.count(), 1);
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(mEdit->hasCodeBlock(0, 3));
+    QCOMPARE(rescans.count(), 2);
+    mEdit->redo();
+    QVERIFY(mEdit->hasCodeBlock(1, 3));
+    QCOMPARE(rescans.count(), 3);
+    mEdit->undo();
+}
+
+void TestQSyneditCpp::test_fold_structure_changes_with_same_block_count()
+{
+    const QStringList original{"void first() {", "}", "void second() {", "}", "int tail = 0;"};
+    mEdit->setContent(original);
+    QCOMPARE(mEdit->codeBlockCount(), 2);
+    QVERIFY(mEdit->hasCodeBlock(0, 1));
+    QVERIFY(mEdit->hasCodeBlock(2, 3));
+    QSignalSpy rescans(mEdit.get(), &QSynEdit::foldsRescaned);
+    mEdit->beginEditing();
+    mEdit->replaceLine(1, "void nested() {");
+    mEdit->replaceLine(2, "}");
+    mEdit->endEditing();
+    QCOMPARE(mEdit->codeBlockCount(), 2);
+    QVERIFY(mEdit->hasCodeBlock(0, 3));
+    QVERIFY(mEdit->hasCodeBlock(1, 2));
+    QCOMPARE(rescans.count(), 1);
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(mEdit->hasCodeBlock(0, 1));
+    QVERIFY(mEdit->hasCodeBlock(2, 3));
+    mEdit->redo();
+    QVERIFY(mEdit->hasCodeBlock(0, 3));
+    QVERIFY(mEdit->hasCodeBlock(1, 2));
+    mEdit->undo();
+}
+
+void TestQSyneditCpp::test_folding_reenabled_after_hidden_edits()
+{
+    const QStringList original{"void method() {", "    int value = 1;", "}", "int tail = 0;"};
+    mEdit->setContent(original);
+    mEdit->setUseCodeFolding(false);
+    mEdit->replaceLine(0, "int first = 0;");
+    mEdit->replaceLine(2, "int last = 0;");
+    mEdit->setUseCodeFolding(true);
+    QCOMPARE(mEdit->codeBlockCount(), 0);
+    mEdit->setSyntaxer(std::make_shared<TextSyntaxer>());
+    mEdit->setContent(original);
+    QCOMPARE(mEdit->codeBlockCount(), 0);
+    mEdit->setSyntaxer(std::make_shared<CppSyntaxer>());
+    QVERIFY(mEdit->hasCodeBlock(0, 2));
+}
+
+void TestQSyneditCpp::test_incremental_parse_large_document()
+{
+    QStringList original;
+    original.reserve(3000);
+    for (int line = 0; line < 3000; ++line)
+        original.append(QString("int value_%1 = %1;").arg(line));
+    mEdit->setContent(original);
+    clearSignalDatas();
+    QSignalSpy rescans(mEdit.get(), &QSynEdit::foldsRescaned);
+    mEdit->setCaretXY(CharPos{4, 1500});
+    mEdit->processCommand(EditCommand::Input, QString("x"));
+    QCOMPARE(mEdit->lineText(1500), QString("int xvalue_1500 = 1500;"));
+    QVERIFY(!mReparseCounts.isEmpty());
+    for (int count : mReparseCounts)
+        QVERIFY2(count <= 2, "Ordinary typing must not reparse the whole unchanged document");
+    QCOMPARE(rescans.count(), 0);
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    mEdit->redo();
+    QCOMPARE(mEdit->lineText(1500), QString("int xvalue_1500 = 1500;"));
+    QCOMPARE(rescans.count(), 0);
+    mEdit->undo();
+}
+
+
+void TestQSyneditCpp::test_move_collapsed_block_preserves_state()
+{
+    const QStringList original{"void method() {", "    int value = 1;", "}", "int tail = 0;"};
+    const QStringList moved{"int tail = 0;", "void method() {", "    int value = 1;", "}"};
+    mEdit->setContent(original);
+    mEdit->setCaretAndSelection(CharPos{0, 0}, CharPos{0, 0}, CharPos{1, 2});
+    QVERIFY(mEdit->collapse(0, 2));
+    mEdit->moveSelDown();
+    QCOMPARE(mEdit->content(), moved);
+    QVERIFY(mEdit->hasCodeBlock(1, 3));
+    QVERIFY(mEdit->isCollapsed(1, 3));
+    mEdit->undo();
+    QCOMPARE(mEdit->content(), original);
+    QVERIFY(mEdit->isCollapsed(0, 2));
+    mEdit->redo();
+    QCOMPARE(mEdit->content(), moved);
+    QVERIFY(mEdit->isCollapsed(1, 3));
+    mEdit->undo();
+}
+
+}

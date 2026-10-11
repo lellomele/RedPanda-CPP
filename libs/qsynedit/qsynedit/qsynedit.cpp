@@ -1808,7 +1808,8 @@ void QSynEdit::endEditing()
     if (mEditingCount==0) {
         if (!mUndoing)
             mUndoList->endBlock(caretXY(), mSelectionBegin, mSelectionEnd, mActiveSelectionMode);
-        rescanCodeBlocks();
+        if (mCodeBlocksDirty)
+            rescanCodeBlocks();
     }
     endInternalChanges();
 }
@@ -3414,7 +3415,14 @@ int QSynEdit::reparseLines(int startLine, int endLine, bool toDocumentEnd)
         mSyntaxer->setLine(line, mDocument->getLine(line), mDocument->getLineSeq(line));
         mSyntaxer->nextToEol();
         state = mSyntaxer->getState();
-        if (line >= endLine && state->equals(mDocument->getSyntaxState(line)) ) {
+        const PSyntaxState oldState = mDocument->getSyntaxState(line);
+        // Folding depends on per-line boundaries, not merely the total number
+        // of blocks. Ordinary token edits can retain the existing fold tree.
+        if (!oldState || state->blockStarted != oldState->blockStarted
+                || state->blockEnded != oldState->blockEnded
+                || state->blockEndedLastLine != oldState->blockEndedLastLine)
+            mCodeBlocksDirty = true;
+        if (line >= endLine && state->equals(oldState) ) {
             break;
         }
         mDocument->setSyntaxState(line,state);
@@ -3439,6 +3447,7 @@ int QSynEdit::reparseLines(int startLine, int endLine, bool toDocumentEnd)
 
 void QSynEdit::reparseDocument()
 {
+    mCodeBlocksDirty = true;
     mSyntaxer->resetState();
     for (int i =0;i<mDocument->count();i++) {
         mSyntaxer->setLine(i, mDocument->getLine(i), mDocument->getLineSeq(i));
@@ -3640,7 +3649,7 @@ void QSynEdit::processFoldsOnLineMoved(int from, int to)
                 block->toLine = to;
             } else if (from < block->toLine && block->toLine <= to)
                 block->toLine -= 1;
-        } else if (to > from) {
+        } else if (to < from) {
             if (block->fromLine == from) {
                 block->fromLine = to;
             } else if (to <= block->fromLine && block->fromLine < from)
@@ -3664,6 +3673,11 @@ void QSynEdit::processFoldsOnLineMoved(int from, int to)
 
 void QSynEdit::rescanCodeBlocks()
 {
+    if (!mSyntaxer->supportFolding()) {
+        mCodeBlocks.clear();
+        mCodeBlocksDirty = false;
+        return;
+    }
     if (!useCodeFolding())
         return;
 
@@ -3691,6 +3705,7 @@ void QSynEdit::rescanCodeBlocks()
         // We ended up with no folds after deleting, just pass standard data...
         internalScanCodeBlocks();
     }
+    mCodeBlocksDirty = false;
 #ifdef QSYNEDIT_TEST
     emit foldsRescaned();
 #endif
@@ -4965,6 +4980,14 @@ void QSynEdit::setUseCodeFolding(bool value)
 {
     if (mUseCodeFolding!=value) {
         mUseCodeFolding = value;
+        if (value) {
+            mCodeBlocksDirty = true;
+            if (!editing())
+                rescanCodeBlocks();
+        }
+        updateHScrollbar();
+        updateVScrollbar();
+        invalidate();
     }
 }
 
@@ -5024,12 +5047,15 @@ void QSynEdit::setSyntaxer(const PSyntaxer &syntaxer)
     Q_ASSERT(syntaxer!=nullptr);
     PSyntaxer oldSyntaxer = mSyntaxer;
     mSyntaxer = syntaxer;
+    mCodeBlocksDirty = true;
     if (oldSyntaxer ->language() != syntaxer->language()) {
         recalcCharExtent();
         mDocument->beginUpdate();
         reparseDocument();
         mDocument->endUpdate();
     }
+    if (!editing() && mCodeBlocksDirty)
+        rescanCodeBlocks();
     mDocument->invalidateAllNonTempLineWidth();
     invalidate();
 }
@@ -5374,12 +5400,12 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                             SearchOptions sOptions, Searcher *searchEngine,
                     SearchMatchedProc matchedCallback, SearchConfirmAroundProc confirmAroundCallback)
 {
-    if (!searchEngine)
+    newScopeEnd = scopeEnd;
+    // Public search callers can outlive an earlier document/selection. Reject
+    // stale ranges without touching text, selection or undo history.
+    if (!searchEngine || scopeBegin > scopeEnd
+            || !validInDoc(scopeBegin) || !validInDoc(scopeEnd))
         return 0;
-
-    Q_ASSERT(scopeBegin<=scopeEnd);
-    Q_ASSERT(validInDoc(scopeBegin));
-    Q_ASSERT(validInDoc(scopeEnd));
     // can't search for or replace an empty string
     if (sSearch.isEmpty()) {
         return 0;
@@ -5396,7 +5422,6 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
     CharPos posCurrent;
     CharPos posBegin = scopeBegin;
     CharPos posEnd = scopeEnd;
-    newScopeEnd = scopeEnd;
     if (fromCaret) {
         if (selBegin() == caretXY() || selEnd() == caretXY()) {
             if (sOptions.testFlag(ssoIncludeCurrentSelection)) {
@@ -5440,7 +5465,6 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
         while ((posCurrent.line >= posBegin.line) && (posCurrent.line <= posEnd.line)) {
             int nInLine = searchEngine->findAll(mDocument->getLine(posCurrent.line));
             int iResultOffset = 0;
-            int totalLineOffset = 0;
             if (backwards)
                 i = searchEngine->resultCount()-1;
             else
@@ -5452,7 +5476,9 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
             }
             while (nInLine > 0) {
                 // An occurrence may have been replaced with a text of different length
-                int chFound = searchEngine->result(i) + iResultOffset;
+                const int originalResultIndex = i;
+                const int originalFound = searchEngine->result(i);
+                int chFound = originalFound + iResultOffset;
                 int searchLen = searchEngine->length(i);
                 if (backwards)
                     i--;
@@ -5464,7 +5490,8 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                 int first = chFound;
                 int last = chFound + searchLen;
 //                    qDebug()<<ptStart.line<<ptStart.ch<<ptEnd.line<<ptEnd.ch<<ptCurrent.line<<first<<last;
-                if  ((searchLen==0) &&
+                if  ((searchLen==0) && fromCaret
+                     && !sOptions.testFlag(ssoIncludeCurrentSelection) &&
                      (((posCurrent.line == posBegin.line) && (first == posBegin.ch) && !backwards)
                       ||  ((posCurrent.line == posEnd.line) && (last == posEnd.ch) && backwards))
                      ) {
@@ -5476,8 +5503,10 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                 if (!isInValidSearchRange)
                     continue;
                 if (sOptions.testFlag(ssoWholeWord) && first != last) {
-                    if (!tokenBorders.contains(first)
-                            || !tokenBorders.contains(last))
+                    // Borders belong to the original line searched above, not
+                    // to the positions shifted by preceding replacements.
+                    if (!tokenBorders.contains(originalFound)
+                            || !tokenBorders.contains(originalFound + searchLen))
                         continue;
                 }
                 result++;
@@ -5493,7 +5522,9 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                 else
                     internalSetCaretXY(selEnd());
 
-                QString replaceText = searchEngine->replace(selText(), sReplace);
+                QString replaceText;
+                if (matchedCallback || searchAction != SearchAction::Exit)
+                    replaceText = searchEngine->replaceResult(originalResultIndex, selText(), sReplace);
                 if (searchAction == SearchAction::ReplaceAndExit) {
                     searchAction = SearchAction::Exit;
                 } else if (searchAction != SearchAction::ReplaceAll
@@ -5510,38 +5541,47 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                 } else if (searchAction == SearchAction::Replace
                            || searchAction == SearchAction::ReplaceAndExit
                            || searchAction == SearchAction::ReplaceAll) {
+                    // Searching is permitted in a read-only document; replacing
+                    // must not create an undo block or shift the search bounds.
+                    if (mReadOnly)
+                        return result;
                     if (!dobatchReplace &&
                             (searchAction == SearchAction::ReplaceAll) ){
                         beginInternalChanges();
                         beginEditing();
                         dobatchReplace = true;
                     }
-                    bool oldAutoIndent = mOptions.testFlag(EditorOption::AutoIndent);
-                    mOptions.setFlag(EditorOption::AutoIndent,false);
+                    const CharPos replacedBegin{chFound, posCurrent.line};
+                    const CharPos replacedEnd{chFound + searchLen, posCurrent.line};
+                    const bool oldAutoIndent = mOptions.testFlag(EditorOption::AutoIndent);
+                    auto restoreAutoIndent = finally([this, oldAutoIndent] {
+                        mOptions.setFlag(EditorOption::AutoIndent, oldAutoIndent);
+                    });
+                    mOptions.setFlag(EditorOption::AutoIndent, false);
                     doSetSelText(replaceText);
-                    int nReplaceLen = replaceText.length();
-                    totalLineOffset += nReplaceLen - searchLen;
-                    // fix the caret position and the remaining results
+                    const CharPos insertedEnd = caretXY();
+                    // A replacement can contain line breaks. Move end boundaries
+                    // and remaining original matches using document coordinates,
+                    // rather than treating the inserted text as one long line.
+                    const auto adjustBoundary = [&](CharPos &boundary) {
+                        if (boundary < replacedEnd)
+                            return;
+                        if (boundary.line == replacedEnd.line)
+                            boundary.ch = insertedEnd.ch + boundary.ch - replacedEnd.ch;
+                        boundary.line += insertedEnd.line - replacedEnd.line;
+                    };
+                    adjustBoundary(posEnd);
+                    adjustBoundary(newScopeEnd);
+                    if (origCurrent != replacedBegin)
+                        adjustBoundary(origCurrent);
                     if (backwards) {
-                        setCaretX(chFound);
+                        setCaretXY(replacedBegin);
                     } else {
-                        if ((searchLen != nReplaceLen)) {
-                            iResultOffset += nReplaceLen - searchLen;
-                            if (posEnd != fileEnd()  && posCurrent.line == posEnd.line) {
-                                posEnd.ch += nReplaceLen - searchLen;
-                            }
-                        }
+                        posCurrent.line = insertedEnd.line;
+                        iResultOffset = insertedEnd.ch - (originalFound + searchLen);
                     }
-                    if (searchLen != nReplaceLen && newScopeEnd.line == posCurrent.line)
-                        newScopeEnd.ch += nReplaceLen - searchLen;
-                    mOptions.setFlag(EditorOption::AutoIndent,oldAutoIndent);
                 }
             }
-            if (fromCaret && totalLineOffset!=0 && origCurrent.line==posCurrent.line) {
-                if (backwards != wrapped)
-                    origCurrent.ch += totalLineOffset;
-            }
-
             // search next / previous line
             if (backwards) {
                 posCurrent.line--;
@@ -5559,7 +5599,7 @@ int QSynEdit::searchReplace(const QString &sSearch, const QString &sReplace,
                     //search start from cursor, search has finished but no result founds
                     wrapped = true;
                     posBegin = scopeBegin;
-                    posEnd = scopeEnd;
+                    posEnd = newScopeEnd;
                     if (backwards) {
                         posBegin = origCurrent;
                         posCurrent = posEnd;
@@ -5583,6 +5623,7 @@ void QSynEdit::properSetLine(int line, const QString &sLineText, bool parseToEnd
 
 void QSynEdit::properInsertLine(int line, const QString &sLineText, bool parseToEnd)
 {
+    mCodeBlocksDirty = true;
     mDocument->insertLine(line, sLineText);
     processCodeBlocksOnLinesInserted(line,1);
     if (parseToEnd)
@@ -5599,6 +5640,7 @@ void QSynEdit::properDeleteLines(int line, int count, bool parseToEnd)
 {
     if (count<=0)
         return;
+    mCodeBlocksDirty = true;
     mDocument->deleteLines(line, count);
     processFoldsOnLinesDeleted(line, count);
     if (parseToEnd)
@@ -5614,6 +5656,7 @@ void QSynEdit::properInsertLines(int line, int count, bool parseToEnd)
 {
     if (count<=0)
         return;
+    mCodeBlocksDirty = true;
     mDocument->insertLines(line, count);
     processCodeBlocksOnLinesInserted(line, count);
     if (parseToEnd)
@@ -5630,6 +5673,7 @@ void QSynEdit::properMoveLine(int from, int to, bool parseToEnd)
 {
     if (from==to)
         return;
+    mCodeBlocksDirty = true;
     mDocument->moveLine(from, to);
     processFoldsOnLineMoved(from,to);
     int minLine = std::min(from,to);

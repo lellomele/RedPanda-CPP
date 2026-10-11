@@ -49,6 +49,8 @@ Installed builds keep settings in the user profile; portable packages use `app/c
 
 Recovery is best-effort: native crashes, memory corruption, unavailable storage and power loss may require restarting and recovering the last valid snapshot. Save important work regularly. Cleanup covers recognised build outputs and requires operating-system Recycle Bin support. Italian diagnostic translation covers a finite catalog, not every compiler message. See [Recovery, reliability and operational limits](docs/FORK_CHANGES.md#robustness-and-error-resilience).
 
+The officially validated distribution targets **Windows x64 with Qt 6.11.2**. Qt 5 code paths are retained as secondary compatibility; they are not a release requirement.
+
 ## Build from source
 
 Requirements: C++17, CMake 3.19+, Qt 6.8+ or Qt 5.15, and matching compiler/Qt architecture. Qt modules: Core, Concurrent, Gui, Widgets, Network, PrintSupport, Svg, Xml, Test and LinguistTools. The Windows distributions use Qt 6.11.2 and MinGW-w64. Other platform/toolchain combinations require validation for this fork.

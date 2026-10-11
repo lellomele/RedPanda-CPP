@@ -7,7 +7,8 @@ msvc {
     LIBS += advapi32.lib shell32.lib comdlg32.lib user32.lib gdi32.lib ws2_32.lib
 }
 
-DEFINES -= UNICODE
+DEFINES += UNICODE _UNICODE
+win32-g++: QMAKE_LFLAGS += -municode
 
 isEmpty(APP_NAME) {
     APP_NAME = RedPandaCPP

@@ -57,3 +57,7 @@ Le misure usano file locali e cache del sistema operativo già attiva; non svuot
 ## Verifica continua
 
 Il workflow `Stabilization gates` compila l’applicazione completa con Git, Lua e SDCC attivi, poi esegue suite funzionali e benchmark su Windows/MinGW/Qt 6 e Linux/Qt 5.15. Log e artefatti riportano le versioni effettive della toolchain. Prima della release si eseguono anche prove dei pacchetti e controlli GUI nativi bilingui sulle distribuzioni Windows. Verifica il commit esatto usato per generare la release: un’esecuzione precedente superata non convalida modifiche successive.
+
+Il requisito per il rilascio è Windows x64 con Qt 6.11.2. Il job Linux/Qt 5 offre una verifica informativa della compatibilità storica e non blocca la release Windows; il risultato effettivo resta visibile. Altre piattaforme e toolchain richiedono una validazione separata.
+
+Su Windows con Git attivo, un ulteriore test nativo del codificatore askpass porta il totale a 22; usa input Unicode sintetici, mai credenziali reali.

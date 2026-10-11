@@ -49,6 +49,8 @@ Le build installabili conservano le impostazioni nel profilo utente; i pacchetti
 
 Il recupero è una misura di protezione: crash nativi, corruzione della memoria, problemi di archiviazione e interruzioni di corrente possono richiedere un riavvio e l'ultima copia valida. Salva regolarmente il lavoro importante. La pulizia copre gli output riconosciuti e richiede il Cestino del sistema operativo. La traduzione italiana usa un catalogo finito, che non comprende ogni messaggio del compilatore. Consulta [Robustezza, resilienza e limiti operativi](docs/MODIFICHE_FORK.md#robustezza-e-resilienza-agli-errori).
 
+La distribuzione verificata ufficialmente usa **Windows x64 con Qt 6.11.2**. I percorsi Qt 5 restano come compatibilità secondaria e non sono un requisito per il rilascio.
+
 ## Compilazione dai sorgenti
 
 Requisiti: C++17, CMake 3.19+, Qt 6.8+ oppure Qt 5.15, con compilatore e Qt della stessa architettura. Moduli Qt: Core, Concurrent, Gui, Widgets, Network, PrintSupport, Svg, Xml, Test e LinguistTools. Le distribuzioni Windows usano Qt 6.11.2 e MinGW-w64. Altre combinazioni di piattaforma e toolchain richiedono verifica per questo fork.

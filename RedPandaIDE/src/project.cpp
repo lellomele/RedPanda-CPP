@@ -2620,7 +2620,7 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
 #ifdef ENABLE_VCS
                 QString branch;
                 if (mIconProvider->VCSRepository()->hasRepository(branch))
-                    icon = mProject->iconsManager()->getIcon(IconsManager::FILESYSTEM_GIT);
+                    icon = mIconsManager->getIcon(IconsManager::FILESYSTEM_GIT);
 #endif
             } else {
                 switch(p->folderNodeType) {

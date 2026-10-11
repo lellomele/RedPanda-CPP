@@ -57,3 +57,7 @@ Measurements use a warm local filesystem and operating-system cache; they do not
 ## Continuous verification
 
 The `Stabilization gates` workflow builds the full application with Git, Lua and SDCC features enabled, then runs the functional suites and benchmarks on Windows/MinGW/Qt 6 and Linux/Qt 5.15. Logs and measurement artifacts identify the actual toolchain versions. Packaging smoke checks and native bilingual GUI checks are additionally run against the Windows distribution before release. Validate the exact source commit used to build the release; an older green run does not validate later changes.
+
+The release requirement is Windows x64 with Qt 6.11.2. The Linux/Qt 5 job is informational legacy coverage and does not block the Windows release; its actual result remains visible. Other platforms and toolchains require separate validation.
+
+On Windows with Git enabled, an additional native askpass encoding test brings the total to 22; it uses synthetic Unicode input, never real credentials.

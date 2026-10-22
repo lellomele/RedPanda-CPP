@@ -28,6 +28,8 @@ Windows x64 packages are available in three formats:
 
 Start **`RedPandaIDE.exe` in the main folder**. The internal IDE is `app/RedPandaIDE-core.exe`; keep the complete `app` folder. Qt and its runtime dependencies are included. Configure **GCC/Clang** and **GDB/LLDB** separately to build and debug your programs.
 
+**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Includes GDB and Make. Extract the complete archive to a separate folder, then add its `mingw64/bin` directory in the compiler settings. No system-wide PATH change is required. This external distribution has not yet been validated with this fork; an existing compatible compiler can also be used.
+
 Setup and the portable extractor require an empty destination. To update an installed copy, uninstall it first; personal settings are retained. For a portable update, preserve `app/config` and restore it into a freshly extracted copy. Packages are unsigned. See [Windows installation and packaging](docs/WINDOWS_DISTRIBUTION.md).
 
 ## Use

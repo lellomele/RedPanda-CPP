@@ -24,6 +24,8 @@ Downloadable package names use `rmele`. Only the GitHub attachments have been re
 
 Use the Windows x64 packages on Windows 10/11. Qt 6.11.2 and the runtime dependencies are included. A compiler (GCC/Clang) and debugger (GDB/LLDB) are not bundled: configure them separately in the IDE's preferences.
 
+**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Includes GDB and Make. Extract the complete archive to a separate folder, then add its `mingw64/bin` directory in the compiler settings. No system-wide PATH change is required. This external distribution has not yet been validated with this fork; an existing compatible compiler can also be used.
+
 ### Launch and folder layout
 
 ```text

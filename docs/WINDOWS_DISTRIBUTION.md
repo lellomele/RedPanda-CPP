@@ -24,7 +24,20 @@ Downloadable package names use `rmele`. Only the GitHub attachments have been re
 
 Use the Windows x64 packages on Windows 10/11. Qt 6.11.2 and the runtime dependencies are included. A compiler (GCC/Clang) and debugger (GDB/LLDB) are not bundled: configure them separately in the IDE's preferences.
 
-**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Includes GDB and Make. Extract the complete archive to a separate folder, then add its `mingw64/bin` directory in the compiler settings. No system-wide PATH change is required. This external distribution has not yet been validated with this fork; an existing compatible compiler can also be used.
+**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Includes GDB and Make.
+
+> [!TIP]
+> **Set up WinLibs in a few steps**
+>
+> After extracting the complete archive:
+>
+> 1. On the toolbar, click **Compiler Options** <img src="assets/compiler-options-button.png" height="28" alt="Compiler Options">.
+> 2. Open the **Compiler → Toolchain** page.
+> 3. Click the **folder** icon <img src="assets/compiler-folder-button.png" height="28" alt="Find Compiler in the Folder"> to find the compiler in its binaries directory.
+> 4. Select **`mingw64\bin` inside the folder where you extracted WinLibs**; for example, `D:\Tools\WinLibs\mingw64\bin`.
+> 5. Confirm the folder, select the newly added GCC profile if needed, and save with **OK**.
+>
+> **No Windows PATH change is required.**
 
 ### Launch and folder layout
 

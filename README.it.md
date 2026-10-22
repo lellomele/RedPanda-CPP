@@ -28,7 +28,20 @@ I pacchetti Windows x64 sono disponibili in tre formati:
 
 Avvia **`RedPandaIDE.exe` nella cartella principale**. L'IDE interno è `app/RedPandaIDE-core.exe`: conserva l'intera cartella `app`. Qt e le dipendenze necessarie all'avvio sono inclusi. Configura separatamente **GCC/Clang** e **GDB/LLDB** per compilare e fare debug dei tuoi programmi.
 
-**Compilatore da scaricare separatamente:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Comprende GDB e Make. Estrai tutto l’archivio in una cartella separata e aggiungi la relativa directory `mingw64/bin` nelle impostazioni del compilatore. Non occorre modificare il PATH di sistema. Questa distribuzione esterna non è ancora stata verificata con il fork; puoi anche usare un compilatore compatibile già installato.
+**Compilatore da scaricare separatamente:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Comprende GDB e Make.
+
+> [!TIP]
+> **Configura WinLibs in pochi passaggi**
+>
+> Dopo aver estratto tutto l’archivio:
+>
+> 1. Nella barra degli strumenti, clicca **Opzioni del compilatore** <img src="docs/assets/compiler-options-button.png" height="28" alt="Compiler Options">.
+> 2. Apri la pagina **Compilatore → Toolchain**.
+> 3. Clicca l’icona della **cartella** <img src="docs/assets/compiler-folder-button.png" height="28" alt="Find Compiler in the Folder"> per cercare il compilatore nella directory dei binari.
+> 4. Seleziona **`mingw64\bin` all’interno della cartella in cui hai estratto WinLibs**; per esempio, `D:\Strumenti\WinLibs\mingw64\bin`.
+> 5. Conferma la cartella, scegli il profilo GCC aggiunto se necessario e salva con **OK**.
+>
+> **Non occorre modificare il PATH di Windows.**
 
 Setup ed estrattore portabile richiedono una destinazione vuota. Per aggiornare una copia installata, disinstallala prima: le preferenze personali vengono conservate. Per aggiornare il portabile, conserva `app/config` e ripristinala in una copia appena estratta. I pacchetti non sono firmati digitalmente. Consulta [Installazione e distribuzioni Windows](docs/DISTRIBUZIONE_WINDOWS_FORK.md).
 

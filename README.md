@@ -1,6 +1,8 @@
+[Italiano](README.it.md) | [English](README.md)
+
 # Red Panda C++
 
-[Italiano](README.it.md) · [Features](docs/FEATURES.md) · [Fork changes](docs/FORK_CHANGES.md)
+[Features](docs/FEATURES.md) · [Fork changes](docs/FORK_CHANGES.md)
 
 <img src="docs/assets/redpanda-cpp.png" width="160" alt="Red Panda C++">
 

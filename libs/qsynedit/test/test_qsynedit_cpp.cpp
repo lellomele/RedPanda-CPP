@@ -49,6 +49,80 @@ void TestQSyneditCpp::loadDemoFile()
     clearSignalDatas();
 }
 
+
+void TestQSyneditCpp::test_mouse_selection_resets_anchor_data()
+{
+    QTest::addColumn<bool>("readOnly");
+    QTest::addColumn<bool>("altSetsColumnMode");
+    QTest::newRow("editable-without-column-mode") << false << false;
+    QTest::newRow("readonly-without-column-mode") << true << false;
+    QTest::newRow("editable-with-column-mode") << false << true;
+    QTest::newRow("readonly-with-column-mode") << true << true;
+}
+
+void TestQSyneditCpp::test_mouse_selection_resets_anchor()
+{
+    QFETCH(bool, readOnly);
+    QFETCH(bool, altSetsColumnMode);
+    class MouseSelectionEdit : public QSynEdit {
+    public:
+        using QSynEdit::mousePressEvent;
+        using QSynEdit::mouseReleaseEvent;
+    } edit;
+    edit.resize(640, 240);
+    edit.setGutterWidth(0);
+    edit.setUseCodeFolding(false);
+    auto options = edit.getOptions();
+    options.setFlag(EditorOption::AltSetsColumnMode, altSetsColumnMode);
+    options.setFlag(EditorOption::DragDropEditing, false);
+    edit.setOptions(options);
+    edit.setContent(QString("abcdefghij"));
+    edit.setModified(false);
+    edit.setReadOnly(readOnly);
+    edit.show();
+    QCoreApplication::processEvents();
+    // A new mouse selection must discard an earlier anchor, including in a
+    // read-only disassembly view with AltSetsColumnMode disabled.
+    edit.setCaretAndSelection(CharPos{1, 0}, CharPos{0, 0}, CharPos{1, 0});
+    // Use pixel positions that round-trip through hit testing. Font shaping can
+    // round a glyph boundary differently from the nearest-glyph hit test.
+    QPoint start(-1, 2), end(-1, 2);
+    for (int x = 2; x < edit.width(); ++x) {
+        const CharPos hit = edit.displayToBufferPos(edit.pixelsToNearestGlyphPos(x, 2));
+        if (start.x() < 0 && hit == CharPos({4, 0}))
+            start.setX(x);
+        if (end.x() < 0 && hit == CharPos({8, 0}))
+            end.setX(x);
+    }
+    QVERIFY(start.x() >= 0);
+    QVERIFY(end.x() >= 0);
+    // Exercise the protected mouse handlers directly: QTest's synthetic window
+    // routing is platform-dependent, while QSynEdit's caret uses QCursor::pos().
+    struct RestoreCursor {
+        QPoint position = QCursor::pos();
+        ~RestoreCursor() { QCursor::setPos(position); }
+    } restoreCursor;
+    const auto click = [&](const QPoint &position, Qt::KeyboardModifiers modifiers) {
+        const QPoint global = edit.mapToGlobal(position);
+        QCursor::setPos(global);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(position), QPointF(global),
+                          Qt::LeftButton, Qt::LeftButton, modifiers);
+        edit.mousePressEvent(&press);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(position), QPointF(global),
+                            Qt::LeftButton, Qt::NoButton, modifiers);
+        edit.mouseReleaseEvent(&release);
+    };
+    click(start, Qt::NoModifier);
+    QCOMPARE(edit.selBegin(), CharPos({4, 0}));
+    QCOMPARE(edit.selEnd(), CharPos({4, 0}));
+    click(end, Qt::ShiftModifier);
+    QCOMPARE(edit.selBegin(), CharPos({4, 0}));
+    QCOMPARE(edit.selEnd(), CharPos({8, 0}));
+    QCOMPARE(edit.selText(), QString("efgh"));
+    QCOMPARE(edit.lineText(0), QString("abcdefghij"));
+    QVERIFY(!edit.modified());
+}
+
 void TestQSyneditCpp::test_next_char()
 {
 

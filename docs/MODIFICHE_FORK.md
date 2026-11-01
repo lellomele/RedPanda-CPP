@@ -15,6 +15,11 @@ L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lav
 
 Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
+
+## Integrazione della 3.5 ufficiale
+
+Il ramo di sviluppo incorpora ora il commit ufficiale `06f28b40b001b87374eeae9b59e47422d6a9ca66`, conservando la baseline originaria indicata sopra. Consulta [confronto e scelte di integrazione](INTEGRAZIONE_UPSTREAM_3_5.md) per funzionalità ereditate, comportamenti combinati e verifiche. I pacchetti pubblicati 3.5.1 restano invariati.
+
 ## Aggiunte implementate
 
 | Area | Aggiunte del fork |

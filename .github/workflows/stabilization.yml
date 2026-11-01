@@ -52,6 +52,7 @@ jobs:
           update: true
           install: >-
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-gdb
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-python
@@ -69,7 +70,10 @@ jobs:
         shell: msys2 {0}
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ctest --test-dir build-stable --output-on-failure --timeout 120 --output-junit tests.xml
+        run: |
+          export REDPANDA_TEST_CXX="$(cygpath -m "$(command -v g++)")"
+          export REDPANDA_TEST_GDB="$(cygpath -m "$(command -v gdb)")"
+          ctest --test-dir build-stable --output-on-failure --timeout 120 --output-junit tests.xml
       - name: Measure editing workloads
         shell: msys2 {0}
         env:

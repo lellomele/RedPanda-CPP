@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "gdbmidebugger.h"
+#include "gdbmiarguments.h"
 #include "../mainwindow.h"
 #include "../editormanager.h"
 #include "../utils.h"
@@ -209,11 +210,9 @@ void GDBMIDebuggerClient::runNextCmd()
         params = pCmd->params.toUtf8();
     }
     if (pCmd->command == "-var-create") {
-        //hack for variable creation,to easy remember var expression
-        if (clientType()==DebuggerType::LLDB_MI)
-            params = " - * "+params;
-        else
-            params = " - @ "+params;
+        params = GDBMI::watchCreationArguments(params, clientType()==DebuggerType::LLDB_MI);
+    } else if (pCmd->command == "-data-evaluate-expression") {
+        params = GDBMI::quoteArgument(params);
     } else if (pCmd->command == "-var-list-children") {
         //hack for list variable children,to easy remember var expression
         params = " --all-values \"" + params+'\"';
@@ -1145,7 +1144,7 @@ void GDBMIDebuggerClient::setBreakpointCondition(PBreakpoint breakpoint)
 
 void GDBMIDebuggerClient::addWatch(const QString &expression)
 {
-    postCommand("-var-create", QString("\"%1\"").arg(expression));
+    postCommand("-var-create", expression);
 }
 
 void GDBMIDebuggerClient::removeWatch(PWatchVar watchVar)
@@ -1183,14 +1182,7 @@ void GDBMIDebuggerClient::fetchWatchVarChildren(const QString& varName)
 
 void GDBMIDebuggerClient::evalExpression(const QString &expression)
 {
-    QString escaped;
-    foreach(const QChar& ch, expression) {
-        if (ch.unicode()<32) {
-            escaped+=QString("\\%1").arg(int(ch.unicode()),0,8);
-        } else
-            escaped+=ch;
-    }
-    postCommand("-data-evaluate-expression", QString("\"%1\"").arg(escaped));
+    postCommand("-data-evaluate-expression", expression);
 }
 
 void GDBMIDebuggerClient::selectFrame(PTrace trace)

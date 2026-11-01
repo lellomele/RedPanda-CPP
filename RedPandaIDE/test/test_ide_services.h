@@ -4,6 +4,7 @@
 class TestIdeServices : public QObject {
     Q_OBJECT
 private slots:
+    void compiler_options_match_selected_toolchain();
     void diagnostic_contrast_uses_srgb_and_alpha();
     void diagnostic_contrast_covers_rgb_backgrounds();
     void diagnostics_catalog_examples();

@@ -2665,6 +2665,52 @@ void TestEditorSymbolCompletion::test_completion_list_optional_callbacks()
     view.hide();
 }
 
+void TestEditorSymbolCompletion::test_hidden_completion_list_ignores_pending_keys_data()
+{
+    QTest::addColumn<bool>("hideParent");
+    QTest::newRow("list-explicitly-hidden") << false;
+    QTest::newRow("ancestor-hidden-list-not-explicitly-hidden") << true;
+}
+
+void TestEditorSymbolCompletion::test_hidden_completion_list_ignores_pending_keys()
+{
+    QFETCH(bool, hideParent);
+    QWidget parent;
+    CodeCompletionListView view(&parent);
+    QStringListModel model({"one", "two"});
+    view.setModel(&model);
+    int callbackCount = 0;
+    view.setKeypressedCallback([&](QKeyEvent *) { ++callbackCount; return true; });
+    parent.show();
+    view.show();
+    QVERIFY(view.isVisible());
+    QTest::keyPress(&view, Qt::Key_A);
+    QCOMPARE(callbackCount, 1);
+    view.setCurrentIndex(model.index(0));
+    QTest::keyPress(&view, Qt::Key_Down);
+    QCOMPARE(view.currentIndex().row(), 1);
+    view.setCurrentIndex(model.index(0));
+    if (hideParent) {
+        parent.hide();
+        QVERIFY(!view.isHidden());
+    } else {
+        view.hide();
+        QVERIFY(view.isHidden());
+    }
+    QVERIFY(!view.isVisible());
+    // Pending input can reach a popup after its parent has closed. It must
+    // neither invoke completion nor move the now invisible selection.
+    QTest::keyPress(&view, Qt::Key_A);
+    QTest::keyPress(&view, Qt::Key_Down);
+    QTest::keyPress(&view, Qt::Key_Tab);
+    QCOMPARE(callbackCount, 1);
+    QCOMPARE(view.currentIndex().row(), 0);
+    parent.show();
+    view.show();
+    QTest::keyPress(&view, Qt::Key_A);
+    QCOMPARE(callbackCount, 2);
+}
+
 void TestEditorSymbolCompletion::test_header_completion_without_parser()
 {
     HeaderCompletionPopup popup(mColorManager.get());

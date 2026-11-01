@@ -8,6 +8,7 @@
 | Italian GCC diagnostics / Diagnostici GCC in italiano | [GCC diagnostics](GCC_DIAGNOSTICS.md) | [Traduzione dei diagnostici](TRADUZIONE_DIAGNOSTICI.md) |
 | Installer and portable packages / Installer e pacchetti portabili | [Windows distribution](WINDOWS_DISTRIBUTION.md) | [Distribuzione Windows](DISTRIBUZIONE_WINDOWS_FORK.md) |
 | Italian terminology / Terminologia italiana | [Italian terminology](ITALIAN_TERMINOLOGY.md) | [Terminologia italiana](TERMINOLOGIA_IT.md) |
+| Official 3.5 integration / Integrazione ufficiale 3.5 | [Comparison](UPSTREAM_3_5_INTEGRATION.md) | [Confronto](INTEGRAZIONE_UPSTREAM_3_5.md) |
 
 Upstream build instructions / Istruzioni di compilazione upstream: [BUILD.md](../BUILD.md).
 

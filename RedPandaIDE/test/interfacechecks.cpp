@@ -24,6 +24,8 @@
 #include "src/thememanager.h"
 #include "src/appidentity.h"
 #include "src/widgets/aboutdialog.h"
+#include "src/widgets/cpudialog.h"
+#include "src/editor.h"
 #include "src/settingsdialog/environmentshortcutwidget.h"
 #include "src/shortcutmanager.h"
 #include "src/diagnosticcatalog.h"
@@ -143,6 +145,52 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         for (const auto &term : terms) check("Italian IDE terminology: " + QString::fromUtf8(term.first), QCoreApplication::translate("MainWindow", term.first) == term.second);
         const auto *open = window.findChild<QAction *>("actionOpen");
         check("Open action uses Apri and working shortcut", open && open->text() == "Apri..." && open->shortcut() == QKeySequence("Ctrl+O"));
+    }
+    {
+        CPUDialog cpu(window.colorManager(), &window);
+        const QStringList instructions{QStringLiteral("=> 0x401000: mov eax, 42"), QStringLiteral("   0x401005: ret")};
+        cpu.setDisassembly(QStringLiteral("cpu-check.cpp"), QStringLiteral("main"), instructions, {});
+        cpu.show();
+        waitForUi();
+        auto *code = cpu.findChild<Editor *>("txtCode");
+        check("CPU dialog exposes its read-only disassembly editor", code && code->readOnly());
+        if (code) {
+            const QString original = code->text();
+            QKeyEvent selectAll(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
+            QApplication::sendEvent(code, &selectAll);
+            const QString selected = code->selText();
+            check("CPU dialog Ctrl+A selects every disassembly instruction", !selected.isEmpty() && selected == original);
+            bool nativeClipboardDenied = false;
+#ifdef Q_OS_WIN
+            if (QGuiApplication::platformName() == "windows") {
+                SetLastError(ERROR_SUCCESS);
+                const bool available = OpenClipboard(nullptr);
+                const DWORD error = GetLastError();
+                if (available) CloseClipboard();
+                nativeClipboardDenied = !available && error == ERROR_ACCESS_DENIED;
+            }
+#endif
+            QMimeData *savedClipboard = nullptr;
+            if (!nativeClipboardDenied) {
+                savedClipboard = new QMimeData;
+                if (const auto *previous = QGuiApplication::clipboard()->mimeData())
+                    for (const auto &format : previous->formats()) savedClipboard->setData(format, previous->data(format));
+                QGuiApplication::clipboard()->setText(QStringLiteral("CPU clipboard sentinel"));
+            }
+            QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+            QApplication::sendEvent(code, &copy);
+            if (!nativeClipboardDenied)
+                check("CPU dialog Ctrl+C copies the exact selected disassembly", QGuiApplication::clipboard()->text() == selected);
+            else
+                check("CPU dialog copy preserves selection when native clipboard access is denied", code->selText() == selected && code->text() == original);
+            QKeyEvent erase(QEvent::KeyPress, Qt::Key_Delete, Qt::NoModifier);
+            QApplication::sendEvent(code, &erase);
+            QKeyEvent replace(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            QApplication::sendEvent(code, &replace);
+            check("CPU dialog select copy delete and typing preserve disassembly", code->readOnly() && code->text() == original && code->selText() == selected);
+            if (savedClipboard) QGuiApplication::clipboard()->setMimeData(savedClipboard);
+        }
+        cpu.hide();
     }
     const auto *aboutAction = window.findChild<QAction *>("actionAbout");
     check("About menu uses the current application artwork", aboutAction && aboutAction->icon().pixmap(32, 32).toImage() == QIcon(AppIdentity::iconResource()).pixmap(32, 32).toImage());

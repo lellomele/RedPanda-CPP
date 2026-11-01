@@ -617,3 +617,11 @@ foreach(selector_case IN ITEMS missing empty unknown duplicate list-conflict)
             -P ${CMAKE_SOURCE_DIR}/tests/check_qtest_selector.cmake)
     set_tests_properties(test-runner-${selector_case} PROPERTIES TIMEOUT 15 LABELS "infrastructure" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
+
+# MI argument encoding and an opt-in real GCC/GDB watch workflow.
+add_executable(test-gdbmi-arguments test/test_gdbmi_arguments.cpp)
+target_include_directories(test-gdbmi-arguments PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-gdbmi-arguments PRIVATE Qt::Core Qt::Test)
+add_test(NAME test-gdbmi-arguments COMMAND test-gdbmi-arguments)
+set_tests_properties(test-gdbmi-arguments PROPERTIES TIMEOUT 90 LABELS "debugger;functional")
+add_dependencies(all-test-targets test-gdbmi-arguments)

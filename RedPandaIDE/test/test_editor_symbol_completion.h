@@ -82,6 +82,8 @@ private slots:
     void test_completion_popup_without_parser();
     void test_completion_popup_keywords_after_cancel();
     void test_completion_list_optional_callbacks();
+    void test_hidden_completion_list_ignores_pending_keys_data();
+    void test_hidden_completion_list_ignores_pending_keys();
     void test_header_completion_without_parser();
     void test_header_completion_preserves_include_precedence();
 

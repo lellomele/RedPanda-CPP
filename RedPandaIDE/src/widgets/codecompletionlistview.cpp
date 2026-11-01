@@ -29,7 +29,7 @@ CodeCompletionListView::CodeCompletionListView(QWidget *parent) : QListView(pare
 
 void CodeCompletionListView::keyPressEvent(QKeyEvent *event)
 {
-    if (isHidden())
+    if (!isVisible())
         return;
 //    if (mKeypressedCallback==nullptr) {
 //        QListView::keyPressEvent(event);

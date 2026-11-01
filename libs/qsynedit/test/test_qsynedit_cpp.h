@@ -12,6 +12,8 @@ private slots:
     void cleanup();
     void loadDemoFile();
 
+    void test_mouse_selection_resets_anchor_data();
+    void test_mouse_selection_resets_anchor();
     void test_next_char();
     void test_local_edits_do_not_rescan_unchanged_folds();
     void test_fold_boundaries_undo_redo();

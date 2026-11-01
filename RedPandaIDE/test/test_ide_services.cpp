@@ -1,4 +1,5 @@
 #include "test_ide_services.h"
+#include "src/compiler/compilerinfo.h"
 #include "src/buildartifacts.h"
 #include "src/diagnosticcatalog.h"
 #include "src/utils/colorcontrast.h"
@@ -215,4 +216,36 @@ void TestIdeServices::diagnostic_contrast_covers_rgb_backgrounds() {
             if (preferred.isValid() && preferred.alpha() == 255 && UiContrast::ratio(preferred, background) >= 4.5) QCOMPARE(resolved, preferred);
         }
     }
+}
+
+void TestIdeServices::compiler_options_match_selected_toolchain()
+{
+    const auto gcc = CompilerInfoManager::getInfo(CompilerType::GCC);
+    const auto clang = CompilerInfoManager::getInfo(CompilerType::Clang);
+    QVERIFY(gcc);
+    QVERIFY(clang);
+    QCOMPARE(gcc->type(), CompilerType::GCC);
+    QCOMPARE(clang->type(), CompilerType::Clang);
+    QVERIFY(gcc->hasCompilerOption(CC_CMD_OPT_NO_MS_EXTENSIONS));
+    QVERIFY(!clang->hasCompilerOption(CC_CMD_OPT_NO_MS_EXTENSIONS));
+    QVERIFY(!CompilerInfoManager::getCompilerOption(
+        CompilerType::Clang, CC_CMD_OPT_NO_MS_EXTENSIONS));
+    for (const auto &info : {gcc, clang}) {
+        QVERIFY(info->hasCompilerOption(CC_CMD_OPT_WARNING_ALL));
+        QVERIFY(info->hasCompilerOption(CC_CMD_OPT_WARNING_EXTRA));
+        QVERIFY(info->hasCompilerOption(CC_CMD_OPT_WARNING_AS_ERROR));
+        QVERIFY(info->hasCompilerOption(CC_CMD_OPT_ERROR_UNINITIALIZED));
+    }
+#ifdef ENABLE_SDCC
+    const auto sdcc = CompilerInfoManager::getInfo(CompilerType::SDCC);
+    QVERIFY(sdcc);
+    QCOMPARE(sdcc->type(), CompilerType::SDCC);
+    QVERIFY(sdcc->hasCompilerOption(SDCC_CMD_OPT_PROCESSOR));
+    QVERIFY(!sdcc->hasCompilerOption(CC_CMD_OPT_NO_MS_EXTENSIONS));
+    QVERIFY(!sdcc->supportStaticLink());
+    QVERIFY(!sdcc->supportSyntaxCheck());
+#endif
+    QVERIFY(!CompilerInfoManager::getInfo(CompilerType::Unknown));
+    QVERIFY(!CompilerInfoManager::hasCompilerOption(
+        CompilerType::Unknown, CC_CMD_OPT_WARNING_ALL));
 }

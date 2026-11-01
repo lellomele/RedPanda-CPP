@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QColor>
 #include <QPalette>
+#include <QTimer>
 #include "../mainwindow.h"
 #include "../settings.h"
 #include "../colorscheme.h"
@@ -212,28 +213,25 @@ const PCppParser &ClassBrowserModel::parser() const
 
 void ClassBrowserModel::setParser(const PCppParser &newCppParser)
 {
-    if (mParser) {
-        disconnect(mParser.get(),
-                   &CppParser::parseFinished,
-                   this,
-                   &ClassBrowserModel::fillStatements);
-        disconnect(mParser.get(),
-                   &CppParser::parseStarted,
-                   this,
-                   &ClassBrowserModel::clear);
-    }
+    if (mParser == newCppParser)
+        return;
+    disconnect(mParseFinishedConnection);
+    ++mParserGeneration;
+    mRetryScheduled = false;
+    mRetryAttempts = 0;
+    mRefreshPending = bool(newCppParser);
     mParser = newCppParser;
+    // A previous parser's statements must not be shown for the new context.
+    clear();
     if (mParser) {
-        connect(mParser.get(),
-                   &CppParser::parseFinished,
-                   this,
-                   &ClassBrowserModel::fillStatements);
-        connect(mParser.get(),
-                   &CppParser::parseStarted,
-                   this,
-                   &ClassBrowserModel::clear);
-    } else {
-        clear();
+        const quint64 generation = mParserGeneration;
+        mParseFinishedConnection = connect(mParser.get(), &CppParser::parseFinished,
+            this, [this, generation](int, int) {
+                if (generation != mParserGeneration)
+                    return; // queued notification from an obsolete parser
+                mRetryAttempts = 0;
+                fillStatements();
+            }, Qt::QueuedConnection);
     }
 }
 
@@ -249,39 +247,85 @@ void ClassBrowserModel::clear()
     endResetModel();
 }
 
+void ClassBrowserModel::scheduleRefreshRetry()
+{
+    // One coalesced retry at a time, bounded even when a parser never becomes idle.
+    constexpr int retryIntervalMs = 100;
+    constexpr int maxRetries = 300;
+    if (mRetryScheduled || mRetryAttempts >= maxRetries || !mParser)
+        return;
+    mRetryScheduled = true;
+    ++mRetryAttempts;
+    const quint64 generation = mParserGeneration;
+    QTimer::singleShot(retryIntervalMs, this, [this, generation] {
+        if (generation != mParserGeneration)
+            return;
+        mRetryScheduled = false;
+        if (mRefreshPending)
+            fillStatements();
+    });
+}
+
 void ClassBrowserModel::fillStatements()
 {
     {
         QMutexLocker locker(&mMutex);
-        if (mUpdateCount!=0 || mUpdating)
+        mRefreshPending = true;
+        if (mUpdateCount != 0 || mUpdating)
             return;
-        mUpdating = true;
     }
-    emit refreshStarted();
-    clear();
-    beginResetModel();
-    {
-        auto action = finally([this]{
+    const PCppParser parser = mParser;
+    if (!parser || !parser->enabled()) {
+        mRefreshPending = false;
+        clear();
+        return;
+    }
+    // Keep the last valid snapshot until fresh parser data is available.
+    if (!parser->freeze()) {
+        scheduleRefreshRetry();
+        return;
+    }
+    const auto releaseParser = finally([parser] { parser->unFreeze(); });
+    mRefreshPending = false;
+    mRetryAttempts = 0;
+    mUpdating = true;
+    bool resetStarted = false;
+    const auto finishRefresh = finally([this, &resetStarted] {
+        if (resetStarted)
             endResetModel();
-            mUpdating = false;
-            emit refreshEnd();
-        });
-        if (!mParser)
-            return;
-        if (!mParser->enabled())
-            return;
-        if (!mParser->freeze())
-            return;
-        addMembers();
-        mParser->unFreeze();
+        mUpdating = false;
+        emit refreshEnd();
+        if (mRefreshPending)
+            scheduleRefreshRetry();
+    });
+    emit refreshStarted();
+    // A direct slot may have changed the active parser while notifying views.
+    if (mParser != parser) {
+        mRefreshPending = bool(mParser);
+        return;
     }
+    beginResetModel();
+    resetStarted = true;
+    mRoot->children.clear();
+    mNodes.clear();
+    mNodeIndex.clear();
+    mProcessedStatements.clear();
+    mDummyStatements.clear();
+    mScopeNodes.clear();
+    addMembers();
 }
 
 PClassBrowserNode ClassBrowserModel::addChild(ClassBrowserNode *node, const PStatement& statement)
 {
     PClassBrowserNode newNode = std::make_shared<ClassBrowserNode>();
     newNode->parent = node;
-    newNode->statement = statement;
+    // The parser can mutate or discard statements on a worker thread after
+    // unFreeze(). Keep a detached display/navigation snapshot in the model.
+    newNode->statement = std::make_shared<Statement>(*statement);
+    newNode->statement->children.clear();
+    newNode->statement->publicProperties.clear();
+    newNode->statement->matchPositions.clear();
+    newNode->statement->parentScope = node->statement;
 //    newNode->childrenFetched = false;
     node->children.append(newNode.get());
     mNodes.append(newNode);
@@ -525,6 +569,7 @@ void ClassBrowserModel::setClassBrowserType(ProjectClassBrowserType newClassBrow
 {
     if (mClassBrowserType != newClassBrowserType) {
         beginUpdate();
+        clear();
         mClassBrowserType = newClassBrowserType;
         endUpdate();
     }
@@ -547,7 +592,13 @@ const QString &ClassBrowserModel::currentFile() const
 
 void ClassBrowserModel::setCurrentFile(const QString &newCurrentFile)
 {
+    if (mCurrentFile == newCurrentFile)
+        return;
+    if (mClassBrowserType == ProjectClassBrowserType::CurrentFile)
+        clear(); // never display another file's symbols while this one parses
     mCurrentFile = newCurrentFile;
+    mRefreshPending = true;
+    mRetryAttempts = 0;
 }
 
 void ClassBrowserModel::beginUpdate()
@@ -558,9 +609,6 @@ void ClassBrowserModel::beginUpdate()
 void ClassBrowserModel::endUpdate()
 {
     mUpdateCount--;
-    if (mUpdateCount == 0) {
-        if (mParser && !mParser->parsing()) {
-            fillStatements();
-        }
-    }
+    if (mUpdateCount == 0 && mParser)
+        fillStatements();
 }

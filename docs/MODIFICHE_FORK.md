@@ -16,6 +16,14 @@ L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lav
 Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
 
+## Pannello Struttura e richieste di analisi sovrapposte
+
+Le analisi richieste mentre il parser è occupato da un’altra analisi o da un lettore dei simboli vengono conservate. Le richieste per file diversi restano distinte; quelle ripetute per lo stesso file vengono accorpate senza sopprimere una richiesta esplicita di rianalisi. Anche le scansioni dei progetti vengono rimandate fino alla disponibilità del parser. L’esecuzione usa un solo worker asincrono per parser, con riferimenti deboli per le notifiche accodate. La chiusura confermata dell’applicazione annulla il lavoro pendente; annullando la chiusura i parser restano utilizzabili. Il completamento di un’analisi durante una domanda di salvataggio non può accettare una chiusura rientrante né nascondere la finestra prima della scelta dell’utente.
+
+Il pannello Struttura conserva una copia indipendente degli ultimi simboli validi dello stesso file mentre il parser è occupato, poi si aggiorna automaticamente. Il cambio di file o parser elimina i simboli non pertinenti e le notifiche del parser precedente vengono ignorate. Un tentativo differito, accorpato e limitato copre anche la manutenzione temporanea del parser. Le copie mantengono i dati di visualizzazione e navigazione indipendenti dai simboli modificati in background.
+
+Le regressioni coprono blocchi semplici e annidati, richieste in background, più file durante un’analisi attiva, contenuti aggiornati, scansioni di progetto differite, annullamento e riabilitazione. I controlli grafici verificano conservazione dell’albero durante l’analisi, aggiornamento al termine e cambio di contesto senza notifiche obsolete.
+
 ## Integrazione della 3.5 ufficiale
 
 Il ramo di sviluppo incorpora ora il commit ufficiale `06f28b40b001b87374eeae9b59e47422d6a9ca66`, conservando la baseline originaria indicata sopra. Consulta [confronto e scelte di integrazione](INTEGRAZIONE_UPSTREAM_3_5.md) per funzionalità ereditate, comportamenti combinati e verifiche. I pacchetti pubblicati 3.5.1 restano invariati.

@@ -76,6 +76,7 @@ private:
     PStatement createDummy(const PStatement& statement);
     ClassBrowserNode* getParentNode(const PStatement &parentStatement, int depth);
     bool isScopeStatement(const PStatement& statement);
+    void scheduleRefreshRetry();
 private:
     ClassBrowserNode * mRoot;
     QHash<QString,PStatement> mDummyStatements;
@@ -84,6 +85,11 @@ private:
     QSet<Statement*> mProcessedStatements;
     QVector<PClassBrowserNode> mNodes;
     PCppParser mParser;
+    QMetaObject::Connection mParseFinishedConnection;
+    quint64 mParserGeneration = 0;
+    bool mRefreshPending = false;
+    bool mRetryScheduled = false;
+    int mRetryAttempts = 0;
     bool mUpdating;
     int mUpdateCount;
     mutable QRecursiveMutex mMutex;

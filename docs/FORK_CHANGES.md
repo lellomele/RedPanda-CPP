@@ -16,6 +16,14 @@ The initial archive and official 3.4 tag identify the same commit. Work on the c
 Original copyrights, attribution and GPL licensing are retained. The fork attribution is **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
 
 
+## Structure panel and overlapping analysis requests
+
+Pending analyses are retained when another analysis or a symbol reader occupies the parser. Requests for different files are preserved; repeated requests for the same file are combined without suppressing an explicit reparse. Project scans are also deferred until the parser becomes available. Dispatch uses one asynchronous worker per parser, with weak ownership for queued callbacks. Committed application shutdown cancels pending work; cancelling the close keeps the remaining parsers usable. Analysis completion during a save prompt cannot accept a nested close or hide the window before the user chooses what to do.
+
+The Structure panel keeps a detached snapshot of the last valid symbols for the same file while parsing is busy, then refreshes automatically. Changing file or parser clears obsolete symbols, and notifications from a previous parser are ignored. A coalesced, bounded retry also covers temporary parser maintenance. Snapshots keep display/navigation data independent of statements modified by the background parser.
+
+Regression cases exercise frozen and nested readers, background requests, multiple files during active analysis, updated contents, deferred project scans, cancellation and re-enablement. Native GUI checks cover preserving the tree while busy, refreshing after completion and switching context without stale notifications.
+
 ## Official 3.5 integration
 
 The development branch now incorporates official commit `06f28b40b001b87374eeae9b59e47422d6a9ca66`, retaining the original baseline above. See [comparison and integration decisions](UPSTREAM_3_5_INTEGRATION.md) for inherited features, combined behaviour and validation. Published 3.5.1 packages are unchanged.

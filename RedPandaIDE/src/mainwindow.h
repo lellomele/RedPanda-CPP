@@ -926,6 +926,7 @@ private:
     SearchInFileDialog *mSearchInFilesDialog;
     SearchDialog *mSearchDialog;
     bool mQuitting;
+    bool mHandlingCloseEvent = false;
     bool mOpeningFiles;
     bool mOpeningProject;
     bool mClosingProject;

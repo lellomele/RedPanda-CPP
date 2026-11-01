@@ -5843,6 +5843,12 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // A rejected save must never leave the close event accepted or make the
     // next attempt bypass document prompts because mQuitting remained set.
     event->ignore();
+    // Save/discard dialogs run a nested event loop. Parser completion or a
+    // second close request must not bypass a still-pending document decision.
+    if (mHandlingCloseEvent)
+        return;
+    mHandlingCloseEvent = true;
+    const auto finishCloseEvent = finally([this] { mHandlingCloseEvent = false; });
     const bool wasQuitting = mQuitting;
     const bool wasClosingAll = mClosingAll;
     const bool wasClosingProject = mClosingProject;
@@ -5962,9 +5968,28 @@ void MainWindow::closeEvent(QCloseEvent *event) {
                 //if don't save last open files, close project before editors, to save project opened editors;
 
             }*/
+            // Retain parsers until shutdown has cancelled queued work. A worker
+            // not yet started is not represented by mParsingCount, and its
+            // content callback refers to the still-live EditorManager.
+            QList<PCppParser> shutdownParsers;
+            const auto rememberParser = [&shutdownParsers](const PCppParser &parser) {
+                if (parser && !shutdownParsers.contains(parser))
+                    shutdownParsers.append(parser);
+            };
+            const auto rememberEditorParsers = [this, &rememberParser] {
+                for (int index = 0; index < mEditorManager->pageCount(); ++index) {
+                    if (const Editor *editor = mEditorManager->getEditor(index))
+                        rememberParser(editor->parser());
+                }
+            };
+            if (mProject)
+                rememberParser(mProject->cppParser());
+            rememberEditorParsers();
             if (mProject) {
                 closeProject(false);
             }
+            // Closing a project can detach editors onto non-project parsers.
+            rememberEditorParsers();
 
             mClosingAll=true;
             if (!mEditorManager->closeAll(false)) {
@@ -5974,6 +5999,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
                 return ;
             }
             mClosingAll=false;
+            // Only commit this cancellation after all save/discard prompts
+            // succeeded. A cancelled close leaves every remaining parser usable.
+            for (const auto &parser : shutdownParsers)
+                parser->setEnabled(false);
         //    if (!mShouldRemoveAllSettings && pSettings->editor().autoLoadLastFiles()) {
         //        if (mProject) {
         //            closeProject(false);
@@ -6859,7 +6888,7 @@ void MainWindow::onParseFinished(int total, int)
                                   .arg(total).arg(parseTime));
     }
     mParsingCount--;
-    if (mParsingCount == 0 && mQuitting)
+    if (mParsingCount == 0 && mQuitting && !mHandlingCloseEvent)
         this->close();
 }
 

@@ -770,7 +770,16 @@ private:
     QMap<QString,KeywordType> mCppKeywords;
     QSet<QString> mCppTypeKeywords;
 
-    PParseFileCommand mLastParseFileCommand;
+    // One pending request per file, preserving requests for other editors.
+    QList<ParseFileCommand> mPendingParseFileCommands;
+    std::weak_ptr<CppParser> mAsyncOwner;
+    bool mPendingDispatchScheduled = false;
+    bool mPendingWorkerActive = false;
+    bool mPendingFileList = false;
+    bool mPendingFileListUpdateView = false;
+    void queueParseFileCommand(const ParseFileCommand &command);
+    void schedulePendingParseCommands();
+    void startPendingParseCommands();
 
     friend class TestCppParser; // Regression coverage of private expression tokenization.
     friend class CppFileListParserThread;

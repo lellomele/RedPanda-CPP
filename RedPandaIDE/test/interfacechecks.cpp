@@ -25,6 +25,7 @@
 #include "src/appidentity.h"
 #include "src/widgets/aboutdialog.h"
 #include "src/widgets/cpudialog.h"
+#include "src/widgets/classbrowser.h"
 #include "src/editor.h"
 #include "src/settingsdialog/environmentshortcutwidget.h"
 #include "src/shortcutmanager.h"
@@ -62,6 +63,8 @@
 #include <QMessageBox>
 #include <QEventLoop>
 #include <QTimer>
+#include <QSemaphore>
+#include <thread>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -191,6 +194,74 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             if (savedClipboard) QGuiApplication::clipboard()->setMimeData(savedClipboard);
         }
         cpu.hide();
+    }
+    {
+        // Exercise a real parser on an isolated model; the semaphore forces the
+        // refresh attempt to overlap parsing without relying on timing luck.
+        const QString originalFile = QStringLiteral("structure_fixture.cpp");
+        auto parser = std::make_shared<CppParser>();
+        parser->setOnGetFileStream([](const QString &file, QStringList &lines) {
+            if (!file.endsWith(QStringLiteral("structure_fixture.cpp"))) return false;
+            lines = {QStringLiteral("int original_symbol = 1;")};
+            return true;
+        });
+        CppParser::parseFileBlocking(parser, originalFile, false, QString(), false, false);
+        ClassBrowserModel model;
+        model.beginUpdate();
+        model.setParser(parser);
+        model.setCurrentFile(originalFile);
+        model.endUpdate();
+        const auto contains = [&](const QString &name) {
+            for (int row = 0; row < model.rowCount({}); ++row)
+                if (model.data(model.index(row, 0, {}), Qt::DisplayRole).toString().contains(name))
+                    return true;
+            return false;
+        };
+        check("Structure model displays parsed file symbols", contains(QStringLiteral("original_symbol")));
+        QSemaphore parsingStarted, permitFinish;
+        parser->setOnGetFileStream([&](const QString &file, QStringList &lines) {
+            if (!file.endsWith(QStringLiteral("structure_fixture.cpp"))) return false;
+            parsingStarted.release();
+            if (!permitFinish.tryAcquire(1, 5000)) return false;
+            lines = {QStringLiteral("int refreshed_symbol = 2;")};
+            return true;
+        });
+        std::thread parsing([&] { CppParser::parseFileBlocking(parser, originalFile, false, QString(), false, true); });
+        const bool busy = parsingStarted.tryAcquire(1, 3000);
+        check("Structure regression fixture reaches active parsing", busy);
+        if (busy) {
+            model.fillStatements();
+            waitForUi(180); // includes queued parse signals and at least one retry
+            check("Structure retains previous same-file snapshot while parser is busy",
+                  contains(QStringLiteral("original_symbol")));
+        }
+        permitFinish.release();
+        parsing.join();
+        waitForUi(250);
+        check("Structure automatically refreshes after parser finishes",
+              contains(QStringLiteral("refreshed_symbol")) && !contains(QStringLiteral("original_symbol")));
+
+        auto next = std::make_shared<CppParser>();
+        next->setOnGetFileStream([](const QString &file, QStringList &lines) {
+            if (!file.endsWith(QStringLiteral("structure_next.cpp"))) return false;
+            lines = {QStringLiteral("int next_symbol = 3;")};
+            return true;
+        });
+        const QString nextFile = QStringLiteral("structure_next.cpp");
+        CppParser::parseFileBlocking(next, nextFile, false, QString(), false, false);
+        // Queue a completion from the old parser, then switch before delivery.
+        emit parser->parseFinished(0, 0);
+        int refreshes = 0;
+        QObject::connect(&model, &ClassBrowserModel::refreshStarted, &model, [&] { ++refreshes; });
+        model.beginUpdate(); model.setParser(next); model.setCurrentFile(nextFile); model.endUpdate();
+        const int afterSwitch = refreshes;
+        waitForUi(150);
+        check("Structure ignores queued completions from previous parser",
+              refreshes == afterSwitch && contains(QStringLiteral("next_symbol")));
+        model.beginUpdate(); model.setCurrentFile(QStringLiteral("structure_missing.cpp")); model.endUpdate();
+        check("Structure does not show symbols of a different current file", model.rowCount({}) == 0);
+        model.setParser(nullptr);
+        check("Structure clears when the parser is detached", model.rowCount({}) == 0);
     }
     const auto *aboutAction = window.findChild<QAction *>("actionAbout");
     check("About menu uses the current application artwork", aboutAction && aboutAction->icon().pixmap(32, 32).toImage() == QIcon(AppIdentity::iconResource()).pixmap(32, 32).toImage());
@@ -866,6 +937,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     check("Close workflow project fixture written", writeBytes(closeProjectPath,
           "[Project]\nVer=3\nName=Close workflow\nUnitCount=0\nType=0\nModelType=0\n"));
     int stage = 0, layoutErrors = 0, cancelledDocumentPrompts = 0;
+    bool nestedCloseChecked = false, nestedCloseRejected = false;
+    bool parseNotificationDelivered = false;
     QTimer handleCloseMessages;
     QObject::connect(&handleCloseMessages, &QTimer::timeout, [&] {
         if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
@@ -873,6 +946,18 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 ++layoutErrors;
             if (stage == 2 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
                 ++cancelledDocumentPrompts;
+                if (!nestedCloseChecked) {
+                    nestedCloseChecked = true;
+                    // Finish a background notification while the save dialog is
+                    // pumping events, and deliver another native close event.
+                    const bool started = QMetaObject::invokeMethod(&window, "onParseStarted", Qt::DirectConnection);
+                    const bool finished = QMetaObject::invokeMethod(&window, "onParseFinished", Qt::DirectConnection,
+                                                                  Q_ARG(int, 0), Q_ARG(int, 0));
+                    parseNotificationDelivered = started && finished;
+                    QCloseEvent nested;
+                    QApplication::sendEvent(&window, &nested);
+                    nestedCloseRejected = !nested.isAccepted() && window.isVisible();
+                }
                 message->button(QMessageBox::Cancel)->click();
             } else if (stage == 3 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
                 message->done(0); // No standard save/discard choice was made.
@@ -918,6 +1003,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             QCloseEvent cancelledRetry;
             QApplication::sendEvent(&window, &cancelledRetry);
             check("Close retry reaches unsaved-document prompts instead of bypassing them", cancelledDocumentPrompts > 0);
+            check("Parser completion during a save prompt cannot accept a nested close",
+                  parseNotificationDelivered && nestedCloseChecked && nestedCloseRejected);
             check("Cancelling close retry keeps the window open and flags reset",
                   !cancelledRetry.isAccepted() && window.isVisible()
                   && !window.isQuitting() && !window.isClosingAll() && !window.closingProject());

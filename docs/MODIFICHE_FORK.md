@@ -26,7 +26,7 @@ Le regressioni coprono blocchi semplici e annidati, richieste in background, pi�
 
 ## Integrazione della 3.5 ufficiale
 
-Il ramo di sviluppo incorpora ora il commit ufficiale `06f28b40b001b87374eeae9b59e47422d6a9ca66`, conservando la baseline originaria indicata sopra. Consulta [confronto e scelte di integrazione](INTEGRAZIONE_UPSTREAM_3_5.md) per funzionalità ereditate, comportamenti combinati e verifiche. I pacchetti pubblicati 3.5.1 restano invariati.
+La release 3.5.2 incorpora il commit ufficiale `06f28b40b001b87374eeae9b59e47422d6a9ca66`, conservando la baseline originaria indicata sopra. Consulta [confronto e scelte di integrazione](INTEGRAZIONE_UPSTREAM_3_5.md) per funzionalità ereditate, comportamenti combinati e verifiche. I pacchetti 3.5.2 comprendono questa integrazione e la correzione del pannello Struttura descritta sopra. I pacchetti precedenti 3.5.1 restano disponibili separatamente.
 
 ## Aggiunte implementate
 

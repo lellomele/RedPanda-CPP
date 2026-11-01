@@ -39,6 +39,14 @@ The preference dialog groups pages under clearer categories: **Interface and wor
 
 Press **Ctrl+F**, enter a page name or keyword, and select a matching page. Filtering keeps the current page open. When moving away from edited settings, choose **Save**, **Discard** or **Cancel**. Pages are created when needed rather than all at once; page and column sizing reduces clipped labels.
 
+## Structure, completion and debugging
+
+The **Structure** panel follows the active C/C++ file. If the parser is busy, it keeps the last valid same-file symbol tree and refreshes when analysis completes. Pending analyses for different files are retained; repeated requests for one file are combined. Switching file clears symbols from the previous context. **Code > Reparse Code** requests an explicit fresh analysis when needed.
+
+Official 3.5 updates add reliable mouse selection and **Ctrl+A/C** in the read-only CPU disassembly view. Watch expressions containing spaces, quotes or backslashes are encoded correctly for GDB/MI. Compiler options distinguish GCC from Clang, and a hidden completion popup ignores pending keyboard input. These upstream updates are combined with the fork’s existing preferences, themes and document protections.
+
+Cancelling a save prompt keeps the window open even if a background analysis finishes while that prompt is visible. Confirmed application shutdown cancels queued analyses before their editor callbacks can run.
+
 ## Snippet library and insertion
 
 Use **Options > Editor and snippets > Snippet** to search by name, prefix, description or code. You can create, duplicate, enable or disable snippets, assign a language, import with merge or replacement, export a library and restore defaults. C, C++, shared headers and assembly are supported. The collection includes 23 default examples and the new-file templates.

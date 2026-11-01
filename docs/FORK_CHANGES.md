@@ -26,7 +26,7 @@ Regression cases exercise frozen and nested readers, background requests, multip
 
 ## Official 3.5 integration
 
-The development branch now incorporates official commit `06f28b40b001b87374eeae9b59e47422d6a9ca66`, retaining the original baseline above. See [comparison and integration decisions](UPSTREAM_3_5_INTEGRATION.md) for inherited features, combined behaviour and validation. Published 3.5.1 packages are unchanged.
+Release 3.5.2 incorporates official commit `06f28b40b001b87374eeae9b59e47422d6a9ca66`, retaining the original baseline above. See [comparison and integration decisions](UPSTREAM_3_5_INTEGRATION.md) for inherited features, combined behaviour and validation. The 3.5.2 packages include this integration and the Structure-panel correction described above. Earlier 3.5.1 packages remain available separately.
 
 ## Implemented additions
 

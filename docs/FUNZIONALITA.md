@@ -39,6 +39,14 @@ Le pagine sono raggruppate in categorie più chiare: **Interfaccia e area di lav
 
 Premi **Ctrl+F**, cerca il nome di una pagina o una parola chiave e seleziona un risultato. Il filtro mantiene aperta la pagina corrente. Quando lasci impostazioni modificate, scegli **Salva**, **Scarta** oppure **Annulla**. Le pagine vengono create quando servono, anziché tutte insieme; dimensionamento delle pagine e delle colonne riduce le etichette tagliate.
 
+## Struttura, completamento e debug
+
+Il pannello **Struttura** segue il file C/C++ attivo. Se il parser è occupato, conserva l’ultimo albero valido dello stesso file e si aggiorna al termine dell’analisi. Le richieste per file diversi vengono conservate; quelle ripetute per uno stesso file vengono accorpate. Cambiando file vengono rimossi i simboli del contesto precedente. **Codice > Analizza nuovamente il codice** richiede una nuova analisi esplicita quando necessario.
+
+Gli aggiornamenti ufficiali 3.5 migliorano la selezione con il mouse e **Ctrl+A/C** nel disassemblato CPU di sola lettura. Le espressioni Watch con spazi, virgolette o barre inverse vengono codificate correttamente per GDB/MI. Le opzioni distinguono GCC da Clang e un popup di completamento nascosto ignora i tasti pendenti. Questi sviluppi upstream sono combinati con preferenze, temi e protezioni dei documenti già presenti nel fork.
+
+Annullando una domanda di salvataggio la finestra resta aperta anche se un’analisi in background termina mentre il dialogo è visibile. La chiusura confermata dell’applicazione annulla le analisi accodate prima che possano richiamare gli editor.
+
 ## Raccolta e inserimento degli snippet
 
 In **Preferenze > Editor e snippet > Snippet** puoi cercare per nome, prefisso, descrizione o codice. Sono disponibili creazione, duplicazione, abilitazione/disabilitazione, assegnazione del linguaggio, importazione con unione o sostituzione, esportazione e ripristino dei predefiniti. Sono supportati C, C++, header comuni e assembly. La raccolta comprende 23 esempi predefiniti e i template dei nuovi file.

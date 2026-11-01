@@ -60,10 +60,16 @@ The `Stabilization gates` workflow builds the full application with Git, Lua and
 
 The release requirement is Windows x64 with Qt 6.11.2. The Linux/Qt 5 job is informational legacy coverage and does not block the Windows release; its actual result remains visible. Other platforms and toolchains require separate validation.
 
-On Windows with Git enabled, an additional native askpass encoding test brings the total to 22; it uses synthetic Unicode input, never real credentials. When a Python 3 interpreter is available, CTest also runs the orchestration-report regression suite, bringing that configuration to 23 checks. Python is a development dependency only.
+On Windows with Git enabled, an additional native askpass encoding test brings the total to 22; it uses synthetic Unicode input, never real credentials. When a Python 3 interpreter is available, CTest also runs the orchestration-report regression suite. The GDB/MI argument and watch suite brings this Windows configuration to **24 suites**. Python is a development dependency only.
 
 Real-tool GUI checks require GCC and its Make executable; an available GDB next to the compiler also exercises an owned debug fixture and the production MI parser. Pass `--git /path/to/git` for offline Git/UI checks. No user repository is used. Project error/retry checks use Rebuild All to avoid file-time resolution ambiguities in Make.
 
 GUI reports contain an explicit `skipped` array. The only accepted skip is successful native clipboard transfer when Windows denies clipboard access to the test process with error 5. That case still checks the recoverable failure message, retained original/selection and retry; it does not claim a successful transfer. Other failures and unsupported skips fail the run. A normal interactive launch can exercise the positive clipboard case.
 
 The owned compiler-cancellation fixture allows up to 15 seconds for native startup and requires a marker from the running child before requesting stop. Startup latency is recorded separately; the child and worker must then finish within five seconds of cancellation. Failed startup remains a failed check. Direct GCC diagnostic checks add the compiler runtime directory only to their subprocess environment and verify that the IDE process PATH is unchanged.
+
+## Parser scheduling and Structure regressions
+
+The parser suite deterministically freezes analysis while requests arrive, including nested readers, a real background worker, distinct files and updated contents. A semaphore-controlled active parse verifies that later requests are not lost; project scans and disabling/re-enabling a parser are covered too. GUI checks preserve a same-file Structure snapshot while busy, refresh it automatically, ignore queued completions from a previous parser and reject nested close events during save prompts.
+
+For the real debugger test, set `REDPANDA_TEST_CXX` and `REDPANDA_TEST_GDB` to absolute executable paths before CTest. Without both variables, the real-tool case is explicitly skipped; argument encoding remains tested. The official Windows CI supplies both paths. Release results are attached as `TEST_RESULTS.json`.

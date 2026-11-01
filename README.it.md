@@ -92,4 +92,4 @@ Consulta [Test e misure dell’editing](docs/TEST_IT.md) per le verifiche con pr
 
 GNU GPL versione 3 o successiva: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Gli autori e contributori originali conservano i propri copyright; i componenti di terze parti mantengono le rispettive licenze.
 
-Attribuzione del fork: **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, presente anche nella finestra Informazioni accanto ai crediti originali.
+Attribuzione del fork: **Copyright © 2026 Ing. Raffaele Mele (lellomele@gmail.com)**, oltre ai crediti originali.

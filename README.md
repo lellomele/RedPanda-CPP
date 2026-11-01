@@ -92,4 +92,4 @@ See [Testing and editing measurements](docs/TESTING.md) for isolated application
 
 GNU GPL version 3 or later: [LICENSE](LICENSE), [FORK_NOTICE.txt](FORK_NOTICE.txt). Original authors and contributors retain their copyrights; third-party components retain their respective licenses.
 
-Fork attribution: **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**, also shown in About beside the original credits.
+Fork attribution: **Copyright © 2026 Ing. Raffaele Mele (lellomele@gmail.com)**.

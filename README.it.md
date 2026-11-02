@@ -12,15 +12,15 @@ Basato su [RedPanda C++ di Roy Qu e contributori](https://github.com/royqh1979/R
 
 ## Installazione
 
-**[Release 3.5.2 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.2-rmele.1)** — Windows 10/11 x64.
+**[Release 3.5.3 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.3-rmele.1)** — Windows 10/11 x64.
 
 | Pacchetto | Download |
 | --- | --- |
-| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.2-rmele.1/RedPandaCPP-3.5.2-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.2-rmele.1/RedPandaCPP-3.5.2-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.2-rmele.1/RedPandaCPP-3.5.2-rmele-Portable-x64.exe) |
-| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.2-rmele.1/RedPandaCPP-3.5.2-rmele-Sources.zip) |
-| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.2-rmele.1/SHA256SUMS.txt) |
+| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Portable-x64.exe) |
+| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Sources.zip) |
+| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/SHA256SUMS.txt) |
 
 I pacchetti Windows x64 sono disponibili in tre formati:
 
@@ -56,7 +56,7 @@ Apri un sorgente o progetto, configura un compilatore in **Strumenti > Preferenz
 - **Snippet:** gestisci e filtra gli snippet, importa/esporta raccolte ed espandi un prefisso con **Ctrl+Alt+Spazio**. La scorciatoia è configurabile; Tab passa fra i segnaposto.
 - **Diagnostici GCC:** con l'interfaccia italiana, pannello Problemi e tooltip condividono la traduzione locale e conservano l'originale. I messaggi non riconosciuti restano invariati.
 - **Pulisci artefatti di compilazione:** visualizza gli output riconosciuti e scegli quali spostare nel Cestino. I Makefile personalizzati hanno un comando `clean` separato.
-- **Struttura e debug:** l’albero dei simboli si aggiorna al termine delle analisi accodate; il disassemblato CPU consente selezione/copia e le espressioni Watch conservano virgolette e barre inverse.
+- **Struttura e debug:** un messaggio lampeggiante segnala l’aggiornamento dell’albero dei simboli, che si aggiorna al termine delle analisi accodate; il disassemblato CPU consente selezione/copia e le espressioni Watch conservano virgolette e barre inverse.
 - **Recupero e resilienza:** abilita copie periodiche di recupero e accedi alla relativa cartella o al registro diagnostico.
 
 Consulta [Funzionalità e operazioni](docs/FUNZIONALITA.md) per temi disponibili, sintassi degli snippet, copertura dei diagnostici e comportamento della pulizia.

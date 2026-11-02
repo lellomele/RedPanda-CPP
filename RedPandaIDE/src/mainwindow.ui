@@ -748,6 +748,16 @@
         </attribute>
        </widget>
       </item>
+      <item>
+       <widget class="QLabel" name="structureUpdateIndicator">
+        <property name="text">
+         <string>Updating structure…</string>
+        </property>
+        <property name="margin">
+         <number>5</number>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
     <widget class="QWidget" name="tabProblemSet">

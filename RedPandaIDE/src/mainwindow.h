@@ -950,6 +950,7 @@ private:
     BookmarkModel *mBookmarkModel;
     SearchResultTreeViewDelegate *mSearchViewDelegate;
     ClassBrowserModel *mClassBrowserModel;
+    QTimer mStructureUpdateBlinkTimer;
     std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > mStatementColors;
     SymbolUsageManager *mSymbolUsageManager;
     CodeSnippetsManager *mCodeSnippetManager;

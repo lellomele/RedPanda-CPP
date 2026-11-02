@@ -466,6 +466,31 @@ MainWindow::MainWindow(QWidget *parent)
     connect(mClassBrowserModel, &ClassBrowserModel::refreshEnd,
             this, &MainWindow::onClassBrowserRefreshEnd);
 
+    // Keep the row's height fixed during the blink so the tree does not jump.
+    ui->structureUpdateIndicator->setMinimumHeight(ui->structureUpdateIndicator->sizeHint().height());
+    ui->structureUpdateIndicator->setAccessibleName(tr("Updating structure…"));
+    ui->structureUpdateIndicator->setToolTip(tr("Updating structure…"));
+    ui->structureUpdateIndicator->hide();
+    mStructureUpdateBlinkTimer.setInterval(700);
+    connect(&mStructureUpdateBlinkTimer, &QTimer::timeout, this, [this] {
+        // Some parser maintenance operations do not emit parseFinished.
+        // Recheck while blinking so a stale notification cannot leave it on.
+        mClassBrowserModel->synchronizeParsingState();
+        if (!mClassBrowserModel->parsingInProgress())
+            return;
+        ui->structureUpdateIndicator->setText(
+            ui->structureUpdateIndicator->text().trimmed().isEmpty()
+                ? tr("Updating structure…") : QStringLiteral(" "));
+    });
+    connect(mClassBrowserModel, &ClassBrowserModel::parsingStateChanged, this, [this](bool parsing) {
+        ui->structureUpdateIndicator->setText(tr("Updating structure…"));
+        ui->structureUpdateIndicator->setVisible(parsing);
+        if (parsing)
+            mStructureUpdateBlinkTimer.start();
+        else
+            mStructureUpdateBlinkTimer.stop();
+    });
+
     connect(&mFileSystemWatcher,&QFileSystemWatcher::fileChanged,
             this, &MainWindow::onFileChanged);
     connect(&mFileSystemWatcher,&QFileSystemWatcher::directoryChanged,

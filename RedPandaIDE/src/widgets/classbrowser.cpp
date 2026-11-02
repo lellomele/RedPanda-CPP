@@ -215,6 +215,7 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
 {
     if (mParser == newCppParser)
         return;
+    disconnect(mParseStartedConnection);
     disconnect(mParseFinishedConnection);
     ++mParserGeneration;
     mRetryScheduled = false;
@@ -225,14 +226,40 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
     clear();
     if (mParser) {
         const quint64 generation = mParserGeneration;
+        mParseStartedConnection = connect(mParser.get(), &CppParser::parseStarted,
+            this, [this, generation] {
+                if (generation == mParserGeneration)
+                    updateParsingState();
+            }, Qt::QueuedConnection);
         mParseFinishedConnection = connect(mParser.get(), &CppParser::parseFinished,
             this, [this, generation](int, int) {
                 if (generation != mParserGeneration)
                     return; // queued notification from an obsolete parser
                 mRetryAttempts = 0;
                 fillStatements();
+                updateParsingState();
             }, Qt::QueuedConnection);
     }
+    updateParsingState();
+}
+
+bool ClassBrowserModel::parsingInProgress() const
+{
+    return mParsingInProgress;
+}
+
+void ClassBrowserModel::synchronizeParsingState()
+{
+    updateParsingState();
+}
+
+void ClassBrowserModel::updateParsingState()
+{
+    const bool parsing = mParser && mParser->parsing();
+    if (mParsingInProgress == parsing)
+        return;
+    mParsingInProgress = parsing;
+    emit parsingStateChanged(parsing);
 }
 
 void ClassBrowserModel::clear()

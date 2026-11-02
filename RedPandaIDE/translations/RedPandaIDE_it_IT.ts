@@ -4200,6 +4200,10 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Updating structure…</source>
+            <translation>Aggiornamento della struttura in corso…</translation>
+        </message>
+        <message>
             <location filename="../src/mainwindow.ui" line="+14" />
             <location filename="../src/mainwindow.cpp" line="+1470" />
             <source>Red Panda C++</source>

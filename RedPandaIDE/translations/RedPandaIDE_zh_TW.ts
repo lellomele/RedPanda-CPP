@@ -5028,6 +5028,10 @@ p, li { white-space: pre-wrap; }
     <context>
         <name>MainWindow</name>
         <message>
+            <source>Updating structure…</source>
+            <translation>正在更新結構…</translation>
+        </message>
+        <message>
             <location filename="../src/mainwindow.ui" line="+14" />
             <location filename="../src/mainwindow.cpp" line="+1470" />
             <source>Red Panda C++</source>

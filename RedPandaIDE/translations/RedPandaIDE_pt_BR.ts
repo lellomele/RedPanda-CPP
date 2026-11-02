@@ -4460,6 +4460,10 @@
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Updating structure…</source>
+        <translation>Atualizando a estrutura…</translation>
+    </message>
+    <message>
         <location filename="../src/mainwindow.ui" line="+14"/>
         <location filename="../src/mainwindow.cpp" line="+1470"/>
         <source>Red Panda C++</source>

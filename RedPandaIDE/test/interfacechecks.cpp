@@ -263,6 +263,116 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         model.setParser(nullptr);
         check("Structure clears when the parser is detached", model.rowCount({}) == 0);
     }
+    {
+        // Block real parser workers deterministically so the indicator can be
+        // observed throughout an analysis and during a parser switch.
+        auto *view = window.findChild<QTreeView *>("classBrowser");
+        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        auto *indicator = window.findChild<QLabel *>("structureUpdateIndicator");
+        check("Structure analysis indicator and browser are available", model && indicator);
+        if (model && indicator) {
+            const PCppParser originalParser = model->parser();
+            const QString originalFile = model->currentFile();
+            const ProjectClassBrowserType originalType = model->classBrowserType();
+            auto first = std::make_shared<CppParser>();
+            auto second = std::make_shared<CppParser>();
+            QSemaphore firstStarted, firstFinish, secondStarted, secondFinish;
+            first->setOnGetFileStream([&](const QString &file, QStringList &lines) {
+                if (!file.endsWith(QStringLiteral("indicator_first.cpp"))) return false;
+                firstStarted.release();
+                if (!firstFinish.tryAcquire(1, 10000)) return false;
+                lines = QStringList{QStringLiteral("int first_indicator_symbol = 1;")};
+                return true;
+            });
+            second->setOnGetFileStream([&](const QString &file, QStringList &lines) {
+                if (!file.endsWith(QStringLiteral("indicator_second.cpp"))) return false;
+                secondStarted.release();
+                if (!secondFinish.tryAcquire(1, 10000)) return false;
+                lines = QStringList{QStringLiteral("int second_indicator_symbol = 2;")};
+                return true;
+            });
+            model->beginUpdate();
+            model->setParser(first);
+            model->setCurrentFile(QStringLiteral("indicator_first.cpp"));
+            model->endUpdate();
+            waitForUi(100);
+            check("Structure indicator is hidden when analysis is idle", indicator->isHidden());
+            std::thread firstWorker([&] {
+                CppParser::parseFileBlocking(first, QStringLiteral("indicator_first.cpp"), false, QString(), false, true);
+            });
+            const bool firstBusy = firstStarted.tryAcquire(1, 3000);
+            waitForUi(150);
+            check("Structure indicator appears while the current parser is active",
+                  firstBusy && model->parsingInProgress() && !indicator->isHidden());
+            const QString blinkBefore = indicator->text();
+            waitForUi(850);
+            check("Structure indicator blinks during active analysis",
+                  firstBusy && !indicator->isHidden() && indicator->text() != blinkBefore);
+            model->beginUpdate();
+            model->setParser(second);
+            model->setCurrentFile(QStringLiteral("indicator_second.cpp"));
+            model->endUpdate();
+            waitForUi(100);
+            check("Switching to an idle parser clears the structure indicator",
+                  !model->parsingInProgress() && indicator->isHidden());
+            std::thread secondWorker([&] {
+                CppParser::parseFileBlocking(second, QStringLiteral("indicator_second.cpp"), false, QString(), false, true);
+            });
+            const bool secondBusy = secondStarted.tryAcquire(1, 3000);
+            waitForUi(150);
+            check("Structure indicator follows analysis of the new file",
+                  secondBusy && model->parsingInProgress() && !indicator->isHidden());
+            firstFinish.release();
+            firstWorker.join();
+            waitForUi(150);
+            check("Old parser completion cannot hide the new parser indicator",
+                  secondBusy && model->parsingInProgress() && !indicator->isHidden());
+            secondFinish.release();
+            secondWorker.join();
+            waitForUi(200);
+            check("Structure indicator disappears when analysis finishes",
+                  !model->parsingInProgress() && indicator->isHidden());
+            model->beginUpdate();
+            model->setParser(originalParser);
+            model->setClassBrowserType(originalType);
+            model->setCurrentFile(originalFile);
+            model->endUpdate();
+        }
+    }
+    {
+        // resetParser uses the parser's busy state but does not emit
+        // parseFinished. Attach during onBusy to reproduce that race exactly.
+        auto *view = window.findChild<QTreeView *>("classBrowser");
+        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        auto *indicator = window.findChild<QLabel *>("structureUpdateIndicator");
+        if (model && indicator) {
+            const PCppParser originalParser = model->parser();
+            const QString originalFile = model->currentFile();
+            const ProjectClassBrowserType originalType = model->classBrowserType();
+            auto parser = std::make_shared<CppParser>();
+            bool observedReset = false;
+            const auto resetConnection = QObject::connect(parser.get(), &CppParser::onBusy, &window, [&] {
+                model->beginUpdate();
+                model->setParser(parser);
+                model->setCurrentFile(QStringLiteral("reset_indicator.cpp"));
+                model->endUpdate();
+                observedReset = model->parsingInProgress() && !indicator->isHidden();
+            }, Qt::DirectConnection);
+            parser->resetParser();
+            // The parser destructor also resets it; do not reattach a parser
+            // while its last shared owner is being destroyed.
+            QObject::disconnect(resetConnection);
+            check("Reset fixture observes the structure indicator during parser maintenance", observedReset);
+            waitForUi(1500);
+            check("Structure indicator clears after parser maintenance without parseFinished",
+                  !parser->parsing() && !model->parsingInProgress() && indicator->isHidden());
+            model->beginUpdate();
+            model->setParser(originalParser);
+            model->setClassBrowserType(originalType);
+            model->setCurrentFile(originalFile);
+            model->endUpdate();
+        }
+    }
     const auto *aboutAction = window.findChild<QAction *>("actionAbout");
     check("About menu uses the current application artwork", aboutAction && aboutAction->icon().pixmap(32, 32).toImage() == QIcon(AppIdentity::iconResource()).pixmap(32, 32).toImage());
     auto *cleanAction = window.findChild<QAction *>("actionMakeClean");

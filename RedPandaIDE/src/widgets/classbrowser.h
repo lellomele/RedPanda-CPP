@@ -50,6 +50,8 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     const PCppParser &parser() const;
     void setParser(const PCppParser &newCppParser);
+    bool parsingInProgress() const;
+    void synchronizeParsingState();
     void clear();
     const QString &currentFile() const;
     void setCurrentFile(const QString &newCurrentFile);
@@ -66,6 +68,7 @@ public:
 signals:
     void refreshStarted();
     void refreshEnd();
+    void parsingStateChanged(bool parsing);
 public slots:
     void fillStatements();
 private:
@@ -77,6 +80,7 @@ private:
     ClassBrowserNode* getParentNode(const PStatement &parentStatement, int depth);
     bool isScopeStatement(const PStatement& statement);
     void scheduleRefreshRetry();
+    void updateParsingState();
 private:
     ClassBrowserNode * mRoot;
     QHash<QString,PStatement> mDummyStatements;
@@ -85,7 +89,9 @@ private:
     QSet<Statement*> mProcessedStatements;
     QVector<PClassBrowserNode> mNodes;
     PCppParser mParser;
+    QMetaObject::Connection mParseStartedConnection;
     QMetaObject::Connection mParseFinishedConnection;
+    bool mParsingInProgress = false;
     quint64 mParserGeneration = 0;
     bool mRefreshPending = false;
     bool mRetryScheduled = false;

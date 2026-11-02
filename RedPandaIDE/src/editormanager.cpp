@@ -27,6 +27,7 @@
 #include "debugger/debugger.h"
 #include "utils/parser.h"
 #include <QApplication>
+#include <QPointer>
 #include <memory>
 
 EditorManager::EditorManager(QTabWidget* leftPageWidget,
@@ -156,6 +157,9 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
     connect(e, &Editor::parseTodoRequested, pMainWindow->todoParser().get(), &TodoParser::parseFile);
     connect(e, &Editor::fileEncodingChanged, pMainWindow, &MainWindow::updateForEncodingInfo);
     connect(e, &Editor::editorEncodingChanged, pMainWindow, &MainWindow::updateForEncodingInfo);
+    connect(e, &Editor::focusInOccured, this, [this](Editor *editor) {
+        mLastActivePageWidget = findPageControlForEditor(editor);
+    });
     connect(e, &Editor::focusInOccured, pMainWindow, &MainWindow::refreshInfosForEditor);
     connect(e, &Editor::closeOccured, pMainWindow, &MainWindow::removeInfosForEditor);
     connect(e, &Editor::hideOccured, pMainWindow, &MainWindow::removeInfosForEditor);
@@ -194,6 +198,13 @@ QTabWidget* EditorManager::getFocusedPageControl() const {
         if (!leftEditor)
             return mRightPageWidget;
         if (leftEditor->hasFocus())
+            return mLeftPageWidget;
+        // Remember the pane rather than a particular tab's focus timestamp:
+        // selecting an unfocused tab while using a tool panel must not make
+        // commands and Structure jump to the opposite pane.
+        if (mLastActivePageWidget == mRightPageWidget)
+            return mRightPageWidget;
+        if (mLastActivePageWidget == mLeftPageWidget)
             return mLeftPageWidget;
         if (rightEditor->lastFocusOutTime() > leftEditor->lastFocusOutTime())
             return mRightPageWidget;
@@ -303,8 +314,28 @@ void EditorManager::onEditorShown(Editor *e)
                 && pSettings->codeCompletion().shareParser()
                 && !e->inProject()) {
                 if (e->needReparse()) {
-                    resetCppParser(e->parser());
-                    e->reparse();
+                    const PCppParser parser = e->parser();
+                    // A non-project header may use a project parser via its
+                    // context source; clearing it would discard project state.
+                    const auto project = pMainWindow->project();
+                    if (project && parser == project->cppParser()) {
+                        e->reparseIfNeeded();
+                    } else {
+                        QPointer<Editor> shown(e);
+                        Editor *leftRaw = nullptr, *rightRaw = nullptr;
+                        getVisibleEditors(leftRaw, rightRaw);
+                        QPointer<Editor> left(leftRaw), right(rightRaw);
+                        CppParser::resetParsedResultsNonBlocking(parser);
+                        // Queue the selected and other visible file after the
+                        // barrier, even when previously marked as scanned.
+                        if (shown && shown->parser() == parser)
+                            shown->reparse();
+                        if (left && left.data() != shown.data() && left->parser() == parser)
+                            left->reparse();
+                        if (right && right.data() != shown.data() && right.data() != left.data()
+                                && right->parser() == parser)
+                            right->reparse();
+                    }
                 }
             } else
                 e->reparseIfNeeded();
@@ -799,6 +830,8 @@ void EditorManager::activeEditor(Editor *e, bool focus)
         return;
     QTabWidget * pageControl = findPageControlForEditor(e);
     if (pageControl!=nullptr) {
+        if (focus)
+            mLastActivePageWidget = pageControl;
         pageControl->setCurrentWidget(e);
         if (focus)
             e->setFocus();

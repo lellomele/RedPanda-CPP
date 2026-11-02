@@ -16,6 +16,14 @@ L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lav
 Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
 
+## Modifiche locali in verifica — non ancora pubblicate
+
+La selezione di una scheda aggiorna il contesto del pannello Struttura anche quando il focus si trova nella barra delle schede o in un altro controllo. Il file mostrato dall'albero deve corrispondere all'editor attivo; il completamento dell'analisi di un altro file non deve lasciare un albero vuoto o riferito al contesto precedente.
+
+Nella disposizione con due pannelli, l'attivazione di una scheda identifica anche il pannello usato dalle azioni dell'IDE. La verifica comprende il clic su una scheda già selezionata nell'altro pannello, che non genera un normale evento di cambio indice.
+
+I test di regressione controllano il file e il parser associati al modello e la presenza dei simboli specifici attesi nel file attivo, oltre al numero di elementi dell'albero. Queste modifiche appartengono alla build locale in verifica e non sono ancora incluse nei pacchetti pubblicati su GitHub.
+
 ## Pannello Struttura e richieste di analisi sovrapposte
 
 Durante l'analisi, un messaggio lampeggiante localizzato in fondo al pannello Struttura segnala che l'aggiornamento è in corso. Il messaggio scompare al termine dell'attività.

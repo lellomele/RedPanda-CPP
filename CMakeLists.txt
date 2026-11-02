@@ -443,6 +443,16 @@ if(BUILD_TESTING)
                     --ide $<TARGET_FILE:RedPandaIDE>)
             set_tests_properties(test-structure-session-restore PROPERTIES
                 TIMEOUT 360 LABELS "ide;functional;parser" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-rename-workflow
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rename_workflow.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-rename-workflow PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;refactoring" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-structure-concurrency
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_structure_concurrency.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-structure-concurrency PROPERTIES
+                TIMEOUT 280 LABELS "ide;functional;parser" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
             add_dependencies(all-test-targets RedPandaIDE)
         endif()
     endif()

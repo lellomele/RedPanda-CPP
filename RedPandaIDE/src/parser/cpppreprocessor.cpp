@@ -68,6 +68,16 @@ void CppPreprocessor::clear()
     mSupportCPP23=false;
 }
 
+void CppPreprocessor::clearParsedResultsPreservingConfig()
+{
+    clearTempResults();
+    mFileInfos.clear();
+    mFileDefines.clear();
+    mFileUndefines.clear();
+    mScannedFiles.clear();
+    mDefines = mHardDefines;
+}
+
 void CppPreprocessor::clearTempResults()
 {    
     //temporary data when preprocessing single file

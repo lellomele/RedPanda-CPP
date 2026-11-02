@@ -16,6 +16,14 @@ The initial archive and official 3.4 tag identify the same commit. Work on the c
 Original copyrights, attribution and GPL licensing are retained. The fork attribution is **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
 
 
+## Local changes under verification — not yet published
+
+Selecting an editor tab updates the Structure panel context even when focus is on the tab bar or another control. The tree must represent the active editor; completion of another file's analysis must not leave an empty tree or retain the previous context.
+
+In the two-pane layout, activating a tab also identifies the pane used by IDE actions. Verification includes clicking a tab that is already selected in the other pane, which does not emit a normal current-index change event.
+
+Regression tests check the file and parser associated with the model and the specific symbols expected in the active file, as well as the tree's item count. These changes belong to the local build under verification and are not yet included in the packages published on GitHub.
+
 ## Structure panel and overlapping analysis requests
 
 A localized flashing message at the bottom of the Structure panel indicates that analysis is in progress. The message disappears when the activity ends.

@@ -6221,6 +6221,14 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <translation>Errore di rinomina</translation>
         </message>
         <message>
+            <source>Code analysis is busy. Please try again when it finishes.</source>
+            <translation>È in corso l'analisi del codice. Riprova al termine.</translation>
+        </message>
+        <message>
+            <source>The symbol changed during code analysis. Please try again.</source>
+            <translation>Il simbolo è cambiato durante l'analisi del codice. Riprova.</translation>
+        </message>
+        <message>
             <location line="+1" />
             <source>Symbol '%1' is defined in system header.</source>
             <translation>Il simbolo '%1' è definito nell'intestazione del sistema.</translation>

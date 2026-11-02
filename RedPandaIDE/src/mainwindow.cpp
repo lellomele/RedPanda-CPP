@@ -152,6 +152,22 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    // Clicking a tab explicitly activates that editor, including the already
+    // selected tab in the other split pane (which emits no currentChanged).
+    const auto activateClickedTab = [this](QTabWidget *tabs, int index) {
+        if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+                || openingProject() || closingProject() || index < 0)
+            return;
+        if (auto *editor = qobject_cast<Editor *>(tabs->widget(index))) {
+            mEditorManager->activeEditor(editor, true);
+            refreshInfosForEditor(editor);
+        }
+    };
+    connect(ui->EditorTabsLeft, &QTabWidget::tabBarClicked, this,
+            [this, activateClickedTab](int index) { activateClickedTab(ui->EditorTabsLeft, index); });
+    connect(ui->EditorTabsRight, &QTabWidget::tabBarClicked, this,
+            [this, activateClickedTab](int index) { activateClickedTab(ui->EditorTabsRight, index); });
+
     /** Msys2 MinGW 64 Qt 6.8.0 fix: Crash when debug **/
 // #if defined(QT_DEBUG) && QT_VERSION_MAJOR == 6 && QT_VERSION_MINOR == 8
 //     QFont font(pSettings->environment().interfaceFont());
@@ -6898,6 +6914,13 @@ void MainWindow::onParseStarted()
     mParsingCount++;
 }
 
+void MainWindow::onCacheResetFinished()
+{
+    --mParsingCount;
+    if (mParsingCount == 0 && mQuitting && !mHandlingCloseEvent)
+        this->close();
+}
+
 void MainWindow::onParseFinished(int total, int)
 {
     double parseTime = mParserTimer.elapsed() / 1000.0;
@@ -8588,13 +8611,23 @@ void MainWindow::invalidateProjectProxyModel()
     mProjectProxyModel->invalidate();
 }
 
-void MainWindow::on_EditorTabsLeft_currentChanged(int)
+void MainWindow::on_EditorTabsLeft_currentChanged(int index)
 {
+    if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+            || openingProject() || closingProject() || index < 0)
+        return;
+    // A selection can change without focusIn. In a split, a programmatic
+    // change in the inactive pane must keep the actual active editor context.
+    refreshInfosForEditor(mEditorManager->getEditor());
 }
 
 
-void MainWindow::on_EditorTabsRight_currentChanged(int)
+void MainWindow::on_EditorTabsRight_currentChanged(int index)
 {
+    if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+            || openingProject() || closingProject() || index < 0)
+        return;
+    refreshInfosForEditor(mEditorManager->getEditor());
 }
 
 void MainWindow::on_tableTODO_doubleClicked(const QModelIndex &index)
@@ -8641,20 +8674,42 @@ void MainWindow::on_actionRename_Symbol_triggered()
         expression = editor->getExpressionAtPosition(coord);
     }
 
-    if (editor->inProject() && mProject) {
-        for (int i=0;i<mEditorManager->pageCount();i++) {
-            Editor * e=(*mEditorManager)[i];
-            if (e->modified())  {
-                //here we must reparse the file in sync, or rename may fail
-                CppParser::parseFileBlocking(mProject->cppParser(), editor->filename(), editor->inProject(), editor->contextFile(), false, false);
+    const auto showParserBusy = [this, editor] {
+        QMessageBox::information(editor, tr("Rename Error"),
+                                 tr("Code analysis is busy. Please try again when it finishes."));
+    };
+    const auto parseModifiedProjectEditors = [this, &showParserBusy]() {
+        for (int i = 0; i < mEditorManager->pageCount(); ++i) {
+            Editor *e = (*mEditorManager)[i];
+            if (e && e->modified() && e->inProject() && e->parser() == mProject->cppParser()) {
+                if (CppParser::parseFileBlocking(mProject->cppParser(), e->filename(), true,
+                                                 e->contextFile(), false, false) != CppParser::ParseResult::Parsed) {
+                    showParserBusy();
+                    return false;
+                }
             }
         }
+        return true;
+    };
+    bool snapshotReady = false;
+    const auto findStableStatement = [&]() -> PStatement {
+        snapshotReady = editor->parser()->freezeStable();
+        if (!snapshotReady)
+            return {};
+        auto release = finally([&] { editor->parser()->unFreeze(); });
+        return editor->parser()->findStatementOf(editor->filename(), expression, oldCaret.line);
+    };
+
+    if (editor->inProject() && mProject) {
+        if (!parseModifiedProjectEditors())
+            return;
 
         // Find it's definition
-        PStatement oldStatement = editor->parser()->findStatementOf(
-                        editor->filename(),
-                        expression,
-                        oldCaret.line);
+        PStatement oldStatement = findStableStatement();
+        if (!snapshotReady) {
+            showParserBusy();
+            return;
+        }
         // definition of the symbol not found
         if (!oldStatement)
             return;
@@ -8677,10 +8732,11 @@ void MainWindow::on_actionRename_Symbol_triggered()
     }
     QString word;
     //not in project
-    PStatement oldStatement = editor->parser()->findStatementOf(
-                    editor->filename(),
-                    expression,
-                    oldCaret.line);
+    PStatement oldStatement = findStableStatement();
+    if (!snapshotReady) {
+        showParserBusy();
+        return;
+    }
     bool isUndefinedLocalVar = false;
     if (!oldStatement) {
         if (expression.length()!=1)
@@ -8707,16 +8763,52 @@ void MainWindow::on_actionRename_Symbol_triggered()
     if (word == newWord)
         return;
 
-    if (!editor->inProject() && editor->modified() ) {
+    if (editor->inProject() && mProject) {
+        if (!parseModifiedProjectEditors())
+            return;
+    } else if (!editor->inProject() && editor->modified() ) {
         //here we must reparse the file in sync, or rename may fail
-        CppParser::parseFileBlocking(editor->parser(), editor->filename(), editor->inProject(), editor->contextFile(), false, false);
+        if (CppParser::parseFileBlocking(editor->parser(), editor->filename(), editor->inProject(), editor->contextFile(), false, false) != CppParser::ParseResult::Parsed) {
+            showParserBusy();
+            return;
+        }
     }
     CppRefacter refactor(this);
 
-    if (isUndefinedLocalVar) {
-        refactor.renameUndefinedLocalVariable(editor,oldCaret,newWord);
-    } else {
-        refactor.renameSymbol(editor,oldCaret,newWord);
+    if (!editor->parser()->freezeStable()) {
+        showParserBusy();
+        return;
+    }
+    bool symbolChanged = false;
+    {
+        auto release = finally([&] { editor->parser()->unFreeze(); });
+        QStringList currentExpression = editor->getExpressionAtPosition(oldCaret);
+        if (currentExpression.isEmpty() && oldCaret.ch >= 0) {
+            QSynedit::CharPos coord = oldCaret;
+            --coord.ch;
+            currentExpression = editor->getExpressionAtPosition(coord);
+        }
+        const PStatement currentStatement = editor->parser()->findStatementOf(
+            editor->filename(), currentExpression, oldCaret.line);
+        const bool sameSymbol = currentExpression == expression &&
+            ((!oldStatement && !currentStatement) ||
+             (oldStatement && currentStatement &&
+              oldStatement->fullName == currentStatement->fullName &&
+              oldStatement->fileName == currentStatement->fileName &&
+              oldStatement->definitionFileName == currentStatement->definitionFileName &&
+              oldStatement->line == currentStatement->line));
+        if (!sameSymbol) {
+            symbolChanged = true;
+        } else if (isUndefinedLocalVar) {
+            refactor.renameUndefinedLocalVariable(editor,oldCaret,newWord);
+        } else {
+            refactor.renameSymbol(editor,oldCaret,newWord);
+        }
+    }
+    if (symbolChanged) {
+        QMessageBox::information(editor, tr("Rename Error"),
+                                 tr("The symbol changed during code analysis. Please try again."));
+        return;
     }
     editor->reparse();
     editor->checkSyntaxInBack();

@@ -110,6 +110,8 @@ public:
                           const QString& fileName) const;
     bool freeze();  // Freeze/Lock (stop reparse while searching)
     bool freeze(const QString& serialId);  // Freeze/Lock (stop reparse while searching)
+    // Freeze only a fully up-to-date, idle parser; never wait for pending work.
+    bool freezeStable();
     QStringList getClassesList() const;
     QStringList getFileDirectIncludes(const QString& filename) const;
     QSet<QString> getIncludedFiles(const QString& filename) const;
@@ -125,6 +127,7 @@ public:
     bool isSystemHeaderFile(const QString& fileName) const;
     void parseHardDefines();
     bool parsing() const;
+    bool hasPendingWork() const;
     void resetParser();
     void unFreeze(); // UnFree/UnLock (reparse while searching)
     bool fileScanned(const QString& fileName) const;
@@ -174,7 +177,8 @@ public:
     bool sharedByFiles() const;
     void setSharedByFiles(bool newSharedByFiles);
 
-    static void parseFileBlocking(
+    enum class ParseResult { Parsed, Busy, Disabled, NotParsed };
+    static ParseResult parseFileBlocking(
         PCppParser parser,
         const QString &fileName,
         bool inProject,
@@ -194,16 +198,24 @@ public:
             PCppParser parser,
             bool updateView = true);
 
+    // Queue a coalesced reset barrier without blocking the caller.
+    static void resetParsedResultsNonBlocking(PCppParser parser);
+
 
 signals:
     void progress(const QString& fileName, int total, int current);
     void onBusy();
     void parseStarted();
     void parseFinished(int total, int updateView);
+    void cacheResetStarted();
+    void cacheResetFinished();
 private:
+    void parseHardDefinesInternal();
+    void runParsedResultsReset();
     bool parseFile(const QString& fileName, bool inProject,
                    const QString& contextFilename,
-                   bool onlyIfNotParsed = false, bool updateView = true
+                   bool onlyIfNotParsed = false, bool updateView = true,
+                   bool consumeSyncReservation = false
                    );
     void parseFileList(bool updateView = true);
     PParseFileCommand retrievePendingParseFileCommand();
@@ -772,18 +784,27 @@ private:
 
     // One pending request per file, preserving requests for other editors.
     QList<ParseFileCommand> mPendingParseFileCommands;
+    PParseFileCommand mActiveParseFileCommand;
+    bool mActiveFileList = false;
+    bool mActiveFileListUpdateView = false;
+    QSet<QString> mActiveFileListNames;
     std::weak_ptr<CppParser> mAsyncOwner;
     bool mPendingDispatchScheduled = false;
     bool mPendingWorkerActive = false;
     bool mPendingFileList = false;
     bool mPendingFileListUpdateView = false;
+    bool mPendingReset = false;
+    bool mResetWorkerActive = false;
+    bool mSyncParseReserved = false;
     void queueParseFileCommand(const ParseFileCommand &command);
+    void queueOlderParseFileCommand(const ParseFileCommand &command);
     void schedulePendingParseCommands();
     void startPendingParseCommands();
 
     friend class TestCppParser; // Regression coverage of private expression tokenization.
     friend class CppFileListParserThread;
     friend class CppFileParserThread;
+    friend class CppParsedResultsResetThread;
 
 };
 
@@ -827,6 +848,15 @@ private:
     // QThread interface
 protected:
     void run() override;
+};
+
+class CppParsedResultsResetThread: public QThread {
+public:
+    explicit CppParsedResultsResetThread(PCppParser parser);
+protected:
+    void run() override;
+private:
+    PCppParser mParser;
 };
 
 #endif // CPPPARSER_H

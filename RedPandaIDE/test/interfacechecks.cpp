@@ -47,6 +47,7 @@
 #include <QItemSelectionModel>
 #include <QFileSystemModel>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QMenu>
 #include <QTreeWidget>
 #include <QDialogButtonBox>
@@ -59,12 +60,16 @@
 #include <QLineEdit>
 #include <QTableView>
 #include <QTreeView>
+#include <QPersistentModelIndex>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QMessageBox>
 #include <QEventLoop>
 #include <QTimer>
 #include <QSemaphore>
 #include <thread>
+#include <atomic>
+#include <chrono>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -104,6 +109,562 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     QDir().mkpath(outputDirectory); QJsonArray checks; QJsonArray skipped; int failures = 0;
     auto check = [&](const QString &name, bool passed) { checks.append(QJsonObject{{"name", name}, {"passed", passed}}); if (!passed) ++failures; };
     auto skip = [&](const QString &name, const QString &reason) { skipped.append(QJsonObject{{"name", name}, {"reason", reason}}); };
+
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_RENAME_ONLY")) {
+        QTemporaryDir fixture(QDir(outputDirectory).filePath("rename-fixture-XXXXXX"));
+        check("Rename fixture is isolated", fixture.isValid());
+        const QByteArray sentinel("file on disk is unchanged\n");
+        for (const QString mode : {QStringLiteral("success"), QStringLiteral("conflict"),
+                                   QStringLiteral("busy"), QStringLiteral("changed")}) {
+            const QString path = QDir(fixture.path()).filePath(mode + ".cpp");
+            QFile onDisk(path);
+            const bool written = onDisk.open(QIODevice::WriteOnly)
+                && onDisk.write(sentinel) == sentinel.size();
+            onDisk.close();
+            check(mode + ": isolated sentinel written", written);
+            Editor *editor = window.editorManager()->newEditor(path, ENCODING_UTF8,
+                FileType::CppSource, {}, false, true);
+            check(mode + ": editor created", editor != nullptr);
+            if (!editor) continue;
+            const QString source = mode == "conflict"
+                ? QStringLiteral("int before = 1;\nint after = 2;\nint f() { return before; }\n")
+                : QStringLiteral("int before = 1;\nint f() { return before; }\n");
+            editor->setContent(source);
+            editor->setModified(true);
+            auto lines = std::make_shared<QStringList>(source.split('\n'));
+            auto parser = std::make_shared<CppParser>();
+            auto reads = std::make_shared<std::atomic<int>>(0);
+            parser->setEnabled(true);
+            parser->setOnGetFileStream([path, lines, reads](const QString &file, QStringList &out) {
+                ++*reads;
+                if (file == path) out = *lines;
+                else out = {QStringLiteral("int queued_analysis_marker;")};
+                return true;
+            });
+            editor->setCppParser(parser);
+            window.editorManager()->activeEditorAndSetCaret(editor, {4, 0});
+            // Showing a tab may itself request analysis. Let it finish before
+            // exercising rename so that Busy is introduced only by the case.
+            waitForUi(200);
+            QElapsedTimer initialDeadline; initialDeadline.start();
+            while (parser->hasPendingWork() && initialDeadline.elapsed() < 10000) waitForUi(20);
+            check(mode + ": initial editor requests settled", !parser->hasPendingWork());
+            const auto initial = CppParser::parseFileBlocking(parser, path, false, {}, false, false);
+            check(mode + ": initial parse succeeds", initial == CppParser::ParseResult::Parsed);
+            const int readsBefore = reads->load();
+            const QString before = editor->text();
+            bool frozen = false;
+            if (mode == "busy") {
+                frozen = parser->freeze();
+                CppParser::resetParsedResultsNonBlocking(parser);
+            }
+            int inputCount = 0;
+            int messageCount = 0;
+            bool backgroundQueued = false;
+            QTimer dialogs;
+            QObject::connect(&dialogs, &QTimer::timeout, [&] {
+                if (auto *input = qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+                    ++inputCount;
+                    if (mode == "changed") {
+                        editor->replaceLine(0, QStringLiteral("int different = 1;"));
+                        *lines = editor->text().split('\n');
+                    }
+                    input->setTextValue(QStringLiteral("after"));
+                    input->accept();
+                } else if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    if (mode == "conflict" && !backgroundQueued) {
+                        ++messageCount;
+                        backgroundQueued = true;
+                        CppParser::parseFileNonBlocking(parser, QStringLiteral("queued-for-conflict.cpp"), false, {});
+                        QTimer::singleShot(150, message, [message] {
+                            message->accept();
+                        });
+                    } else if (mode != "conflict") {
+                        ++messageCount;
+                        message->accept();
+                    }
+                }
+            });
+            dialogs.start(10);
+            const bool invoked = QMetaObject::invokeMethod(&window, "on_actionRename_Symbol_triggered", Qt::DirectConnection);
+            dialogs.stop();
+            check(mode + ": rename action invoked", invoked);
+            if (mode == "success") {
+                check("Successful rename updates declaration and reference", inputCount == 1
+                      && editor->text().contains("int after = 1;")
+                      && editor->text().contains("return after;"));
+            } else if (mode == "conflict") {
+                check("Rename conflict reports error and preserves document", inputCount == 1
+                      && messageCount == 1 && editor->text() == before);
+                check("Conflict dialog accepts an independent analysis request", backgroundQueued);
+            } else if (mode == "busy") {
+                check("Busy rename reports error before asking for a name", frozen && inputCount == 0
+                      && messageCount == 1 && editor->text() == before && reads->load() == readsBefore);
+            } else {
+                check("Changed symbol aborts rename and preserves the intervening edit", inputCount == 1
+                      && messageCount == 1 && editor->text().contains("int different = 1;")
+                      && !editor->text().contains("int after = 1;"));
+            }
+            if (frozen) parser->unFreeze();
+            QElapsedTimer deadline; deadline.start();
+            while (parser->hasPendingWork() && deadline.elapsed() < 10000) waitForUi(20);
+            check(mode + ": parser drains queued work", !parser->hasPendingWork());
+            if (mode == "conflict")
+                check("Queued analysis completes after rename conflict",
+                      static_cast<bool>(parser->findStatement(QStringLiteral("queued_analysis_marker"))));
+            if (mode == "busy")
+                check("Busy rename did not secretly queue a parse", reads->load() == readsBefore);
+            QFile diskCheck(path);
+            check(mode + ": disk file is unchanged", diskCheck.open(QIODevice::ReadOnly)
+                  && diskCheck.readAll() == sentinel);
+            window.editorManager()->forceCloseEditor(editor);
+        }
+        QFile output(QDir(outputDirectory).filePath("rename-only-result.json"));
+        const QByteArray data = QJsonDocument(QJsonObject{{"checks", checks}, {"failures", failures}}).toJson();
+        if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()) return 2;
+        return failures == 0 ? 0 : 1;
+    }
+
+
+    // Verify the visible file after each genuine tab click, rather than only
+    // returning to the original file before observing the final model.
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_TAB_SWITCH")) {
+        QFile progress(QDir(outputDirectory).filePath("tab-switch-progress.jsonl"));
+        if (!progress.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 2;
+        const auto mark = [&](QJsonObject event) {
+            progress.write(QJsonDocument(event).toJson(QJsonDocument::Compact));
+            progress.write("\n");
+            progress.flush();
+        };
+        mark(QJsonObject{{"phase", "start"}});
+        auto *view = window.findChild<QTreeView *>("classBrowser");
+        auto *explorer = window.findChild<QTabWidget *>("tabExplorer");
+        auto *structure = window.findChild<QWidget *>("tabStructure");
+        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        auto *manager = window.editorManager();
+        const QString firstPath = QDir(outputDirectory).filePath("files/first.cpp");
+        const QString primePath = QDir(outputDirectory).filePath("files/structure_concurrency.cpp");
+        Editor *first = manager->getOpenedEditor(firstPath);
+        Editor *prime = manager->getOpenedEditor(primePath);
+        if (!view || !explorer || !structure || !model || !first || !prime ||
+                !first->parser() || first->parser() != prime->parser()) return 3;
+        explorer->setCurrentWidget(structure);
+        window.resize(1200, 800);
+        pSettings->codeCompletion().setShareParser(true);
+        pSettings->codeCompletion().setClearWhenEditorHidden(true);
+        const QString blankPath = QDir(outputDirectory).filePath("files/empty.cpp");
+        if (!QFileInfo::exists(blankPath)) {
+            QFile blankFile(blankPath);
+            if (!blankFile.open(QIODevice::WriteOnly)) return 4;
+        }
+        mark(QJsonObject{{"phase", "open-blank-before"}});
+        Editor *blank = window.openFile(blankPath);
+        mark(QJsonObject{{"phase", "open-blank-after"}});
+        if (!blank || blank->parser() != prime->parser()) return 5;
+        mark(QJsonObject{{"phase", "activate-blank-before"}});
+        manager->activeEditor(blank, true);
+        mark(QJsonObject{{"phase", "activate-blank-after"},
+                         {"leftTabCount", manager->leftPageWidget()->count()},
+                         {"rightTabCount", manager->rightPageWidget()->count()}});
+        const bool splitFixture = qEnvironmentVariableIsSet("REDPANDA_QA_TAB_SWITCH_SPLIT");
+        if (splitFixture) {
+            auto *leftTabs = manager->findPageControlForEditor(first);
+            auto *rightTabs = manager->findPageControlForEditor(prime);
+            check("Split fixture has two tabs on both sides", leftTabs && rightTabs &&
+                  leftTabs != rightTabs && leftTabs->count() == 2 && rightTabs->count() == 2 &&
+                  manager->findPageControlForEditor(blank) == rightTabs);
+        }
+        const auto roots = [&] {
+            QJsonArray names;
+            for (int row = 0; row < model->rowCount({}); ++row)
+                names.append(model->data(model->index(row, 0, {}), Qt::DisplayRole).toString());
+            return names;
+        };
+        const auto hasRoot = [&](const QString &expected) {
+            const QJsonArray names = roots();
+            for (const auto &name : names)
+                if (name.toString() == expected || name.toString().startsWith(expected + " "))
+                    return true;
+            return false;
+        };
+        QJsonArray observations;
+        const auto observe = [&](Editor *target, const QString &wanted, const QString &unwanted,
+                                 int cycle, const QString &kind) {
+            mark(QJsonObject{{"phase", "observe-before"}, {"file", target->filename()},
+                             {"cycle", cycle}, {"kind", kind}});
+            QElapsedTimer deadline;
+            deadline.start();
+            while (deadline.elapsed() < 10000 &&
+                   (target->parser()->hasPendingWork() ||
+                    QDir::cleanPath(model->currentFile()) != QDir::cleanPath(target->filename()) ||
+                    (wanted.isEmpty() ? model->rowCount({}) != 0 : !hasRoot(wanted))))
+                waitForUi(20);
+            const bool titleMatches = window.windowTitle().contains(QDir::toNativeSeparators(target->filename())) ||
+                window.windowTitle().contains(QDir::fromNativeSeparators(target->filename()));
+            const bool correct = manager->getEditor() == target && titleMatches && model->parser() == target->parser() &&
+                !target->parser()->hasPendingWork() &&
+                QDir::cleanPath(model->currentFile()) == QDir::cleanPath(target->filename()) &&
+                (wanted.isEmpty() ? model->rowCount({}) == 0 : hasRoot(wanted)) && !hasRoot(unwanted);
+            observations.append(QJsonObject{{"cycle", cycle}, {"kind", kind},
+                {"expectedSymbol", wanted}, {"currentFile", model->currentFile()},
+                {"editorFile", target->filename()}, {"pending", target->parser()->hasPendingWork()},
+                {"activeEditorFile", manager->getEditor() ? manager->getEditor()->filename() : QString()},
+                {"windowTitle", window.windowTitle()}, {"titleMatches", titleMatches},
+                {"leftTabCount", manager->leftPageWidget()->count()},
+                {"rightTabCount", manager->rightPageWidget()->count()},
+                {"rootNames", roots()}, {"passed", correct}, {"milliseconds", deadline.elapsed()}});
+            check(QStringLiteral("Selected tab shows %1 after %2 (%3)").arg(wanted, kind).arg(cycle), correct);
+            mark(QJsonObject{{"phase", "observe-after"}, {"observation", observations.last()}});
+            return correct;
+        };
+        const auto clickTab = [&](Editor *target) {
+            auto *tabs = manager->findPageControlForEditor(target);
+            if (!tabs) return false;
+            auto *bar = tabs->tabBar();
+            const int index = tabs->indexOf(target);
+            if (!bar || index < 0) return false;
+            const QRect rect = bar->tabRect(index);
+            const QPoint point = rect.center();
+            if (rect.isEmpty() || !bar->rect().contains(point)) return false;
+            const QPointF local(point), global(bar->mapToGlobal(point));
+            mark(QJsonObject{{"phase", "click-before"}, {"file", target->filename()},
+                             {"index", index}});
+            QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(bar, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(bar, &release);
+            waitForUi(20);
+            mark(QJsonObject{{"phase", "click-after"}, {"file", target->filename()}});
+            return tabs->currentWidget() == target;
+        };
+        bool proceed = observe(blank, QString(), QStringLiteral("PrimeResult"), -2, "empty file");
+        // Match the reported scenario: focus is in the tool panel when the
+        // user selects a different editor tab, so focusIn is not guaranteed.
+        view->setFocus(Qt::MouseFocusReason);
+        if (proceed) {
+            proceed = clickTab(prime);
+            check(QStringLiteral("Click from empty file selects populated tab"), proceed);
+            if (proceed) proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), -1, "from tool panel");
+        }
+        for (int cycle = 0; proceed && cycle < 3; ++cycle) {
+            proceed = clickTab(first);
+            check(QStringLiteral("Actual mouse click selects alternate tab (%1)").arg(cycle), proceed);
+            if (proceed) proceed = observe(first, QStringLiteral("OtherFixture"), QStringLiteral("PrimeResult"), cycle, "mouse click");
+            if (!proceed) break;
+            proceed = clickTab(prime);
+            check(QStringLiteral("Actual mouse click selects original tab (%1)").arg(cycle), proceed);
+            if (proceed) proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), cycle, "mouse click");
+        }
+        if (proceed) {
+            // Programmatic selection in the active pane must update the
+            // information even when focus stays in the Structure view.
+            view->setFocus(Qt::MouseFocusReason);
+            auto *tabs = manager->findPageControlForEditor(prime);
+            mark(QJsonObject{{"phase", "programmatic-blank-before"}});
+            tabs->setCurrentWidget(blank);
+            mark(QJsonObject{{"phase", "programmatic-blank-after"}});
+            proceed = observe(blank, QString(), QStringLiteral("PrimeResult"), 3, "programmatic selection");
+            if (proceed) {
+                mark(QJsonObject{{"phase", "programmatic-prime-before"}});
+                tabs->setCurrentWidget(prime);
+                mark(QJsonObject{{"phase", "programmatic-prime-after"}});
+                proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), 3, "programmatic selection");
+            }
+        }
+        if (proceed && splitFixture) {
+            // A background pane changing its tab must not steal the active
+            // editor, title or Structure selection from the focused pane.
+            prime->setFocus(Qt::MouseFocusReason);
+            auto *leftTabs = manager->findPageControlForEditor(first);
+            Editor *helper = manager->getOpenedEditor(QDir(outputDirectory).filePath("files/left_helper.cpp"));
+            if (!helper) return 7;
+            mark(QJsonObject{{"phase", "background-helper-before"}});
+            leftTabs->setCurrentWidget(helper);
+            mark(QJsonObject{{"phase", "background-helper-after"}});
+            proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), 4, "background pane selection");
+            if (proceed) {
+                mark(QJsonObject{{"phase", "background-first-before"}});
+                leftTabs->setCurrentWidget(first);
+                mark(QJsonObject{{"phase", "background-first-after"}});
+                proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), 4, "background pane restoration");
+            }
+        }
+        if (proceed && splitFixture) {
+            first->setFocus(Qt::MouseFocusReason);
+            proceed = observe(first, QStringLiteral("OtherFixture"), QStringLiteral("PrimeResult"), 3, "visible-pane focus");
+            if (proceed) {
+                prime->setFocus(Qt::MouseFocusReason);
+                proceed = observe(prime, QStringLiteral("PrimeResult"), QStringLiteral("OtherFixture"), 3, "visible-pane focus");
+            }
+        }
+        QFile output(QDir(outputDirectory).filePath("tab-switch-result.json"));
+        const QByteArray data = QJsonDocument(QJsonObject{{"checks", checks}, {"failures", failures},
+            {"observations", observations}}).toJson();
+        if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()) return 2;
+        return failures == 0 && observations.size() == (splitFixture ? 14 : 10) ? 0 : 1;
+    }
+
+    // Opt-in isolated reproduction; progress is flushed before UI calls so
+    // the supervising process can diagnose timeouts without touching user data.
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_PRIME_EXPAND")) {
+        QFile progress(QDir(outputDirectory).filePath("prime-progress.jsonl"));
+        if (!progress.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 2;
+        const auto mark = [&](QJsonObject obj) {
+            progress.write(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+            progress.write("\n");
+            progress.flush();
+        };
+        const auto finish = [&](bool ok, const QString &reason, const QJsonArray &children,
+                                qint64 maxDirectMs, qint64 maxClickMs) {
+            const QJsonObject result{{"ok", ok}, {"reason", reason}, {"children", children},
+                                     {"maxDirectMs", maxDirectMs}, {"maxClickMs", maxClickMs}};
+            mark(QJsonObject{{"phase", "finished"}, {"ok", ok}, {"reason", reason}});
+            QFile out(QDir(outputDirectory).filePath("prime-result.json"));
+            const QByteArray bytes = QJsonDocument(result).toJson();
+            if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size()) return 2;
+            return ok ? 0 : 1;
+        };
+        mark(QJsonObject{{"phase", "start"}});
+        const QString expected = QDir::cleanPath(qEnvironmentVariable("REDPANDA_QA_PRIME_EXPAND"));
+        auto *view = window.findChild<QTreeView *>("classBrowser");
+        auto *tabs = window.findChild<QTabWidget *>("tabExplorer");
+        auto *structure = window.findChild<QWidget *>("tabStructure");
+        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        auto *editor = window.editorManager()->getOpenedEditor(expected);
+        if (!view || !tabs || !structure || !model || !editor || !editor->parser())
+            return finish(false, "missing fixture, editor or Structure model", {}, -1, -1);
+        tabs->setCurrentWidget(structure);
+        window.resize(1200, 800);
+        const auto findPrime = [&]() -> QModelIndex {
+            for (int row = 0; row < model->rowCount({}); ++row) {
+                const QModelIndex item = model->index(row, 0, {});
+                const QString name = model->data(item, Qt::DisplayRole).toString();
+                if (name == QStringLiteral("PrimeResult") || name.startsWith(QStringLiteral("PrimeResult ")))
+                    return item;
+            }
+            return {};
+        };
+        QElapsedTimer deadline;
+        deadline.start();
+        while (deadline.elapsed() < 25000 &&
+               (!editor->parser()->fileScanned(expected) || !findPrime().isValid()))
+            waitForUi(50);
+        QPersistentModelIndex prime(findPrime());
+        if (!prime.isValid() || !editor->parser()->fileScanned(expected))
+            return finish(false, "PrimeResult or parsed file not ready", {}, -1, -1);
+        if (model->parser() != editor->parser() || QDir::cleanPath(model->currentFile()) != expected)
+            return finish(false, "Structure refers to a different editor", {}, -1, -1);
+        QJsonArray children;
+        bool hasCount = false, hasSum = false;
+        const int childCount = model->rowCount(prime);
+        if (childCount < 0 || childCount > 256)
+            return finish(false, "unexpected PrimeResult child count", children, -1, -1);
+        for (int row = 0; row < childCount; ++row) {
+            const QModelIndex child = model->index(row, 0, prime);
+            if (!child.isValid() || child.internalPointer() == prime.internalPointer() || child.parent() != prime)
+                return finish(false, "invalid or cyclic PrimeResult child", children, -1, -1);
+            const QString value = model->data(child, Qt::DisplayRole).toString();
+            children.append(value);
+            hasCount |= value.startsWith(QStringLiteral("count"));
+            hasSum |= value.startsWith(QStringLiteral("sum"));
+        }
+        if (!hasCount || !hasSum)
+            return finish(false, "expected count and sum are absent", children, -1, -1);
+        mark(QJsonObject{{"phase", "ready"}, {"children", childCount}});
+
+        if (qEnvironmentVariableIsSet("REDPANDA_QA_PRIME_RACE")) {
+            // Hold exactly one copied-file read per cycle, allowing the UI to
+            // expand and switch while a real parser worker is demonstrably busy.
+            auto *manager = window.editorManager();
+            const QString alternateFile = QDir(outputDirectory).filePath("files/first.cpp");
+            Editor *alternate = manager->getOpenedEditor(alternateFile);
+            const PCppParser parser = editor->parser();
+            if (!alternate || !parser || alternate->parser() != parser)
+                return finish(false, "race fixture does not use one shared parser", children, -1, -1);
+            auto requested = std::make_shared<std::atomic<bool>>(false);
+            auto entered = std::make_shared<QSemaphore>();
+            auto proceed = std::make_shared<QSemaphore>();
+            bool frozen = false;
+            QElapsedTimer idleWait; idleWait.start();
+            while (idleWait.elapsed() < 5000 && !(frozen = parser->freeze())) waitForUi(10);
+            if (!frozen) return finish(false, "parser did not become available for QA setup", children, -1, -1);
+            parser->setOnGetFileStream([expected, requested, entered, proceed](const QString &filename, QStringList &) {
+                if (QDir::cleanPath(filename) == expected && requested->exchange(false)) {
+                    entered->release();
+                    proceed->tryAcquire(1, 6000);
+                }
+                // All inputs are copies on disk; false invokes the normal disk reader.
+                return false;
+            });
+            parser->unFreeze();
+            qint64 maxSwitchMs = 0;
+            for (int cycle = 0; cycle < 3; ++cycle) {
+                QElapsedTimer readyWait; readyWait.start();
+                while (readyWait.elapsed() < 10000 &&
+                       (parser->parsing() || model->currentFile() != expected || !findPrime().isValid()))
+                    waitForUi(20);
+                if (parser->parsing() || model->currentFile() != expected || !findPrime().isValid())
+                    return finish(false, "race did not settle before cycle", children, maxSwitchMs, -1);
+                prime = findPrime();
+                requested->store(true);
+                mark(QJsonObject{{"phase", "race-reparse-before"}, {"cycle", cycle}});
+                editor->reparse();
+                QElapsedTimer gateWait; gateWait.start();
+                bool gateEntered = false;
+                while (gateWait.elapsed() < 5000 && !(gateEntered = entered->tryAcquire(1, 0))) waitForUi(10);
+                if (!gateEntered || !parser->parsing()) {
+                    proceed->release();
+                    return finish(false, "parser overlap could not be established", children, maxSwitchMs, -1);
+                }
+                mark(QJsonObject{{"phase", "race-parser-busy"}, {"cycle", cycle}});
+                // Release independently even if the UI blocks in a tab switch.
+                auto gateReleased = std::make_shared<std::atomic<bool>>(false);
+                std::thread delayedRelease([proceed, gateReleased] {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+                    gateReleased->store(true, std::memory_order_release);
+                    proceed->release();
+                });
+                struct JoinOnExit { std::thread &thread; ~JoinOnExit() { if (thread.joinable()) thread.join(); } };
+                {
+                    JoinOnExit join{delayedRelease};
+                    if (!prime.isValid()) return finish(false, "PrimeResult snapshot invalid while busy", children, maxSwitchMs, -1);
+                    mark(QJsonObject{{"phase", "race-expand-before"}, {"cycle", cycle}});
+                    view->setCurrentIndex(prime);
+                    view->scrollTo(prime, QAbstractItemView::PositionAtCenter);
+                    view->expand(prime);
+                    waitForUi(10);
+                    mark(QJsonObject{{"phase", "race-expand-after"}, {"cycle", cycle},
+                                     {"parserBusy", parser->parsing()}});
+                    if (!prime.isValid())
+                        return finish(false, "PrimeResult invalid during busy expansion", children, maxSwitchMs, -1);
+                    view->collapse(prime);
+                    const QRect rect = view->visualRect(prime);
+                    const QPoint point(qMax(1, rect.left() - view->indentation() / 2), rect.center().y());
+                    const bool visibleBranch = view->isVisible() && !rect.isEmpty()
+                        && view->viewport()->rect().contains(point);
+                    mark(QJsonObject{{"phase", "race-mouse-before"}, {"cycle", cycle},
+                                     {"validGeometry", visibleBranch}, {"x", point.x()}, {"y", point.y()}});
+                    if (!visibleBranch)
+                        return finish(false, "race branch geometry not visible", children, maxSwitchMs, -1);
+                    const QPointF local(point), global(view->viewport()->mapToGlobal(point));
+                    QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                    QApplication::sendEvent(view->viewport(), &press);
+                    QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                    QApplication::sendEvent(view->viewport(), &release);
+                    waitForUi(10);
+                    mark(QJsonObject{{"phase", "race-mouse-after"}, {"cycle", cycle},
+                                     {"parserBusy", parser->parsing()},
+                                     {"expanded", prime.isValid() && view->isExpanded(prime)}});
+                    if (!prime.isValid() || !view->isExpanded(prime))
+                        return finish(false, "race branch click failed or model reset", children, maxSwitchMs, -1);
+                    if (gateReleased->load(std::memory_order_acquire))
+                        return finish(false, "parser gate released before switches; QA fixture inconclusive", children, -1, -1);
+                    QElapsedTimer switchTimer; switchTimer.start();
+                    mark(QJsonObject{{"phase", "race-switch-away-before"}, {"cycle", cycle}});
+                    manager->activeEditor(alternate, true);
+                    mark(QJsonObject{{"phase", "race-switch-away-after"}, {"cycle", cycle},
+                                     {"gateReleased", gateReleased->load(std::memory_order_acquire)}});
+                    manager->activeEditor(editor, true);
+                    mark(QJsonObject{{"phase", "race-switch-back-after"}, {"cycle", cycle},
+                                     {"gateReleased", gateReleased->load(std::memory_order_acquire)}});
+                    // Further queued work tests coalescing while rapid tab changes occur.
+                    alternate->reparse();
+                    editor->reparse();
+                    manager->activeEditor(alternate, true);
+                    manager->activeEditor(editor, true);
+                    const bool completedBeforeRelease = !gateReleased->load(std::memory_order_acquire);
+                    maxSwitchMs = qMax(maxSwitchMs, switchTimer.elapsed());
+                    mark(QJsonObject{{"phase", "race-switches-complete"}, {"cycle", cycle},
+                                     {"milliseconds", switchTimer.elapsed()},
+                                     {"completedBeforeRelease", completedBeforeRelease}});
+                    if (!completedBeforeRelease)
+                        return finish(false, "tab switching waited for the parser gate release", children, maxSwitchMs, -1);
+                }
+                if (maxSwitchMs > 5000)
+                    return finish(false, "tab switching exceeded the QA responsiveness bound", children, maxSwitchMs, -1);
+                QElapsedTimer settle; settle.start();
+                while (settle.elapsed() < 10000 &&
+                       (parser->parsing() || model->currentFile() != expected || !findPrime().isValid()))
+                    waitForUi(20);
+                prime = findPrime();
+                if (parser->parsing() || model->currentFile() != expected || !prime.isValid())
+                    return finish(false, "Structure did not recover after overlapping requests", children, maxSwitchMs, -1);
+                mark(QJsonObject{{"phase", "race-cycle-complete"}, {"cycle", cycle},
+                                 {"rows", model->rowCount(prime)}});
+            }
+        }
+        qint64 maxDirectMs = 0, maxClickMs = 0;
+        for (int iteration = 0; iteration < 10; ++iteration) {
+            if (!prime.isValid()) return finish(false, "model reset during expansion", children, maxDirectMs, maxClickMs);
+            view->setCurrentIndex(prime);
+            view->scrollTo(prime, QAbstractItemView::PositionAtCenter);
+            waitForUi(30);
+            mark(QJsonObject{{"phase", "direct-before"}, {"iteration", iteration}});
+            QElapsedTimer timer; timer.start();
+            view->expand(prime);
+            waitForUi(30);
+            if (!prime.isValid() || !view->isExpanded(prime))
+                return finish(false, "direct expansion failed or model reset", children, maxDirectMs, maxClickMs);
+            maxDirectMs = qMax(maxDirectMs, timer.elapsed());
+            view->collapse(prime);
+            waitForUi(30);
+            if (!prime.isValid()) return finish(false, "model reset after collapse", children, maxDirectMs, maxClickMs);
+            const QRect rect = view->visualRect(prime);
+            const QPoint point(qMax(1, rect.left() - view->indentation() / 2), rect.center().y());
+            const bool geometryOk = view->isVisible() && !rect.isEmpty()
+                && view->viewport()->rect().contains(point);
+            mark(QJsonObject{{"phase", "mouse-before"}, {"iteration", iteration},
+                {"visible", view->isVisible()}, {"validGeometry", geometryOk},
+                {"x", point.x()}, {"y", point.y()}, {"rowLeft", rect.left()}});
+            if (!geometryOk) return finish(false, "branch geometry is not visible", children, maxDirectMs, maxClickMs);
+            timer.restart();
+            const QPointF local(point), global(view->viewport()->mapToGlobal(point));
+            QMouseEvent press(QEvent::MouseButtonPress, local, global, Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, local, global, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(view->viewport(), &release);
+            waitForUi(30);
+            if (!prime.isValid() || !view->isExpanded(prime))
+                return finish(false, "branch click did not expand or model reset", children, maxDirectMs, maxClickMs);
+            maxClickMs = qMax(maxClickMs, timer.elapsed());
+            view->collapse(prime);
+            waitForUi(30);
+            mark(QJsonObject{{"phase", "cycle-complete"}, {"iteration", iteration}});
+        }
+        return finish(true, QString(), children, maxDirectMs, maxClickMs);
+    }
+
+    // Only used by a bounded, isolated process to reproduce a frozen reader.
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_FREEZE_RESET")) {
+        Editor *editor = window.editorManager()->getEditor();
+        if (!editor) return 3;
+        auto parser = std::make_shared<CppParser>();
+        parser->setEnabled(true);
+        editor->setCppParser(parser);
+        editor->setFilename(QDir(outputDirectory).filePath("frozen-unscanned.cpp"));
+        pSettings->codeCompletion().setShareParser(true);
+        pSettings->codeCompletion().setClearWhenEditorHidden(true);
+        const bool frozen = parser->freeze();
+        const bool needsReparse = editor->needReparse();
+        QFile ready(QDir(outputDirectory).filePath("freeze-reset-ready.json"));
+        const QByteArray before = QJsonDocument(QJsonObject{{"frozen", frozen},
+            {"needsReparse", needsReparse}, {"parserBusy", parser->parsing()}}).toJson();
+        if (!ready.open(QIODevice::WriteOnly) || ready.write(before) != before.size()) {
+            if (frozen) parser->unFreeze();
+            return 4;
+        }
+        ready.close();
+        if (!frozen || !needsReparse) {
+            if (frozen) parser->unFreeze();
+            return 5;
+        }
+        emit editor->showOccured(editor);
+        parser->unFreeze();
+        QFile result(QDir(outputDirectory).filePath("freeze-reset-result.json"));
+        const QByteArray after = QJsonDocument(QJsonObject{{"returned", true}}).toJson();
+        if (!result.open(QIODevice::WriteOnly) || result.write(after) != after.size()) return 6;
+        return 0;
+    }
 
     // Runs before the normal GUI checks, with an isolated restored-session fixture.
     // Unlike the ordinary UI suite, it leaves the restored editor unchanged.
@@ -234,6 +795,70 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             if (savedClipboard) QGuiApplication::clipboard()->setMimeData(savedClipboard);
         }
         cpu.hide();
+    }
+    {
+        // Repeated traversal of parser scopes must preserve nested and reopened
+        // namespaces, their members and their navigation attributes.
+        const QString file = QStringLiteral("structure_nesting_fixture.cpp");
+        auto parser = std::make_shared<CppParser>();
+        parser->setOnGetFileStream([](const QString &name, QStringList &lines) {
+            if (!name.endsWith(QStringLiteral("structure_nesting_fixture.cpp"))) return false;
+            for (int i = 0; i < 80; ++i)
+                lines << QStringLiteral("namespace Level%1 {").arg(i);
+            lines << QStringLiteral("int deepest = 7;");
+            for (int i = 0; i < 80; ++i) lines << QStringLiteral("}");
+            lines << QStringLiteral("namespace Again { struct A { int x; }; }");
+            lines << QStringLiteral("namespace Again { struct B { int y; }; }");
+            return true;
+        });
+        CppParser::parseFileBlocking(parser, file, false, QString(), false, false);
+        ClassBrowserModel model;
+        model.beginUpdate(); model.setParser(parser); model.setCurrentFile(file); model.endUpdate();
+        const auto childNamed = [&](const QModelIndex &parent, const QString &name) {
+            for (int row = 0; row < model.rowCount(parent); ++row) {
+                const auto index = model.index(row, 0, parent);
+                if (model.data(index, Qt::DisplayRole).toString() == name) return index;
+            }
+            return QModelIndex();
+        };
+        QModelIndex nested;
+        int levelsFound = 0;
+        for (int i = 0; i < 80; ++i) {
+            nested = childNamed(nested, QStringLiteral("Level%1").arg(i));
+            if (!nested.isValid()) break;
+            ++levelsFound;
+        }
+        check("Structure retains all deeply nested namespaces", levelsFound == 80 && nested.isValid()
+              && model.rowCount(nested) == 1
+              && model.data(model.index(0, 0, nested), Qt::DisplayRole).toString().startsWith(QStringLiteral("deepest")));
+        const QModelIndex again = childNamed({}, QStringLiteral("Again"));
+        const QModelIndex a = again.isValid() ? childNamed(again, QStringLiteral("A")) : QModelIndex();
+        const QModelIndex b = again.isValid() ? childNamed(again, QStringLiteral("B")) : QModelIndex();
+        const bool members = again.isValid() && model.rowCount(again) == 2 && a.isValid() && b.isValid()
+                && model.rowCount(a) == 1 && model.rowCount(b) == 1
+                && model.data(model.index(0, 0, a), Qt::DisplayRole).toString().startsWith(QStringLiteral("x"))
+                && model.data(model.index(0, 0, b), Qt::DisplayRole).toString().startsWith(QStringLiteral("y"));
+        check("Structure merges reopened namespaces without losing members", members);
+        PStatement originalA, originalB;
+        const bool frozen = parser->freeze();
+        if (frozen) {
+            const auto info = parser->findFileInfo(file);
+            if (info) for (const PStatement &statement : info->statements()) {
+                if (statement->fullName == QStringLiteral("Again::A")) originalA = statement;
+                if (statement->fullName == QStringLiteral("Again::B")) originalB = statement;
+            }
+        }
+        const auto sameAttributes = [](const PStatement &actual, const PStatement &original) {
+            return actual && original && actual->kind == original->kind
+                    && actual->fullName == original->fullName && actual->fileName == original->fileName
+                    && actual->line == original->line && actual->args == original->args
+                    && actual->accessibility == original->accessibility;
+        };
+        auto *aNode = a.isValid() ? static_cast<ClassBrowserNode *>(a.internalPointer()) : nullptr;
+        auto *bNode = b.isValid() ? static_cast<ClassBrowserNode *>(b.internalPointer()) : nullptr;
+        check("Structure preserves namespace member navigation attributes", frozen && aNode && bNode
+              && sameAttributes(aNode->statement, originalA) && sameAttributes(bNode->statement, originalB));
+        if (frozen) parser->unFreeze();
     }
     {
         // Exercise a real parser on an isolated model; the semaphore forces the
@@ -459,6 +1084,73 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         check("Overlapping request completes after conservative readiness check",
               busy && parser->fileScanned(QStringLiteral("readiness-pending.cpp")));
         check("Editor readiness returns to idle after analysis", !fixture.needReparse());
+    }
+    {
+        // Hold the reset worker immediately after cacheResetFinished. This
+        // exposes the exact gap where parsing is false but a parse is queued.
+        const auto parser = std::make_shared<CppParser>();
+        parser->setEnabled(true);
+        const auto latest = std::make_shared<std::atomic<bool>>(false);
+        const auto resetEntered = std::make_shared<QSemaphore>();
+        const auto releaseReset = std::make_shared<QSemaphore>();
+        const auto resetOffGui = std::make_shared<std::atomic<bool>>(false);
+        QThread *const guiThread = QCoreApplication::instance()->thread();
+        parser->setOnGetFileStream([latest](const QString &filename, QStringList &lines) {
+            if (!filename.endsWith(QStringLiteral("snapshot-reset-gap.cpp"))) return false;
+            lines = QStringList{latest->load() ? QStringLiteral("int snapshot_new = 2;")
+                                               : QStringLiteral("int snapshot_old = 1;")};
+            return true;
+        });
+        const QString file = QStringLiteral("snapshot-reset-gap.cpp");
+        CppParser::parseFileBlocking(parser, file, false, QString());
+        ClassBrowserModel model;
+        model.beginUpdate();
+        model.setParser(parser);
+        model.setCurrentFile(file);
+        model.endUpdate();
+        const auto contains = [&model](const QString &name) {
+            for (int row = 0; row < model.rowCount({}); ++row)
+                if (model.data(model.index(row, 0, {}), Qt::DisplayRole).toString().contains(name))
+                    return true;
+            return false;
+        };
+        check("Reset gap fixture starts with the previous structure snapshot",
+              contains(QStringLiteral("snapshot_old")));
+        QObject::connect(parser.get(), &CppParser::cacheResetFinished, &model,
+                         [resetEntered, releaseReset, resetOffGui, guiThread] {
+            resetOffGui->store(QThread::currentThread() != guiThread);
+            resetEntered->release();
+            releaseReset->tryAcquire(1, 10000);
+        }, Qt::DirectConnection);
+        auto unblock = finally([releaseReset] { releaseReset->release(); });
+        const bool frozen = parser->freeze();
+        if (frozen) {
+            latest->store(true);
+            CppParser::resetParsedResultsNonBlocking(parser);
+            CppParser::parseFileNonBlocking(parser, file, false, QString());
+            parser->unFreeze();
+        }
+        bool reached = false;
+        QElapsedTimer deadline;
+        deadline.start();
+        while (frozen && !reached && deadline.elapsed() < 5000) {
+            reached = resetEntered->tryAcquire(1, 0);
+            if (!reached) waitForUi(20);
+        }
+        const bool pending = reached && parser->hasPendingWork();
+        const bool idleGap = reached && !parser->parsing();
+        if (reached) model.fillStatements();
+        const bool oldKept = reached && contains(QStringLiteral("snapshot_old"));
+        check("Reset gap is reached outside the GUI with analysis queued",
+              reached && pending && idleGap && resetOffGui->load());
+        check("Structure preserves the snapshot while post-reset analysis is queued", oldKept);
+        releaseReset->release();
+        deadline.restart();
+        while (reached && !contains(QStringLiteral("snapshot_new")) && deadline.elapsed() < 10000)
+            waitForUi(20);
+        check("Structure refreshes after the queued post-reset analysis finishes",
+              reached && contains(QStringLiteral("snapshot_new"))
+                  && !contains(QStringLiteral("snapshot_old")));
     }
     if (qEnvironmentVariableIsSet("REDPANDA_QA_BUSY_ONLY")) {
         QFile output(QDir(outputDirectory).filePath("parser-busy-result.json"));

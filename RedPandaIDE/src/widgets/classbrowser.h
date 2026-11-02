@@ -91,6 +91,8 @@ private:
     PCppParser mParser;
     QMetaObject::Connection mParseStartedConnection;
     QMetaObject::Connection mParseFinishedConnection;
+    QMetaObject::Connection mCacheResetStartedConnection;
+    QMetaObject::Connection mCacheResetFinishedConnection;
     bool mParsingInProgress = false;
     quint64 mParserGeneration = 0;
     bool mRefreshPending = false;

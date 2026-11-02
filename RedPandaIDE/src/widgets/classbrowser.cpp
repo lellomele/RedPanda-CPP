@@ -217,6 +217,8 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
         return;
     disconnect(mParseStartedConnection);
     disconnect(mParseFinishedConnection);
+    disconnect(mCacheResetStartedConnection);
+    disconnect(mCacheResetFinishedConnection);
     ++mParserGeneration;
     mRetryScheduled = false;
     mRetryAttempts = 0;
@@ -239,6 +241,22 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
                 fillStatements();
                 updateParsingState();
             }, Qt::QueuedConnection);
+        mCacheResetStartedConnection = connect(mParser.get(), &CppParser::cacheResetStarted,
+            this, [this, generation] {
+                if (generation == mParserGeneration)
+                    updateParsingState();
+            }, Qt::QueuedConnection);
+        mCacheResetFinishedConnection = connect(mParser.get(), &CppParser::cacheResetFinished,
+            this, [this, generation] {
+                if (generation != mParserGeneration)
+                    return;
+                // Retry once the reset worker and any queued parses drain.
+                // Do not publish the just-cleared cache as a final snapshot.
+                mRefreshPending = true;
+                mRetryAttempts = 0;
+                scheduleRefreshRetry();
+                updateParsingState();
+            }, Qt::QueuedConnection);
     }
     updateParsingState();
 }
@@ -255,7 +273,7 @@ void ClassBrowserModel::synchronizeParsingState()
 
 void ClassBrowserModel::updateParsingState()
 {
-    const bool parsing = mParser && mParser->parsing();
+    const bool parsing = mParser && mParser->hasPendingWork();
     if (mParsingInProgress == parsing)
         return;
     mParsingInProgress = parsing;
@@ -308,7 +326,7 @@ void ClassBrowserModel::fillStatements()
         return;
     }
     // Keep the last valid snapshot until fresh parser data is available.
-    if (!parser->freeze()) {
+    if (parser->hasPendingWork() || !parser->freeze()) {
         scheduleRefreshRetry();
         return;
     }
@@ -505,6 +523,11 @@ void ClassBrowserModel::filterChildren(ClassBrowserNode *node, const StatementMa
                 parentNode = dummyNode;
         }
         if (isScopeStatement(statement)) {
+            // Scope nodes display detached dummy statements, so addChild()
+            // marks only the dummy. Track the actual parser statement before
+            // visiting its children; separate namespace declarations remain
+            // separate and are still merged into the same scope node.
+            mProcessedStatements.insert(statement.get());
             //PStatement dummy = mDummyStatements.value(statement->fullName,PStatement());
             PClassBrowserNode scopeNode = mScopeNodes.value(statement->fullName,PClassBrowserNode());
             if (!scopeNode) {

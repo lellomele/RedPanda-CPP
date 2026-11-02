@@ -20,6 +20,9 @@ CASES = (
     ('split-private', 'split', False),
 )
 BUSY_CHECKS = {
+    'Structure retains all deeply nested namespaces',
+    'Structure merges reopened namespaces without losing members',
+    'Structure preserves namespace member navigation attributes',
     'Editor knows an idle scanned file does not need reparse',
     'Busy parser makes editor reparse check conservative',
     'Busy parser does not expose scanned-file state',

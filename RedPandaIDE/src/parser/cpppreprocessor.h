@@ -66,6 +66,8 @@ public:
     CppPreprocessor& operator=(const CppPreprocessor&)=delete;
 
     void clear();
+    // Call only while the owning parser has exclusive access.
+    void clearParsedResultsPreservingConfig();
 
     void clearTempResults();
     void getDefineParts(const QString& input, QString &name, QString &args, QString &value);

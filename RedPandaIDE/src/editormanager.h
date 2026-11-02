@@ -21,6 +21,7 @@
 #include <QSplitter>
 #include <QWidget>
 #include <QRecursiveMutex>
+#include <QPointer>
 #include "utils.h"
 #include "editor.h"
 #include "reformatter/astyleformatter.h"
@@ -144,6 +145,7 @@ private:
     LayoutShowType mLayout;
     QTabWidget *mLeftPageWidget;
     QTabWidget *mRightPageWidget;
+    QPointer<QTabWidget> mLastActivePageWidget;
     QSplitter *mSplitter;
     QWidget *mPanel;
     int mUpdateCount;

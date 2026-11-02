@@ -27,6 +27,20 @@ private slots:
     void test_frozen_project_file_list_is_retried();
     void test_frozen_background_request_is_retried();
     void test_frozen_requests_preserve_distinct_files_and_latest_content();
+    void test_reset_barrier_nested_freeze_and_explicit_requests();
+    void test_reset_barrier_busy_parser_retains_other_files();
+    void test_reset_barrier_preserves_configuration_only();
+    void test_reset_barrier_reports_synchronous_parse_busy();
+    void test_sync_reservation_reset_excludes_parse();
+    void test_sync_reservation_hard_defines_serialize();
+    void test_reset_after_dispatch_before_parse_preserves_request();
+    void test_reset_during_active_parse_preserves_request();
+    void test_reset_replay_keeps_newer_context();
+    void test_reset_during_active_project_list_replays_all();
+    void test_reset_active_project_dependencies_data();
+    void test_reset_active_project_dependencies();
+    void test_expired_inheritance_entry_is_removed_once();
+    void test_inheritance_records_stay_bounded_after_reparse();
     void test_split_expression_ignores_comments_data();
     void test_split_expression_ignores_comments();
 

@@ -1066,7 +1066,7 @@ bool CppParser::isSystemHeaderFile(const QString &fileName) const
 
 bool CppParser::parseFile(const QString &fileName, bool inProject,
                           const QString& contextFilename, bool onlyIfNotParsed, bool updateView,
-                          bool consumeSyncReservation)
+                          bool consumeSyncReservation, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver)
 {
     {
         QMutexLocker locker(&mMutex);
@@ -1081,12 +1081,14 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
                 return false;
             }
         } else if (mParsing || mLockCount > 0 || mPendingReset || mResetWorkerActive || mSyncParseReserved) {
-            queueOlderParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView});
+            queueOlderParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver});
             return false;
         }
         mParsing = true;
         mActiveParseFileCommand = std::make_unique<ParseFileCommand>(
-            ParseFileCommand{fileName, inProject, contextFilename, onlyIfNotParsed, updateView});
+            ParseFileCommand{fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver});
+        mPreprocessor.setInputSnapshot(inputs);
+        mPreprocessor.setSourceReadObserver(std::move(readObserver));
         updateSerialId();
         if (updateView)
             emit onBusy();
@@ -1096,6 +1098,8 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
         auto action = finally([&,this]{
             QMutexLocker locker(&mMutex);
             mActiveParseFileCommand.reset();
+            mPreprocessor.setInputSnapshot({});
+            mPreprocessor.setSourceReadObserver({});
             mParsing = false;
             if (updateView)
                 emit parseFinished(mFilesScannedCount,1);
@@ -1139,7 +1143,7 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
     return true;
 }
 
-void CppParser::parseFileList(bool updateView)
+void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver)
 {
     QSet<QString> filesToScan;
     {
@@ -1147,14 +1151,23 @@ void CppParser::parseFileList(bool updateView)
         if (!mEnabled)
             return;
         if (mParsing || mLockCount>0 || mPendingReset || mResetWorkerActive || mSyncParseReserved) {
+            const bool alreadyPending = mPendingFileList;
             mPendingFileList = true;
             mPendingFileListUpdateView |= updateView;
+            if (!alreadyPending) {
+                mPendingFileListInputs = inputs;
+                mPendingFileListReadObserver = readObserver;
+            }
             return;
         }
         updateSerialId();
         mParsing = true;
         mActiveFileList = true;
         mActiveFileListUpdateView = updateView;
+        mActiveFileListInputs = inputs;
+        mActiveFileListReadObserver = readObserver;
+        mPreprocessor.setInputSnapshot(inputs);
+        mPreprocessor.setSourceReadObserver(std::move(readObserver));
         mActiveFileListNames = mFilesToScan;
         filesToScan = mFilesToScan;
         mFilesToScan.clear();
@@ -1167,6 +1180,10 @@ void CppParser::parseFileList(bool updateView)
             QMutexLocker locker(&mMutex);
             mActiveFileList = false;
             mActiveFileListNames.clear();
+            mActiveFileListInputs.reset();
+            mActiveFileListReadObserver = {};
+            mPreprocessor.setInputSnapshot({});
+            mPreprocessor.setSourceReadObserver({});
             mParsing = false;
             if (updateView)
                 emit parseFinished(mFilesScannedCount,1);
@@ -7058,7 +7075,18 @@ CppParser::ParseResult CppParser::parseFileBlocking(PCppParser parser, const QSt
             parser->schedulePendingParseCommands();
         }
     });
-    if (parser->parseFile(fileName, inProject, contextFilename, onlyIfNotParsed, updateView, true))
+    const auto source = parser->captureInputSnapshot();
+    if (source.status != InputCaptureStatus::Captured) {
+        emit parser->inputSnapshotUnavailable(source.error);
+        return ParseResult::InputUnavailable;
+    }
+    SourceReadObserver observer;
+    {
+        QMutexLocker locker(&parser->mMutex);
+        observer = parser->mSourceReadObserver;
+    }
+    if (parser->parseFile(fileName, inProject, contextFilename, onlyIfNotParsed, updateView, true,
+                          source.snapshot, observer))
         return ParseResult::Parsed;
     if (!parser->enabled())
         return ParseResult::Disabled;
@@ -7129,6 +7157,32 @@ void CppParser::setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream)
     mPreprocessor.setOnGetFileStream(newOnGetFileStream);
 }
 
+void CppParser::setInputSnapshotProvider(InputSnapshotProvider provider)
+{
+    QMutexLocker locker(&mMutex);
+    mInputSnapshotProvider = std::move(provider);
+}
+
+void CppParser::setSourceReadObserver(SourceReadObserver observer)
+{
+    QMutexLocker locker(&mMutex);
+    mSourceReadObserver = std::move(observer);
+}
+
+InputCaptureResult CppParser::captureInputSnapshot() const
+{
+    InputSnapshotProvider provider;
+    {
+        QMutexLocker locker(&mMutex);
+        provider = mInputSnapshotProvider;
+    }
+    if (!provider)
+        return {InputCaptureStatus::Captured, {}, {}}; // Legacy engine fixtures.
+    if (QThread::currentThread() != thread())
+        return {InputCaptureStatus::WrongThread, {}, tr("Document input must be captured in the parser's owning thread.")};
+    return provider();
+}
+
 const QSet<QString> &CppParser::filesToScan() const
 {
     return mFilesToScan;
@@ -7156,6 +7210,8 @@ void CppParser::setEnabled(bool newEnabled)
             mPendingParseFileCommands.clear();
             mPendingFileList = false;
             mPendingFileListUpdateView = false;
+            mPendingFileListInputs.reset();
+            mPendingFileListReadObserver = {};
             mPendingReset = false;
         }
     }
@@ -7172,17 +7228,31 @@ CppFileParserThread::CppFileParserThread(
         const QString &contextFilename,
         bool onlyIfNotParsed,
         bool updateView,
-        QObject *parent):QThread{parent},
+        QObject *parent,
+        PAnalysisInputSnapshot inputs,
+        SourceReadObserver readObserver):QThread{parent},
     mParser{parser},
     mFileName{fileName},
     mInProject{inProject},
     mContextFilename{contextFilename},
     mOnlyIfNotParsed{onlyIfNotParsed},
-    mUpdateView{updateView}
+    mUpdateView{updateView},
+    mInputs(std::move(inputs)),
+    mReadObserver(std::move(readObserver))
 {
     if (mParser) {
+        const bool captureCurrentContext = !mInputs;
+        if (captureCurrentContext) {
+            const auto captured = mParser->captureInputSnapshot();
+            mInputsAvailable = captured.status == InputCaptureStatus::Captured;
+            mInputs = captured.snapshot;
+            if (!mInputsAvailable)
+                emit mParser->inputSnapshotUnavailable(captured.error);
+        }
         QMutexLocker locker(&mParser->mMutex);
         mParser->mAsyncOwner = mParser;
+        if (captureCurrentContext && !mReadObserver)
+            mReadObserver = mParser->mSourceReadObserver;
     }
     connect(this,&QThread::finished,
             this,&QObject::deleteLater);
@@ -7194,15 +7264,16 @@ CppFileParserThread::~CppFileParserThread()
 
 void CppFileParserThread::run()
 {
-    if (mParser) {
-        if (mParser->parseFile(mFileName,mInProject,mContextFilename,mOnlyIfNotParsed,mUpdateView)) {
+    if (mParser && mInputsAvailable) {
+        if (mParser->parseFile(mFileName,mInProject,mContextFilename,mOnlyIfNotParsed,mUpdateView,
+                               false, mInputs, mReadObserver)) {
             CppParser::PParseFileCommand command;
             while ( (command = mParser->retrievePendingParseFileCommand()) != nullptr) {
                 if (!mParser->parseFile(command->fileName,
                                    command->inProject,
                                    command->contextFilename,
                                    command->onlyIfNotParsed,
-                                   command->updateView))
+                                   command->updateView, false, command->inputs, command->readObserver))
                     break;
             }
         }
@@ -7210,19 +7281,35 @@ void CppFileParserThread::run()
 }
 
 CppFileListParserThread::CppFileListParserThread(PCppParser parser,
-                                                 bool updateView, QObject *parent):
+                                                 bool updateView, QObject *parent,
+                                                 PAnalysisInputSnapshot inputs,
+                                                 SourceReadObserver readObserver):
     QThread(parent),
     mParser(parser),
-    mUpdateView(updateView)
+    mUpdateView(updateView),
+    mInputs(std::move(inputs)),
+    mReadObserver(std::move(readObserver))
 {
+    const bool captureCurrentContext = !mInputs;
+    if (mParser && captureCurrentContext) {
+        const auto captured = mParser->captureInputSnapshot();
+        mInputsAvailable = captured.status == InputCaptureStatus::Captured;
+        mInputs = captured.snapshot;
+        if (!mInputsAvailable)
+            emit mParser->inputSnapshotUnavailable(captured.error);
+    }
+    if (mParser && captureCurrentContext && !mReadObserver) {
+        QMutexLocker locker(&mParser->mMutex);
+        mReadObserver = mParser->mSourceReadObserver;
+    }
     connect(this,&QThread::finished,
             this,&QObject::deleteLater);
 }
 
 void CppFileListParserThread::run()
 {
-    if (mParser) {
-        mParser->parseFileList(mUpdateView);
+    if (mParser && mInputsAvailable) {
+        mParser->parseFileList(mUpdateView, mInputs, mReadObserver);
     }
 }
 
@@ -7242,6 +7329,19 @@ void CppParser::resetParsedResultsNonBlocking(PCppParser parser)
 {
     if (!parser)
         return;
+    if (QThread::currentThread() != parser->thread()) {
+        const std::weak_ptr<CppParser> weak = parser;
+        QMetaObject::invokeMethod(parser.get(), [weak] {
+            if (const auto owner = weak.lock())
+                resetParsedResultsNonBlocking(owner);
+        }, Qt::QueuedConnection);
+        return;
+    }
+    const auto source = parser->captureInputSnapshot();
+    if (source.status != InputCaptureStatus::Captured) {
+        emit parser->inputSnapshotUnavailable(source.error);
+        return;
+    }
     {
         QMutexLocker locker(&parser->mMutex);
         if (!parser->mEnabled)
@@ -7258,6 +7358,8 @@ void CppParser::resetParsedResultsNonBlocking(PCppParser parser)
                 parser->mFilesToScan.unite(parser->mProjectFiles);
                 parser->mPendingFileList = true;
                 parser->mPendingFileListUpdateView = true;
+                parser->mPendingFileListInputs = source.snapshot;
+                parser->mPendingFileListReadObserver = parser->mSourceReadObserver;
             }
             // Results produced by the current parse will be discarded by the
             // barrier. Replay that work, keeping newer queued requests intact.
@@ -7268,38 +7370,77 @@ void CppParser::resetParsedResultsNonBlocking(PCppParser parser)
                 parser->mFilesToScan.unite(parser->mActiveFileListNames);
                 parser->mPendingFileList = true;
                 parser->mPendingFileListUpdateView |= parser->mActiveFileListUpdateView;
+                if (!parser->mPendingFileListInputs)
+                    parser->mPendingFileListInputs = parser->mActiveFileListInputs;
+                if (!parser->mPendingFileListReadObserver)
+                    parser->mPendingFileListReadObserver = parser->mActiveFileListReadObserver;
             }
         }
     }
     parser->schedulePendingParseCommands();
 }
 
-void CppParser::parseFileNonBlocking(PCppParser parser, const QString &fileName, bool inProject, const QString &contextFilename,
+CppParser::RequestResult CppParser::parseFileNonBlocking(PCppParser parser, const QString &fileName, bool inProject, const QString &contextFilename,
                           bool onlyIfNotParsed, bool updateView)
 {
     if (!parser)
-        return;
+        return RequestResult::Disabled;
     if (!parser->enabled())
-        return;
+        return RequestResult::Disabled;
+    if (QThread::currentThread() != parser->thread()) {
+        const std::weak_ptr<CppParser> weak = parser;
+        QMetaObject::invokeMethod(parser.get(), [weak, fileName, inProject, contextFilename, onlyIfNotParsed, updateView] {
+            if (const auto owner = weak.lock())
+                parseFileNonBlocking(owner, fileName, inProject, contextFilename, onlyIfNotParsed, updateView);
+        }, Qt::QueuedConnection);
+        return RequestResult::QueuedForOwner;
+    }
+    const auto source = parser->captureInputSnapshot();
+    if (source.status != InputCaptureStatus::Captured) {
+        emit parser->inputSnapshotUnavailable(source.error);
+        return RequestResult::InputUnavailable;
+    }
     {
         QMutexLocker locker(&parser->mMutex);
+        if (!parser->mEnabled)
+            return RequestResult::Disabled;
         parser->mAsyncOwner = parser;
-        parser->queueParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView});
+        parser->queueParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView,
+                                       source.snapshot, parser->mSourceReadObserver});
     }
     parser->schedulePendingParseCommands();
+    return RequestResult::Accepted;
 }
 
-void CppParser::parseFileListNonBlocking(PCppParser parser, bool updateView)
+CppParser::RequestResult CppParser::parseFileListNonBlocking(PCppParser parser, bool updateView)
 {
     if (!parser || !parser->enabled())
-        return;
+        return RequestResult::Disabled;
+    if (QThread::currentThread() != parser->thread()) {
+        const std::weak_ptr<CppParser> weak = parser;
+        QMetaObject::invokeMethod(parser.get(), [weak, updateView] {
+            if (const auto owner = weak.lock())
+                parseFileListNonBlocking(owner, updateView);
+        }, Qt::QueuedConnection);
+        return RequestResult::QueuedForOwner;
+    }
+    const auto source = parser->captureInputSnapshot();
+    if (source.status != InputCaptureStatus::Captured) {
+        emit parser->inputSnapshotUnavailable(source.error);
+        return RequestResult::InputUnavailable;
+    }
     {
         QMutexLocker locker(&parser->mMutex);
+        if (!parser->mEnabled)
+            return RequestResult::Disabled;
         parser->mAsyncOwner = parser;
         parser->mPendingFileList = true;
         parser->mPendingFileListUpdateView |= updateView;
+        parser->mPendingFileListInputs = source.snapshot;
+        parser->mPendingFileListReadObserver = parser->mSourceReadObserver;
     }
     parser->schedulePendingParseCommands();
+    return RequestResult::Accepted;
 }
 
 void CppParser::queueParseFileCommand(const ParseFileCommand &command)
@@ -7362,14 +7503,17 @@ void CppParser::startPendingParseCommands()
         resetWorker = true;
         worker = new CppParsedResultsResetThread(parser);
     } else if (mPendingFileList) {
-        worker = new CppFileListParserThread(parser, mPendingFileListUpdateView);
+        worker = new CppFileListParserThread(parser, mPendingFileListUpdateView, nullptr,
+                                              mPendingFileListInputs, mPendingFileListReadObserver);
         mPendingFileList = false;
         mPendingFileListUpdateView = false;
+        mPendingFileListInputs.reset();
+        mPendingFileListReadObserver = {};
     } else if (!mPendingParseFileCommands.isEmpty()) {
         const auto command = mPendingParseFileCommands.takeFirst();
         worker = new CppFileParserThread(parser, command.fileName, command.inProject,
                                         command.contextFilename, command.onlyIfNotParsed,
-                                        command.updateView);
+                                        command.updateView, nullptr, command.inputs, command.readObserver);
     } else {
         return;
     }

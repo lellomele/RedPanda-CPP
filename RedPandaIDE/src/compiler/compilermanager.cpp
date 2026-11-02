@@ -35,12 +35,36 @@
 #include "../settings.h"
 #include <QMessageBox>
 #include <QElapsedTimer>
+#include <QStatusBar>
 #include <algorithm>
 #include <QUuid>
 #include "projectcompiler.h"
+
+namespace {
+bool projectInputsReady(const std::shared_ptr<Project> &project, MainWindow *window, bool foreground)
+{
+    if (!project)
+        return true;
+    const auto result = project->validateBuildInputs();
+    if (result.succeeded())
+        return true;
+    if (foreground)
+        QMessageBox::warning(window, QCoreApplication::translate("CompilerManager", "Project input conflict"), result.error);
+    else if (window)
+        window->statusBar()->showMessage(result.error, 15000);
+    return false;
+}
+}
 #ifdef Q_OS_MACOS
 #include <sys/posix_shm.h>
 #endif
+
+int CompilerManager::trackedWorkerCount() const
+{
+    if (QThread::currentThread() != thread())
+        return -1;
+    return mWorkers.size();
+}
 
 CompilerManager::CompilerManager(QObject *parent) : QObject(parent),
     mCompileMutex(),
@@ -173,6 +197,8 @@ void CompilerManager::compile(const QString& filename, FileType fileType, const 
 
 void CompilerManager::compileProject(std::shared_ptr<Project> project, bool rebuild)
 {
+    if (!projectInputsReady(project, mMainWindow, true))
+        return;
     if (!pSettings->compilerSets().defaultSet()) {
         QMessageBox::critical(mMainWindow,
                               tr("No compiler set"),
@@ -208,6 +234,8 @@ void CompilerManager::compileProject(std::shared_ptr<Project> project, bool rebu
 
 void CompilerManager::cleanProject(std::shared_ptr<Project> project)
 {
+    if (!projectInputsReady(project, mMainWindow, true))
+        return;
     if (!pSettings->compilerSets().defaultSet()) {
         QMessageBox::critical(mMainWindow,
                               tr("No compiler set"),
@@ -245,6 +273,8 @@ void CompilerManager::cleanProject(std::shared_ptr<Project> project)
 
 void CompilerManager::buildProjectMakefile(std::shared_ptr<Project> project)
 {
+    if (!projectInputsReady(project, mMainWindow, true))
+        return;
     if (!pSettings->compilerSets().defaultSet()) {
         QMessageBox::critical(mMainWindow,
                               tr("No compiler set"),
@@ -264,6 +294,8 @@ void CompilerManager::buildProjectMakefile(std::shared_ptr<Project> project)
 
 void CompilerManager::checkSyntax(const QString &filename, const QByteArray& encoding, const QString &content, std::shared_ptr<Project> project)
 {
+    if (!projectInputsReady(project, mMainWindow, false))
+        return;
     if (!pSettings->compilerSets().defaultSet()) {
         QMessageBox::critical(mMainWindow,
                               tr("No compiler set"),

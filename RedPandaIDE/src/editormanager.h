@@ -24,10 +24,12 @@
 #include <QPointer>
 #include "utils.h"
 #include "editor.h"
+#include "documentstore.h"
 #include "reformatter/astyleformatter.h"
 
 class MainWindow;
 class Project;
+enum class EditorCloseDecision { Ask, DiscardConfirmed };
 class EditorManager : public QObject
 {
     Q_OBJECT
@@ -50,7 +52,15 @@ public:
 
     Editor* getEditor(int index=-1, QTabWidget* tabsWidget=nullptr) const;
 
-    bool closeEditor(Editor* editor, bool transferFocus=true, bool force=false);
+    bool closeEditor(Editor* editor, bool transferFocus=true, bool force=false,
+                     EditorCloseDecision decision=EditorCloseDecision::Ask);
+
+    // GUI-owned inventory: selection/focus never changes the resource set.
+    QList<Editor *> editors() const;
+    QList<PCppParser> allParsers() const;
+    void bindParserInput(const PCppParser &parser);
+    InputSnapshotProvider inputSnapshotProvider() const;
+    PDocumentSnapshot snapshotFor(Editor *editor);
 
     bool swapEditor(Editor* editor);
     void activeEditor(Editor *e, bool focus);
@@ -121,6 +131,7 @@ private:
     QTabWidget* getFocusedPageControl() const;
     void showLayout(LayoutShowType layout);
     void doRemoveEditor(Editor* e);
+    void observeDocument(Editor *editor);
 #ifdef ENABLE_SDCC
     CompilerType getCompilerTypeForEditor(const Editor *e) const;
 #endif
@@ -153,6 +164,9 @@ private:
     QHash<ParserLanguage,std::weak_ptr<CppParser>> mSharedParsersForRight;
     QHash<ParserLanguage,std::weak_ptr<CppParser>> mSharedParsersForLeft;
     mutable QRecursiveMutex mMutex;
+    std::shared_ptr<DocumentStore> mDocumentStore = std::make_shared<DocumentStore>();
+    QHash<Editor *, DocumentId> mDocumentIds;
+    QList<std::weak_ptr<CppParser>> mKnownParsers;
 };
 
 #endif // EDITORLIST_H

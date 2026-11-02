@@ -24,6 +24,7 @@
 #include "statementmodel.h"
 #include "cpptokenizer.h"
 #include "cpppreprocessor.h"
+#include "../documentstore.h"
 
 class CppParser;
 using PCppParser = std::shared_ptr<CppParser>;
@@ -38,6 +39,8 @@ public:
         QString contextFilename;
         bool onlyIfNotParsed;
         bool updateView;
+        PAnalysisInputSnapshot inputs;
+        SourceReadObserver readObserver;
     };
     using PParseFileCommand = std::unique_ptr<ParseFileCommand>;
 
@@ -143,6 +146,8 @@ public:
     void setFilesToScan(const QSet<QString> &newFilesToScan);
 
     void setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream);
+    void setInputSnapshotProvider(InputSnapshotProvider provider);
+    void setSourceReadObserver(SourceReadObserver observer);
 
     int parserId() const;
 
@@ -177,7 +182,8 @@ public:
     bool sharedByFiles() const;
     void setSharedByFiles(bool newSharedByFiles);
 
-    enum class ParseResult { Parsed, Busy, Disabled, NotParsed };
+    enum class ParseResult { Parsed, Busy, Disabled, NotParsed, InputUnavailable };
+    enum class RequestResult { Accepted, QueuedForOwner, Disabled, InputUnavailable };
     static ParseResult parseFileBlocking(
         PCppParser parser,
         const QString &fileName,
@@ -186,7 +192,7 @@ public:
             bool onlyIfNotParsed = false,
             bool updateView = true);
 
-    static void parseFileNonBlocking(
+    static RequestResult parseFileNonBlocking(
         PCppParser parser,
         const QString &fileName,
         bool inProject,
@@ -194,7 +200,7 @@ public:
         bool onlyIfNotParsed = false,
         bool updateView = true);
 
-    static void parseFileListNonBlocking(
+    static RequestResult parseFileListNonBlocking(
             PCppParser parser,
             bool updateView = true);
 
@@ -203,6 +209,7 @@ public:
 
 
 signals:
+    void inputSnapshotUnavailable(const QString &reason);
     void progress(const QString& fileName, int total, int current);
     void onBusy();
     void parseStarted();
@@ -215,9 +222,12 @@ private:
     bool parseFile(const QString& fileName, bool inProject,
                    const QString& contextFilename,
                    bool onlyIfNotParsed = false, bool updateView = true,
-                   bool consumeSyncReservation = false
+                   bool consumeSyncReservation = false,
+                   PAnalysisInputSnapshot inputs = {},
+                   SourceReadObserver readObserver = {}
                    );
-    void parseFileList(bool updateView = true);
+    void parseFileList(bool updateView = true, PAnalysisInputSnapshot inputs = {}, SourceReadObserver readObserver = {});
+    InputCaptureResult captureInputSnapshot() const;
     PParseFileCommand retrievePendingParseFileCommand();
 
     PStatement addInheritedStatement(
@@ -787,6 +797,10 @@ private:
     PParseFileCommand mActiveParseFileCommand;
     bool mActiveFileList = false;
     bool mActiveFileListUpdateView = false;
+    PAnalysisInputSnapshot mActiveFileListInputs;
+    PAnalysisInputSnapshot mPendingFileListInputs;
+    SourceReadObserver mActiveFileListReadObserver;
+    SourceReadObserver mPendingFileListReadObserver;
     QSet<QString> mActiveFileListNames;
     std::weak_ptr<CppParser> mAsyncOwner;
     bool mPendingDispatchScheduled = false;
@@ -796,6 +810,8 @@ private:
     bool mPendingReset = false;
     bool mResetWorkerActive = false;
     bool mSyncParseReserved = false;
+    InputSnapshotProvider mInputSnapshotProvider;
+    SourceReadObserver mSourceReadObserver;
     void queueParseFileCommand(const ParseFileCommand &command);
     void queueOlderParseFileCommand(const ParseFileCommand &command);
     void schedulePendingParseCommands();
@@ -818,7 +834,9 @@ public:
             const QString &contextFilename,
             bool onlyIfNotParsed = false,
             bool updateView = true,
-            QObject *parent = nullptr);
+            QObject *parent = nullptr,
+            PAnalysisInputSnapshot inputs = {},
+            SourceReadObserver readObserver = {});
     ~CppFileParserThread();
 private:
     PCppParser mParser;
@@ -828,6 +846,9 @@ private:
     bool mOnlyIfNotParsed;
     bool mUpdateView;
     int mId;
+    PAnalysisInputSnapshot mInputs;
+    SourceReadObserver mReadObserver;
+    bool mInputsAvailable = true;
 
     // QThread interface
 protected:
@@ -841,10 +862,15 @@ public:
     explicit CppFileListParserThread(
             PCppParser parser,
             bool updateView = true,
-            QObject *parent = nullptr);
+            QObject *parent = nullptr,
+            PAnalysisInputSnapshot inputs = {},
+            SourceReadObserver readObserver = {});
 private:
     PCppParser mParser;
     bool mUpdateView;
+    PAnalysisInputSnapshot mInputs;
+    SourceReadObserver mReadObserver;
+    bool mInputsAvailable = true;
     // QThread interface
 protected:
     void run() override;

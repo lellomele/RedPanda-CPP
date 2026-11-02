@@ -448,6 +448,26 @@ if(BUILD_TESTING)
                     --ide $<TARGET_FILE:RedPandaIDE>)
             set_tests_properties(test-rename-workflow PROPERTIES
                 TIMEOUT 90 LABELS "ide;functional;refactoring" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-document-close-plan
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_close_plan.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-document-close-plan PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;persistence" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-document-snapshots
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_document_snapshots.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-document-snapshots PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;parser;editing" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-recovery-document-cache
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_recovery_cache.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-recovery-document-cache PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;persistence" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-project-operations
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_project_operations.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-project-operations PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;project;persistence" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
             add_test(NAME test-structure-concurrency
                 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_structure_concurrency.py
                     --ide $<TARGET_FILE:RedPandaIDE>)

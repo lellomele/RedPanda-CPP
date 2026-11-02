@@ -17,6 +17,7 @@
 #include "colorscheme.h"
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -98,17 +99,17 @@ QMap<QString, PColorSchemeItem> ColorScheme::items()
 
 void ColorScheme::save(const QString &filename)
 {
-    QFile file(filename);
-    QFileInfo info(filename);
-    info.dir().mkpath(info.dir().absolutePath());
-    if (!file.open(QFile::WriteOnly)) {
-        throw FileError(QObject::tr("Can't open file '%1' for write").arg(file.fileName()));
-    }
     QJsonObject json;
     toJson(json);
     QJsonDocument doc(json);
-    QByteArray content = doc.toJson();
-    file.write(content);
+    const QByteArray content = doc.toJson();
+    const QFileInfo info(filename);
+    if (!info.dir().mkpath(info.dir().absolutePath()))
+        throw FileError(QObject::tr("Can't open file '%1' for write").arg(filename));
+    QSaveFile file(filename);
+    file.setDirectWriteFallback(false);
+    if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size() || !file.commit())
+        throw FileError(QObject::tr("Can't save file '%1': %2").arg(filename, file.errorString()));
 }
 
 bool ColorScheme::bundled() const

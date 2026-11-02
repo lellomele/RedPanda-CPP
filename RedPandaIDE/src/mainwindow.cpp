@@ -61,6 +61,7 @@
 #include <algorithm>
 #include "ui_mainwindow.h"
 #include "editormanager.h"
+#include "editorcloseplan.h"
 #include "editor.h"
 #include "systemconsts.h"
 #include "settings.h"
@@ -146,7 +147,6 @@ MainWindow::MainWindow(QWidget *parent)
       mShouldRemoveAllSettings{false},
       mClosing{false},
       mClosingAll{false},
-      mOpenningFiles{false},
       mSystemTurnedOff{false},
       mCompileIssuesState{CompileIssuesState::None}
 {
@@ -155,7 +155,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Clicking a tab explicitly activates that editor, including the already
     // selected tab in the other split pane (which emits no currentChanged).
     const auto activateClickedTab = [this](QTabWidget *tabs, int index) {
-        if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+        if (!mFullInitialized || mQuitting || mClosingAll || mOpeningFiles
                 || openingProject() || closingProject() || index < 0)
             return;
         if (auto *editor = qobject_cast<Editor *>(tabs->widget(index))) {
@@ -1930,6 +1930,8 @@ Editor* MainWindow::openFile(QString filename, bool activate, FileType fileType,
 
 void MainWindow::openProject(QString filename, bool openFiles)
 {
+    if (mOpeningProject || mClosingProject || mQuitting)
+        return;
     mOpeningProject=true;
     auto action=finally([this]{
         mOpeningProject=false;
@@ -1940,7 +1942,7 @@ void MainWindow::openProject(QString filename, bool openFiles)
     QFileInfo info=QFileInfo(filename);
     if (info.isAbsolute())
         filename = info.absoluteFilePath();
-    Editor* oldEditor=nullptr;
+    QPointer<Editor> oldEditor;
     if (mProject) {
         if (mProject->filename() == filename)
             return;
@@ -1948,7 +1950,8 @@ void MainWindow::openProject(QString filename, bool openFiles)
         if (dlg.exec()!=QDialog::Accepted)
             return;
         if (dlg.openType()==ProjectAlreadyOpenDialog::OpenType::ThisWindow) {
-            closeProject(false);
+            if (!closeProject(false).succeeded())
+                return;
         } else {
             QProcess process;
             process.setProgram(QApplication::instance()->applicationFilePath());
@@ -1976,7 +1979,12 @@ void MainWindow::openProject(QString filename, bool openFiles)
 
     // Only update class browser once
     mClassBrowserModel->beginUpdate();
+    const auto finishBrowserUpdate = finally([this] { mClassBrowserModel->endUpdate(); });
     mProject = Project::load(filename,mEditorManager,mIconsManager.get(), &mFileSystemWatcher);
+    const QString projectDirectory = mProject->directory();
+    if (!mFileSystemWatcher.directories().contains(projectDirectory)
+            && !mFileSystemWatcher.addPath(projectDirectory))
+        logToolsOutput(tr("Could not monitor the project folder: %1").arg(projectDirectory));
     updateProjectView();
     ui->projectView->expand(
                 mProjectProxyModel->mapFromSource(
@@ -2025,9 +2033,8 @@ void MainWindow::openProject(QString filename, bool openFiles)
     updateAppTitle();
     updateCompilerSet();
     updateClassBrowserForEditor(e);
-    mClassBrowserModel->endUpdate();
     if (oldEditor)
-        mEditorManager->closeEditor(oldEditor);
+        mEditorManager->closeEditor(oldEditor.data());
     setupSlotsForProject();
     //updateForEncodingInfo();
 }
@@ -3538,28 +3545,15 @@ bool MainWindow::saveLastOpens()
     for (int i=0;i<mEditorManager->pageCount();i++) {
       Editor * editor = (*mEditorManager)[i];
       QJsonObject fileObj;
-      if (editor->isNew()) {
-          if (!editor->modified())
-              continue;
-          QMessageBox::StandardButton reply;
-          reply = QMessageBox::question(editor,QObject::tr("Save"),
-                                        QString(QObject::tr("Save changes to %1?")).arg(editor->filename()),
-                                        QMessageBox::Yes|QMessageBox::No|QMessageBox::Yes|QMessageBox::Cancel);
-          if (reply == QMessageBox::No) {
-              editor->setModified(false);
-              continue;
-          } else if (reply == QMessageBox::Yes) {
-              if (!editor->save(false,false)) {
-                  return false;
-              }
-          } else {
-              return false;
-          }
-      }
+      // Close decisions are prepared before persistence. Untitled buffers
+      // have no path to restore; an accepted discard never clears their dirty
+      // marker merely to suppress a later prompt.
+      if (editor->isNew())
+          continue;
 
       fileObj["filename"] = editor->filename();
       fileObj["onLeft"] = (mEditorManager->findPageControlForEditor(editor) != mEditorManager->rightPageWidget());
-      fileObj["focused"] = editor->hasFocus();
+      fileObj["focused"] = (editor == mEditorManager->getEditor());
       fileObj["caretX"] = editor->caretX();
       fileObj["caretY"] = editor->caretY();
       fileObj["top"] = editor->topPos();
@@ -3575,6 +3569,7 @@ bool MainWindow::saveLastOpens()
     doc.setObject(rootObj);
     QByteArray json = doc.toJson();
     QSaveFile file(filename);
+    file.setDirectWriteFallback(false);
 
     if (!file.open(QFile::WriteOnly | QFile::Truncate)) {
         QMessageBox::critical(this,
@@ -3582,18 +3577,19 @@ bool MainWindow::saveLastOpens()
                               tr("Can't open last open information file '%1' for write!")
                               .arg(filename),
                               QMessageBox::Ok);
-        return true;
+        return false;
     }
-    if (file.write(doc.toJson())!=json.size()) {
+    if (file.write(json)!=json.size()) {
         QMessageBox::critical(this,
                               tr("Save last open info error"),
                               tr("Can't save last open info file '%1'")
                               .arg(filename),
                               QMessageBox::Ok);
-        return true;
+        return false;
     }
     if (!file.commit()) {
         QMessageBox::warning(this, tr("Save last open info error"), file.errorString());
+        return false;
     }
     return true;
 }
@@ -5180,6 +5176,7 @@ void MainWindow::onProjectRemoveFolder()
 {
     if (!mProject)
         return;
+    const auto project = mProject;
     QModelIndex current = mProjectProxyModel->mapToSource(ui->projectView->currentIndex());
     if (!current.isValid()) {
         return;
@@ -5190,8 +5187,18 @@ void MainWindow::onProjectRemoveFolder()
         return;
     if (folderNode->isUnit)
         return;
-    mProject->removeFolder(folderNode);
-    mProject->saveOptions();
+    const auto result = project->removeFolder(folderNode);
+    if (!result.succeeded() && !result.error.isEmpty())
+        QMessageBox::warning(this, tr("Remove file"), result.error);
+    if (!result.committed() || project != mProject)
+        return;
+    try {
+        project->saveAll();
+    } catch (const BaseError &error) {
+        project->setModified(true);
+        QMessageBox::warning(this, tr("Save Error"),
+            tr("Project changes were applied, but the project file could not be saved:\n%1").arg(error.reason()));
+    }
 
 }
 
@@ -5562,91 +5569,110 @@ void MainWindow::prepareProjectForCompile()
     mProject->buildPrivateResource();
 }
 
-void MainWindow::closeProject(bool refreshEditor)
+OperationResult MainWindow::prepareEditorClosePlan(EditorClosePlan &plan, bool projectOnly)
 {
-    // Stop executing program
+    QList<Editor *> editors;
+    for (int index = 0; index < mEditorManager->pageCount(); ++index) {
+        Editor *editor = (*mEditorManager)[index];
+        if (editor && (!projectOnly || editor->inProject()))
+            editors.append(editor);
+    }
+    const auto outcome = plan.prepare(editors, [this](Editor *editor, bool &discard) {
+        const QPointer<Editor> live(editor);
+        const auto answer = mSystemTurnedOff ? QMessageBox::Yes : QMessageBox::question(
+            editor, QObject::tr("Save"),
+            QObject::tr("Save changes to %1?").arg(editor->filename()),
+            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+        if (!live)
+            return OperationResult::conflict(tr("A document was closed while preparing to close."));
+        if (answer == QMessageBox::Cancel)
+            return OperationResult::cancelled();
+        if (answer == QMessageBox::No) {
+            discard = true;
+            return OperationResult::success();
+        }
+        if (answer != QMessageBox::Yes || !live->save(false, false))
+            return OperationResult::cancelled();
+        return OperationResult::success();
+    });
+    if (!outcome.succeeded())
+        return outcome;
+    return plan.validate(*mEditorManager, projectOnly ? EditorCloseScope::ProjectEditors : EditorCloseScope::AllEditors);
+}
+
+OperationResult MainWindow::closeProject(bool refreshEditor, const EditorClosePlan *acceptedPlan)
+{
+    if (!mProject)
+        return OperationResult::success();
+    if (mClosingProject)
+        return OperationResult::conflict(tr("The project is already closing."));
+    mClosingProject = true;
+    const auto restoreClosing = finally([this] { mClosingProject = false; });
+    EditorClosePlan localPlan;
+    if (!acceptedPlan) {
+        const auto result = prepareEditorClosePlan(localPlan, true);
+        if (!result.succeeded()) {
+            if (!result.error.isEmpty())
+                QMessageBox::warning(this, tr("Close Error"), result.error);
+            return result;
+        }
+        acceptedPlan = &localPlan;
+    }
+    const auto valid = acceptedPlan->validate(*mEditorManager, EditorCloseScope::ProjectEditors);
+    if (!valid.succeeded()) {
+        QMessageBox::warning(this, tr("Close Error"), valid.error);
+        return valid;
+    }
+
+    // Save/discard decisions are complete before stopping tasks or destroying
+    // any project editor. A failed metadata save leaves the project alive.
     on_actionStop_Execution_triggered();
-
-    // Only update file monitor once (and ignore updates)
-    bool oldBlock= mFileSystemWatcher.blockSignals(true);
-    {
-        auto action = finally([&,this]{
-            mFileSystemWatcher.blockSignals(oldBlock);
-        });
-
-        //save all files
-
-        // TODO: should we save watches?
-        if (fileExists(mProject->directory())){
-            if (mEditorManager->projectEditorsModified()) {
-                QString s;
-                if (mProject->name().isEmpty()) {
-                    s = mProject->filename();
-                } else {
-                    s = mProject->name();
-                }
-                if (mSystemTurnedOff) {
-                    mProject->saveAll();
-                    mEditorManager->saveAllForProject();
-                } else {
-                    int answer = QMessageBox::question(
-                                this,
-                                tr("Save project"),
-                                tr("The project '%1' has modifications.").arg(s)
-                                + "<br />"
-                                + tr("Do you want to save it?"),
-                                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
-                                QMessageBox::Yes);
-                    switch (answer) {
-                    case QMessageBox::Yes:
-                        mProject->saveAll();
-                        mEditorManager->saveAllForProject();
-                        break;
-                    case QMessageBox::No:
-                        mEditorManager->clearProjectEditorsModified();
-                        mProject->setModified(false);
-                        mProject->saveLayout();
-                        break;
-                    case QMessageBox::Cancel:
-                        mProject->saveLayout();
-                        return;
-                    }
-                }
-            } else
-                mProject->saveAll(); // always save layout, but not when SaveAll has been called
-        }
-
-        mClosingProject=true;
-
-        if (fileExists(mProject->directory())){
+    const bool oldBlock = mFileSystemWatcher.blockSignals(true);
+    const auto restoreWatcher = finally([this, oldBlock] { mFileSystemWatcher.blockSignals(oldBlock); });
+    try {
+        if (fileExists(mProject->directory())) {
+            mProject->saveAll();
             mBookmarkModel->saveProjectBookmarks(
-                        changeFileExt(mProject->filename(), PROJECT_BOOKMARKS_EXT),
-                        mProject->directory());
-
+                changeFileExt(mProject->filename(), PROJECT_BOOKMARKS_EXT), mProject->directory());
             mDebugger->saveForProject(
-                        changeFileExt(mProject->filename(), PROJECT_DEBUG_EXT),
-                        mProject->directory());
+                changeFileExt(mProject->filename(), PROJECT_DEBUG_EXT), mProject->directory());
         }
-
-        mClassBrowserModel->beginUpdate();
-        // Remember it
-        mVisitHistoryManager->addProject(mProject->filename());
-
-        mEditorManager->beginUpdate();
-        mProject.reset();
-
-        if (!mQuitting && refreshEditor) {
-            //reset Class browsing
-            ui->tabExplorer->setCurrentWidget(ui->tabStructure);
-            Editor * e = mEditorManager->getEditor();
-            updateClassBrowserForEditor(e);
-        } else {
-            mClassBrowserModel->setParser(nullptr);
-            mClassBrowserModel->setCurrentFile("");
+        const auto stillValid = acceptedPlan->validate(*mEditorManager, EditorCloseScope::ProjectEditors);
+        if (!stillValid.succeeded()) {
+            QMessageBox::warning(this, tr("Close Error"), stillValid.error);
+            return stillValid;
         }
-        mEditorManager->endUpdate();
-        mClassBrowserModel->endUpdate();
-
+        {
+            mClassBrowserModel->beginUpdate();
+            mEditorManager->beginUpdate();
+            const auto finishUpdates = finally([this] {
+                mEditorManager->endUpdate();
+                mClassBrowserModel->endUpdate();
+            });
+            // GUI resources are retired by the controller while its plan is
+            // valid, never by a delayed Project destructor held by a worker.
+            mVisitHistoryManager->addProject(mProject->filename());
+            mFileSystemWatcher.removePath(mProject->directory());
+            const bool directoryExists = QFileInfo(mProject->directory()).isDir();
+            for (const auto &editor : acceptedPlan->editors()) {
+                if (!editor || !editor->inProject())
+                    continue;
+                const auto unchanged = acceptedPlan->validateEditor(editor.data());
+                if (!unchanged.succeeded())
+                    return unchanged;
+                editor->setInProject(false, false);
+                if (directoryExists)
+                    mEditorManager->forceCloseEditor(editor.data());
+            }
+            mProject.reset();
+            if (!mQuitting && refreshEditor) {
+                ui->tabExplorer->setCurrentWidget(ui->tabStructure);
+                updateClassBrowserForEditor(mEditorManager->getEditor());
+            } else {
+                mClassBrowserModel->setParser(nullptr);
+                mClassBrowserModel->setCurrentFile("");
+            }
+        }
         if (!mQuitting) {
             mBookmarkModel->clear(true);
             mBookmarkModel->setIsForProject(false);
@@ -5654,14 +5680,16 @@ void MainWindow::closeProject(bool refreshEditor)
             mDebugger->setIsForProject(false);
             mTodoModel->clear(true);
             mTodoModel->setIsForProject(false);
-            // Clear error browser
             clearIssues();
         }
         updateProjectView();
-        mClosingProject=false;
+        if (refreshEditor)
+            on_cbSearchHistory_currentIndexChanged(ui->cbSearchHistory->currentIndex());
+        return OperationResult::success();
+    } catch (const BaseError &error) {
+        QMessageBox::warning(this, tr("Save Error"), error.reason());
+        return OperationResult::failure(error.reason());
     }
-    if (refreshEditor)
-        on_cbSearchHistory_currentIndexChanged(ui->cbSearchHistory->currentIndex());
 }
 
 void MainWindow::updateProjectView()
@@ -5856,7 +5884,15 @@ void MainWindow::onFileRenamedInFileSystemModel(const QString &path, const QStri
     }
     if (mProject && mProject->inProject(oldFile)) {
         PProjectUnit unit = mProject->findUnit(oldFile);
-        mProject->renameUnit(unit,newFile);
+        const auto renamed = mProject->renameUnit(unit, newFile);
+        if (!renamed.succeeded()) {
+            // QFileSystemModel has already renamed the disk resource. Report
+            // reconciliation/follow-up failures without claiming a rollback.
+            qWarning() << "Project rename requires follow-up:" << renamed.error;
+            ui->statusbar->showMessage(renamed.error);
+            if (!renamed.committed())
+                return;
+        }
     }
     e = mEditorManager->getOpenedEditor(oldFile);
     if (e) {
@@ -5898,11 +5934,13 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     const bool wasQuitting = mQuitting;
     const bool wasClosingAll = mClosingAll;
     const bool wasClosingProject = mClosingProject;
+    const bool wasCheckSyntaxInBack = mCheckSyntaxInBack;
     bool shutdownPrepared = wasQuitting;
-    const auto restoreCloseState = [this, event, wasQuitting, wasClosingAll, wasClosingProject] {
+    const auto restoreCloseState = [this, event, wasQuitting, wasClosingAll, wasClosingProject, wasCheckSyntaxInBack] {
         mQuitting = wasQuitting;
         mClosingAll = wasClosingAll;
         mClosingProject = wasClosingProject;
+        mCheckSyntaxInBack = wasCheckSyntaxInBack;
         event->ignore();
     };
     auto rollback = finally([&] {
@@ -5914,6 +5952,13 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         //Don't save config twice ( lastopen info will get lost )
         if (!mQuitting) {
             mQuitting = true;
+            EditorClosePlan closePlan;
+            const auto decisions = prepareEditorClosePlan(closePlan);
+            if (!decisions.succeeded()) {
+                if (!decisions.error.isEmpty())
+                    QMessageBox::warning(this, tr("Close Error"), decisions.error);
+                return;
+            }
             // Keep documents and the window alive until every worker has stopped.
             const bool workersStopped = mCompilerManager->shutdown();
             mCheckSyntaxInBack = false;
@@ -6023,30 +6068,42 @@ void MainWindow::closeEvent(QCloseEvent *event) {
                     shutdownParsers.append(parser);
             };
             const auto rememberEditorParsers = [this, &rememberParser] {
-                for (int index = 0; index < mEditorManager->pageCount(); ++index) {
-                    if (const Editor *editor = mEditorManager->getEditor(index))
-                        rememberParser(editor->parser());
-                }
+                for (const auto &parser : mEditorManager->allParsers())
+                    rememberParser(parser);
             };
             if (mProject)
                 rememberParser(mProject->cppParser());
             rememberEditorParsers();
-            if (mProject) {
-                closeProject(false);
+            const auto valid = closePlan.validate(*mEditorManager, EditorCloseScope::AllEditors);
+            if (!valid.succeeded()) {
+                QMessageBox::warning(this, tr("Close Error"), valid.error);
+                return;
             }
-            // Closing a project can detach editors onto non-project parsers.
+            if (mProject && !closeProject(false, &closePlan).succeeded())
+                return;
             rememberEditorParsers();
 
-            mClosingAll=true;
-            if (!mEditorManager->closeAll(false)) {
-                mClosingAll=false;
-                mQuitting = false;
-                event->ignore();
-                return ;
+            mClosingAll = true;
+            for (const auto &editor : closePlan.editors()) {
+                // Project close may already have destroyed its own editors.
+                if (!editor)
+                    continue;
+                const auto unchanged = closePlan.validateEditor(editor.data());
+                if (!unchanged.succeeded()) {
+                    QMessageBox::warning(this, tr("Close Error"), unchanged.error);
+                    return;
+                }
+                const auto decision = closePlan.discards(editor.data())
+                    ? EditorCloseDecision::DiscardConfirmed : EditorCloseDecision::Ask;
+                if (!mEditorManager->closeEditor(editor.data(), false, false, decision))
+                    return;
             }
-            mClosingAll=false;
-            // Only commit this cancellation after all save/discard prompts
-            // succeeded. A cancelled close leaves every remaining parser usable.
+            mClosingAll = false;
+            if (mEditorManager->pageCount() != 0) {
+                QMessageBox::warning(this, tr("Close Error"),
+                    tr("New documents were opened while closing. They remain open."));
+                return;
+            }
             for (const auto &parser : shutdownParsers)
                 parser->setEnabled(false);
         //    if (!mShouldRemoveAllSettings && pSettings->editor().autoLoadLastFiles()) {
@@ -6921,6 +6978,13 @@ void MainWindow::onCacheResetFinished()
         this->close();
 }
 
+void MainWindow::onAnalysisInputUnavailable(const QString &reason)
+{
+    qWarning() << "Analysis input unavailable:" << reason;
+    if (!mQuitting)
+        ui->statusbar->showMessage(tr("Code analysis could not start: %1").arg(reason));
+}
+
 void MainWindow::onParseFinished(int total, int)
 {
     double parseTime = mParserTimer.elapsed() / 1000.0;
@@ -7470,7 +7534,8 @@ void MainWindow::on_actionNew_Project_triggered()
                                      tr("Close %1 and start new project?").arg(s),
                                      QMessageBox::Yes | QMessageBox::No,
                                      QMessageBox::Yes)==QMessageBox::Yes) {
-                closeProject(false);
+                if (!closeProject(false).succeeded())
+                    return;
             } else
                 return;
         }
@@ -7536,6 +7601,10 @@ void MainWindow::on_actionNew_Project_triggered()
             return;
         }
         mProject->saveAll();
+        const QString projectDirectory = mProject->directory();
+        if (!mFileSystemWatcher.directories().contains(projectDirectory)
+                && !mFileSystemWatcher.addPath(projectDirectory))
+            logToolsOutput(tr("Could not monitor the project folder: %1").arg(projectDirectory));
         updateProjectView();
         Editor* editor = mEditorManager->getEditor();
         updateClassBrowserForEditor(editor);
@@ -7637,29 +7706,57 @@ void MainWindow::on_actionRemove_from_project_triggered()
     if (!ui->projectView->selectionModel()->hasSelection())
         return;
 
-    bool removeFile = (QMessageBox::question(this,tr("Remove file"),
-                              tr("Remove the file from disk?"),
-                              QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes);
-
+    const auto project = mProject;
     QList<PProjectUnit> units;
+    QSet<ProjectUnit *> seen;
     foreach (const QModelIndex& index, ui->projectView->selectionModel()->selectedIndexes()){
         if (!index.isValid())
             continue;
         QModelIndex realIndex = mProjectProxyModel->mapToSource(index);
+        if (!realIndex.isValid())
+            continue;
         ProjectModelNode * node = static_cast<ProjectModelNode*>(realIndex.internalPointer());
         PProjectModelNode folderNode =  mProject->pointerToNode(node);
         if (!folderNode)
             continue;
         PProjectUnit unit = folderNode->pUnit.lock();
+        if (!unit || seen.contains(unit.get()))
+            continue;
+        seen.insert(unit.get());
         units.append(unit);
     }
+    if (units.isEmpty())
+        return;
+    const auto choice = QMessageBox::question(this, tr("Remove file"),
+        tr("Remove the file from disk?"), QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel,
+        QMessageBox::No);
+    if ((choice != QMessageBox::Yes && choice != QMessageBox::No) || project != mProject || mQuitting)
+        return;
+    const bool removeFile = choice == QMessageBox::Yes;
+    bool committed = false;
     for(PProjectUnit& unit: units) {
-        mProject->removeUnit(unit, true, removeFile);
+        const auto result = project->removeUnit(unit, true, removeFile);
+        committed |= result.committed();
+        if (!result.succeeded()) {
+            if (!result.error.isEmpty())
+                QMessageBox::warning(this, tr("Remove file"), result.error);
+            break;
+        }
+        if (project != mProject || mQuitting)
+            break;
     }
+    if (!committed || project != mProject)
+        return;
     mClassBrowserModel->beginUpdate();
     mClassBrowserModel->endUpdate();
     ui->projectView->selectionModel()->clearSelection();
-    mProject->saveAll();
+    try {
+        project->saveAll();
+    } catch (const BaseError &error) {
+        project->setModified(true);
+        QMessageBox::warning(this, tr("Save Error"),
+            tr("Project changes were applied, but the project file could not be saved:\n%1").arg(error.reason()));
+    }
     updateProjectView();
 }
 
@@ -8613,7 +8710,7 @@ void MainWindow::invalidateProjectProxyModel()
 
 void MainWindow::on_EditorTabsLeft_currentChanged(int index)
 {
-    if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+    if (!mFullInitialized || mQuitting || mClosingAll || mOpeningFiles
             || openingProject() || closingProject() || index < 0)
         return;
     // A selection can change without focusIn. In a split, a programmatic
@@ -8624,7 +8721,7 @@ void MainWindow::on_EditorTabsLeft_currentChanged(int index)
 
 void MainWindow::on_EditorTabsRight_currentChanged(int index)
 {
-    if (!mFullInitialized || mQuitting || mClosingAll || mOpenningFiles
+    if (!mFullInitialized || mQuitting || mClosingAll || mOpeningFiles
             || openingProject() || closingProject() || index < 0)
         return;
     refreshInfosForEditor(mEditorManager->getEditor());
@@ -9529,11 +9626,6 @@ void MainWindow::onOpenProblemAnswerFile()
         return;
     Editor *e = openFile(problem->answerProgram());
     mEditorManager->activeEditor(e,true);
-}
-
-bool MainWindow::openningFiles() const
-{
-    return mOpenningFiles;
 }
 
 QList<QAction *> MainWindow::listShortCutableActions()

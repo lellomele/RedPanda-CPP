@@ -42,6 +42,7 @@
 #include "problems/competitivecompenionhandler.h"
 #include "utils/parsemacros.h"
 #include "utils/file.h"
+#include "operationresult.h"
 
 
 QT_BEGIN_NAMESPACE
@@ -60,6 +61,7 @@ enum class RunType {
 
 
 class EditorManager;
+class EditorClosePlan;
 class QLabel;
 class QComboBox;
 class CompilerManager;
@@ -223,7 +225,6 @@ public:
     void changeOptions(const QString& widgetName=QString(), const QString& groupName=QString());
     void changeProjectOptions(const QString& widgetName=QString(), const QString& groupName=QString());
 
-    bool openningFiles() const;
 
     QList<QAction*> listShortCutableActions();
 
@@ -259,6 +260,7 @@ public slots:
     void onParseStarted();
     void onParseFinished(int total, int updateView);
     void onCacheResetFinished();
+    void onAnalysisInputUnavailable(const QString &reason);
     void onEvalValueReady(const QString& value);
     void onLocalsReady(const QStringList& value);
     void onEditorContextMenu(const QPoint& pos);
@@ -289,7 +291,8 @@ private:
     void prepareSearchDialog();
     void prepareSearchInFilesDialog();
     void prepareProjectForCompile();
-    void closeProject(bool refreshEditor);
+    OperationResult prepareEditorClosePlan(EditorClosePlan &plan, bool projectOnly = false);
+    OperationResult closeProject(bool refreshEditor, const EditorClosePlan *acceptedPlan = nullptr);
     void updateProjectView();
     CompileTarget getCompileTarget();
     bool debugInferiorhasBreakpoint();
@@ -979,7 +982,6 @@ private:
 
     bool mClosing;
     bool mClosingAll;
-    bool mOpenningFiles;
     bool mSystemTurnedOff;
     CompetitiveCompanionHandler mCCHandler;
     QColor mErrorColor;

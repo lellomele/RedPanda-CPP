@@ -29,6 +29,7 @@
 #include <QApplication>
 #include <QPointer>
 #include <memory>
+#include <qsynedit/document.h>
 
 EditorManager::EditorManager(QTabWidget* leftPageWidget,
       QTabWidget* rightPageWidget,
@@ -100,6 +101,9 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
         e->checkSyntaxInBack();
         e->reparseTodo();
     }
+    // A new-file template can request analysis while it is inserted. Register
+    // the initialized buffer before attaching its parser or applying templates.
+    observeDocument(e);
     e->setCppParser();
     //e->reparse();
 
@@ -182,6 +186,98 @@ QTabWidget*  EditorManager::getNewEditorPageControl() const {
     return getFocusedPageControl();
 }
 
+void EditorManager::observeDocument(Editor *editor)
+{
+    const QPointer<Editor> source(editor);
+    const DocumentId id = mDocumentStore->add(editor->filename(), [source](QStringList &lines) {
+        if (!source)
+            return false;
+        lines = source->content();
+        return true;
+    });
+    if (!id)
+        throw FileError(tr("The document could not be registered for analysis."));
+    mDocumentIds.insert(editor, id);
+    // Native commit precedes QSynEdit's changed/status notifications. During
+    // changing(), captures fail explicitly instead of caching old text under
+    // the revision of the edit that has not happened yet.
+    connect(editor->document().get(), &QSynedit::Document::changeStarted, this,
+            [this, id] { mDocumentStore->beginChange(id); });
+    connect(editor->document().get(), &QSynedit::Document::contentCommitted, this,
+            [this, id] { mDocumentStore->commitChange(id); });
+    connect(editor, &Editor::filenameChanged, this,
+            [this, id](Editor *, const QString &, const QString &filename) {
+        mDocumentStore->renamed(id, filename);
+    });
+    connect(editor, &QObject::destroyed, this, [this, editor, id] {
+        mDocumentStore->remove(id);
+        mDocumentIds.remove(editor);
+    });
+}
+
+InputSnapshotProvider EditorManager::inputSnapshotProvider() const
+{
+    const auto store = mDocumentStore;
+    return [store] { return store->capture(); };
+}
+
+void EditorManager::bindParserInput(const PCppParser &parser)
+{
+    if (!parser)
+        return;
+    parser->setInputSnapshotProvider(inputSnapshotProvider());
+    bool known = false;
+    for (auto it = mKnownParsers.begin(); it != mKnownParsers.end();) {
+        if (const auto item = it->lock()) {
+            known |= item == parser;
+            ++it;
+        } else {
+            it = mKnownParsers.erase(it);
+        }
+    }
+    if (!known)
+        mKnownParsers.append(parser);
+}
+
+QList<Editor *> EditorManager::editors() const
+{
+    QList<Editor *> result;
+    if (QThread::currentThread() != thread())
+        return result;
+    for (QTabWidget *tabs : {mLeftPageWidget, mRightPageWidget}) {
+        for (int index = 0; index < tabs->count(); ++index)
+            if (auto *editor = qobject_cast<Editor *>(tabs->widget(index)))
+                result.append(editor);
+    }
+    return result;
+}
+
+QList<PCppParser> EditorManager::allParsers() const
+{
+    QList<PCppParser> result;
+    if (QThread::currentThread() != thread())
+        return result;
+    const auto add = [&result](const PCppParser &parser) {
+        if (parser && !result.contains(parser))
+            result.append(parser);
+    };
+    for (const auto &parser : mKnownParsers)
+        add(parser.lock());
+    for (const Editor *editor : editors())
+        add(editor->parser());
+    return result;
+}
+
+PDocumentSnapshot EditorManager::snapshotFor(Editor *editor)
+{
+    if (QThread::currentThread() != thread() || !editor)
+        return {};
+    const DocumentId id = mDocumentIds.value(editor);
+    if (!id)
+        return {};
+    return mDocumentStore->snapshotFor(id);
+}
+
 QTabWidget* EditorManager::getFocusedPageControl() const {
     switch(mLayout) {
     case LayoutShowType::lstLeft:
@@ -246,6 +342,7 @@ void EditorManager::showLayout(LayoutShowType layout)
 
 void EditorManager::doRemoveEditor(Editor *e)
 {
+    mDocumentStore->remove(mDocumentIds.take(e));
     QTabWidget* parentPage=findPageControlForEditor(e);
     if (parentPage) {
         int index = parentPage->indexOf(e);
@@ -488,10 +585,7 @@ PCppParser EditorManager::sharedParser(QHash<ParserLanguage,std::weak_ptr<CppPar
         parser = std::make_shared<CppParser>();
         parser->setSharedByFiles(true);
         parser->setLanguage(language);
-        parser->setOnGetFileStream(
-                    std::bind(
-                        &EditorManager::getContentFromOpenedEditor,this,
-                        std::placeholders::_1, std::placeholders::_2));
+        bindParserInput(parser);
         resetCppParser(parser);
         parser->setEnabled(true);
         sharedParsers.insert(language,parser);
@@ -546,8 +640,7 @@ PCppParser EditorManager::createParserForEditor(Editor *editor)
             PCppParser parser = std::make_shared<CppParser>();
             parser->setSharedByFiles(false);
             parser->setLanguage(editor->calcParserLanguage());
-            parser->setOnGetFileStream(std::bind(&EditorManager::getContentFromOpenedEditor,
-                                                 this, std::placeholders::_1, std::placeholders::_2));
+            bindParserInput(parser);
             resetCppParser(parser);
             parser->setEnabled(true);
             return parser;
@@ -587,28 +680,42 @@ Editor* EditorManager::getEditor(int index, QTabWidget* tabsWidget) const {
     return (Editor*)selectedWidget->widget(index);
 }
 
-bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force) {
-    QMutexLocker locker(&mMutex);
-    if (editor == nullptr)
+bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force, EditorCloseDecision decision) {
+    if (QThread::currentThread() != thread() || !editor || !findPageControlForEditor(editor))
         return false;
+    const QPointer<Editor> target(editor);
     if (force) {
-        editor->save(true,false);
-    } else if (editor->modified()) {
+        if (!editor->save(true,false) || !target || target->modified())
+            return false;
+    } else if (editor->modified() && decision == EditorCloseDecision::Ask) {
+        const QString filename = editor->filename();
+        const QStringList questionedContent = editor->content();
         // ask user if he wants to save
         QMessageBox::StandardButton reply;
         reply = QMessageBox::question(editor,QObject::tr("Save"),
                                       QString(QObject::tr("Save changes to %1?")).arg(editor->filename()),
                                       QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel);
+        if (!target || !findPageControlForEditor(target) || target->filename() != filename)
+            return false;
         if (reply == QMessageBox::Yes) {
-            if (!editor->save(false,false))
+            if (!target->save(false,false) || !target || target->modified())
                 return false;
         } else if (reply != QMessageBox::No) {
             // Only an explicit discard choice may close an unsaved buffer.
             return false;
+        } else if (target->content() != questionedContent) {
+            // The answer did not authorize discarding a different revision
+            // introduced by a reentrant completion or external-file event.
+            return false;
         }
     }
 
+    if (!target || !findPageControlForEditor(target))
+        return false;
+    editor = target;
+
     beginUpdate();
+    const auto finishUpdate = finally([this] { endUpdate(); });
 //    if (transferFocus && (editor->pageControl()->currentWidget()==editor)) {
 //        //todo: activate & focus the previous editor
 //    }
@@ -621,6 +728,9 @@ bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force) 
             editor->setInProject(false,false);
         }
     } else {
+        QMutexLocker locker(&mMutex);
+        if (!target || !findPageControlForEditor(target))
+            return false;
         editor->setCppParser(nullptr);
         if (!editor->isNew() && pMainWindow->visitHistoryManager()->addFile(editor->filename())) {
             pMainWindow->rebuildOpenedFileHisotryMenu();
@@ -628,6 +738,8 @@ bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force) 
         editor->clearBreakpoints();
         doRemoveEditor(editor);
     }
+    if (target && findPageControlForEditor(target))
+        return false;
     updateLayout();
     if (!force && transferFocus) {
         editor = getEditor();
@@ -641,7 +753,6 @@ bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force) 
             pMainWindow->updateClassBrowserForEditor(nullptr);
     }
     emit editorClosed();
-    endUpdate();
     return true;
 }
 
@@ -762,12 +873,12 @@ bool EditorManager::isFileOpened(const QString &fullfilepath) const
     QString filename = fileInfo.absoluteFilePath();
     for (int i=0;i<mLeftPageWidget->count();i++) {
         Editor* e = static_cast<Editor*>(mLeftPageWidget->widget(i));
-        if (e->filename().compare(filename)==0 || e->filename().compare(fullfilepath)==0)
+        if (e->filename().compare(filename, PATH_SENSITIVITY)==0 || e->filename().compare(fullfilepath, PATH_SENSITIVITY)==0)
             return true;
     }
     for (int i=0;i<mRightPageWidget->count();i++) {
         Editor* e = static_cast<Editor*>(mRightPageWidget->widget(i));
-        if (e->filename().compare(filename)==0 || e->filename().compare(fullfilepath)==0)
+        if (e->filename().compare(filename, PATH_SENSITIVITY)==0 || e->filename().compare(fullfilepath, PATH_SENSITIVITY)==0)
             return true;
     }
     return false;
@@ -928,7 +1039,7 @@ Editor* EditorManager::getOpenedEditor(const QString &filename) const
         Editor* e = static_cast<Editor*>(mRightPageWidget->widget(i));
         if (!e)
             continue;
-        if (e->filename().compare(filename)==0) {
+        if (e->filename().compare(filename, PATH_SENSITIVITY)==0) {
             return e;
         }
     }
@@ -937,6 +1048,10 @@ Editor* EditorManager::getOpenedEditor(const QString &filename) const
 
 bool EditorManager::getContentFromOpenedEditor(const QString &filename, QStringList &buffer) const
 {
+    // Compatibility for GUI-only consumers. Analysis jobs use DocumentStore
+    // snapshots and never enter this widget lookup from a worker.
+    if (QThread::currentThread() != thread())
+        return false;
     if(mMutex.tryLock(0)){
         auto action = finally([this](){
             mMutex.unlock();

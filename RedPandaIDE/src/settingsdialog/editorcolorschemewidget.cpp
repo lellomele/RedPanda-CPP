@@ -25,6 +25,7 @@
 #include <QDebug>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QPointer>
 #include <qsynedit/document.h>
 
 EditorColorSchemeWidget::EditorColorSchemeWidget(ColorManager *colorManager, const QString& name,
@@ -85,10 +86,19 @@ EditorColorSchemeWidget::EditorColorSchemeWidget(ColorManager *colorManager, con
     PCppParser parser = std::make_shared<CppParser>();
     parser->setSharedByFiles(false);
     parser->setLanguage(ui->editDemo->calcParserLanguage());
-    parser->setOnGetFileStream([this](const QString& filename, QStringList& buffer){
-        buffer=ui->editDemo->content();
-           return true;
+    const auto demoDocuments = std::make_shared<DocumentStore>();
+    const QPointer<Editor> demoEditor(ui->editDemo);
+    const DocumentId demoId = demoDocuments->add(ui->editDemo->filename(), [demoEditor](QStringList &lines) {
+        if (!demoEditor)
+            return false;
+        lines = demoEditor->content();
+        return true;
     });
+    connect(ui->editDemo->document().get(), &QSynedit::Document::changeStarted, parser.get(),
+            [demoDocuments, demoId] { demoDocuments->beginChange(demoId); });
+    connect(ui->editDemo->document().get(), &QSynedit::Document::contentCommitted, parser.get(),
+            [demoDocuments, demoId] { demoDocuments->commitChange(demoId); });
+    parser->setInputSnapshotProvider([demoDocuments] { return demoDocuments->capture(); });
     resetCppParser(parser);
     parser->setEnabled(true);
     ui->editDemo->setCppParser(parser);
@@ -218,7 +228,6 @@ void EditorColorSchemeWidget::setCurrentSchemeModified()
 
 EditorColorSchemeWidget::~EditorColorSchemeWidget()
 {
-    ui->editDemo->parser()->setOnGetFileStream(nullptr);
     delete ui;
     //mDefinesModel.clear();
 }
@@ -356,19 +365,18 @@ void EditorColorSchemeWidget::doLoad()
 
 void EditorColorSchemeWidget::doSave()
 {
-    try {
-        foreach (const QString &name, mModifiedSchemes) {
-            mColorManager->saveScheme(name);
-        }
-        pSettings->editor().setColorScheme(ui->cbScheme->currentText());
-        pSettings->editor().setRainbowParenthesis(ui->chkRainborParenthesis->isChecked());
-        pSettings->editor().setRainbowIndentGuides(ui->chkRainbowIndentGuides->isChecked());
-        pSettings->editor().setRainbowIndents(ui->chkRainbowIndents->isChecked());
-        pSettings->editor().save();
-        pMainWindow->updateEditorColorSchemes();
-    } catch (FileError e) {
-        QMessageBox::critical(this,tr("Error"),e.reason());
+    // SettingsWidget::save owns failure reporting and must retain its dirty
+    // state if any scheme fails. A dialog here used to hide that failure.
+    foreach (const QString &name, mModifiedSchemes) {
+        if (!mColorManager->saveScheme(name))
+            throw FileError(tr("Color scheme '%1' is no longer available.").arg(name));
     }
+    pSettings->editor().setColorScheme(ui->cbScheme->currentText());
+    pSettings->editor().setRainbowParenthesis(ui->chkRainborParenthesis->isChecked());
+    pSettings->editor().setRainbowIndentGuides(ui->chkRainbowIndentGuides->isChecked());
+    pSettings->editor().setRainbowIndents(ui->chkRainbowIndents->isChecked());
+    pSettings->editor().save();
+    pMainWindow->updateEditorColorSchemes();
 }
 
 void EditorColorSchemeWidget::on_actionCopy_Scheme_triggered()

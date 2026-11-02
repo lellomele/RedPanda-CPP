@@ -4,12 +4,18 @@
 add_executable(RedPandaIDE WIN32)
 
 target_qt_plain_cpp(RedPandaIDE
+    src/analysis/semanticsnapshot
     src/autolinkmanager
     src/diagnostics
     src/snippetsstorage
     src/buildartifacts
     src/diagnosticcatalog
     src/sessionstore
+    src/editorcloseplan
+    test/closeplanchecks
+    test/documentstorechecks
+    test/recoverychecks
+    test/projectoperationchecks
     test/interfacechecks
     test/compilerworkflowchecks
     src/colorscheme
@@ -232,6 +238,7 @@ target_link_libraries(RedPandaIDE PRIVATE
 add_executable(test-editor test/test-editor-main.cpp)
 
 target_qt_plain_cpp(test-editor
+    src/analysis/semanticsnapshot
     #settings
     src/settings/basesettings
     src/settings/dirsettings
@@ -284,6 +291,7 @@ target_moc_classes(test-editor
     src/codesnippetsmanager
     #test
     test/test_editor_base
+    test/test_editor_persistence
     test/test_editor_symbol_completion
     test/test_settingswidget
     test/test_ide_services
@@ -325,12 +333,19 @@ target_compile_definitions(test-editor PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-foreach(suite IN ITEMS search-models ide-services failure-paths settings smart-editing)
+foreach(suite IN ITEMS search-models ide-services failure-paths settings smart-editing persistence)
     add_test(NAME test-editor-${suite} COMMAND test-editor --suite ${suite})
     set_tests_properties(test-editor-${suite} PROPERTIES TIMEOUT 120 LABELS "ide;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
 
 add_dependencies(all-test-targets test-editor)
+
+add_executable(test-project-file-operations test/test_project_file_operations.cpp)
+target_include_directories(test-project-file-operations PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-project-file-operations PRIVATE Qt::Core Qt::Test)
+add_test(NAME test-project-file-operations COMMAND test-project-file-operations)
+set_tests_properties(test-project-file-operations PROPERTIES TIMEOUT 60 LABELS "project;persistence;functional")
+add_dependencies(all-test-targets test-project-file-operations)
 
 #####################
 # test-cppparser    #
@@ -339,6 +354,7 @@ add_dependencies(all-test-targets test-editor)
 add_executable(test-cppparser test/test-cppparser-main.cpp)
 
 target_qt_plain_cpp(test-cppparser
+    src/analysis/semanticsnapshot
     src/parser/cppparser
     src/parser/cpppreprocessor
     src/parser/cpptokenizer
@@ -348,6 +364,7 @@ target_qt_plain_cpp(test-cppparser
 
 target_moc_classes(test-cppparser
     #test
+    test/test_semanticsnapshot
     test/test_cppparser
     test/test_cpppreprocessor
     test/test_cpptokenizer
@@ -380,7 +397,7 @@ target_compile_definitions(test-cppparser PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-foreach(suite IN ITEMS preprocessor tokenizer parser)
+foreach(suite IN ITEMS preprocessor tokenizer parser semantic-snapshot)
     add_test(NAME test-cppparser-${suite} COMMAND test-cppparser --suite ${suite})
     set_tests_properties(test-cppparser-${suite} PROPERTIES TIMEOUT 120 LABELS "parser;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
@@ -625,3 +642,22 @@ target_link_libraries(test-gdbmi-arguments PRIVATE Qt::Core Qt::Test)
 add_test(NAME test-gdbmi-arguments COMMAND test-gdbmi-arguments)
 set_tests_properties(test-gdbmi-arguments PROPERTIES TIMEOUT 90 LABELS "debugger;functional")
 add_dependencies(all-test-targets test-gdbmi-arguments)
+
+# Isolated QtCore shutdown protocol tests; no production adapter dependency.
+add_executable(test-application-lifecycle test/test-application-lifecycle-main.cpp)
+target_moc_classes(test-application-lifecycle
+    src/lifecycle/applicationlifecycle
+    test/test_application_lifecycle)
+target_include_directories(test-application-lifecycle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-application-lifecycle PRIVATE Qt::Core Qt::Test)
+add_test(NAME test-application-lifecycle COMMAND test-application-lifecycle)
+set_tests_properties(test-application-lifecycle PROPERTIES
+    TIMEOUT 30 LABELS "lifecycle;unit")
+add_dependencies(all-test-targets test-application-lifecycle)
+
+add_executable(test-compile-configuration test/test_compile_configuration.cpp)
+target_include_directories(test-compile-configuration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-compile-configuration PRIVATE Qt::Core Qt::Test)
+add_test(NAME test-compile-configuration COMMAND test-compile-configuration)
+set_tests_properties(test-compile-configuration PROPERTIES TIMEOUT 30 LABELS "compiler;unit")
+add_dependencies(all-test-targets test-compile-configuration)

@@ -1,8 +1,8 @@
 {
   "major": 3,
   "minor": 5,
-  "patch": 3,
-  "build": 3824,
-  "preRelease": "",
+  "patch": 4,
+  "build": 3826,
+  "preRelease": "alpha.1",
   "preReleaseComment": "note that alpha10 < alpha2 (string comparison) while alpha.10 > alpha.2 (number comparison) in semver"
 }

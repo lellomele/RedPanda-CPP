@@ -877,7 +877,10 @@ void CppPreprocessor::openInclude(QString fileName)
         bool isSystemFile = isSystemHeaderFile(fileName, mIncludePaths) || isSystemHeaderFile(fileName, mProjectIncludePaths);
         if ((mParseSystem && isSystemFile) || (mParseLocal && !isSystemFile)) {
             QStringList bufferedText;
-            if (mOnGetFileStream && mOnGetFileStream(fileName,bufferedText)) {
+            if (mSourceReadObserver)
+                mSourceReadObserver(fileName);
+            if (mInputSnapshot ? mInputSnapshot->read(fileName, bufferedText)
+                               : (mOnGetFileStream && mOnGetFileStream(fileName,bufferedText))) {
                 parsedFile->buffer  = bufferedText;
             } else {
                 parsedFile->buffer = readFileToLines(fileName);

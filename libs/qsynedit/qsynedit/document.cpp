@@ -302,20 +302,29 @@ QStringList Document::content() const
 
 void Document::beginUpdate()
 {
-    if (mUpdateCount == 0) {
+    if (mUpdateCount++ == 0) {
+        emit changeStarted();
         emit changing();
         beginSetLinesWidth();
     }
-    mUpdateCount++;
 }
 
 void Document::endUpdate()
 {
     mUpdateCount--;
     if (mUpdateCount == 0) {
+        // Publish source revisions before the existing changed() slots can
+        // request analysis through QSynEdit::onLinesChanged/statusChanged.
+        emit contentCommitted();
         emit changed();
         endSetLinesWidth();
     }
+}
+
+bool Document::updateInProgress() const
+{
+    QMutexLocker locker(&mMutex);
+    return mUpdateCount != 0;
 }
 
 

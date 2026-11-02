@@ -18,6 +18,7 @@
 #define EDITOR_H
 
 #include <QObject>
+#include <QElapsedTimer>
 #include "utils/file.h"
 #include "utils/types.h"
 #include "utils/parsemacros.h"
@@ -338,6 +339,7 @@ public:
     void setGetMacroVarsFunc(const GetMacroVarsFunc &newGetMacroVarsFunc);
 
 signals:
+    void filenameChanged(Editor *e, const QString& oldFilename, const QString& newFilename);
     void fileSaving(Editor *e, const QString& filename);
     void fileSaveError(Editor *e, const QString& filename, const QString& reason);
     void fileSaved(Editor *e, const QString& filename);
@@ -445,6 +447,9 @@ private:
     bool mInited;
     QDateTime mBackupTime;
     QFile* mBackupFile;
+    QString mBackupSourceFilename;
+    QElapsedTimer mBackupRetryDelay;
+    friend class TestEditorPersistence;
     QByteArray mEditorEncoding; // the encoding type set by the user
     QByteArray mFileEncoding; // the real encoding of the file (auto detected)
     QString mFilename;

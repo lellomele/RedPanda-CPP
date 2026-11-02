@@ -295,6 +295,10 @@ public:
     Document(const Document&)=delete;
     Document& operator=(const Document&)=delete;
 
+    // The source text is publishable only between native update transactions.
+    // This is already true inside changing(), before any consumer can read it.
+    bool updateInProgress() const;
+
     /**
      * @brief get nesting level of parenthesis at the end of the specified line
      *
@@ -625,6 +629,8 @@ public slots:
     void invalidateAllNonTempLineWidth();
 
 signals:
+    void changeStarted();
+    void contentCommitted();
     void changed();
     void changing();
     void maxLineWidthChanged();

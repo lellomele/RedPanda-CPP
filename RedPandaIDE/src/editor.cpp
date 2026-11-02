@@ -39,6 +39,7 @@
 #include <QDebug>
 #include <QMimeData>
 #include <QTemporaryFile>
+#include <QUuid>
 #include <QFileSystemWatcher>
 #include <qsynedit/document.h>
 #include <qsynedit/syntaxer/cpp.h>
@@ -401,7 +402,7 @@ bool Editor::saveAs(const QString &name, bool doCheckSyntax){
     clearSyntaxIssues();
     if (mCodeCompletionEnabled && mParser && !inProject())
         mParser->invalidateFile(oldName);
-    mFilename = newName;
+    setFilename(newName);
     mIsNew = false;
     setFileType(getFileType(mFilename), false);
     if (!syntaxer() || syntaxer()->language() != QSynedit::ProgrammingLanguage::CPP)
@@ -433,7 +434,8 @@ void Editor::rename(const QString &newName)
 {
     if (mFilename == newName)
         return;
-    if (mGetOpennedEditorFunc && mGetOpennedEditorFunc(newName)) {
+    Editor *alreadyOpened = mGetOpennedEditorFunc ? mGetOpennedEditorFunc(newName) : nullptr;
+    if (alreadyOpened && alreadyOpened != this) {
         return;
     }
     QString oldName = mFilename;
@@ -444,7 +446,7 @@ void Editor::rename(const QString &newName)
         mParser->invalidateFile(oldName);
     }
 
-    mFilename = newName;
+    setFilename(newName);
     setFileType(getFileType(mFilename));
     if (!syntaxer() || syntaxer()->language() != QSynedit::ProgrammingLanguage::CPP) {
         mSyntaxIssues.clear();
@@ -464,7 +466,13 @@ void Editor::rename(const QString &newName)
 
 void Editor::setFilename(const QString &newName)
 {
+    if (mFilename == newName)
+        return;
+    const QString previous = mFilename;
     mFilename = newName;
+    // Registration must follow the path before type/status signals or parser
+    // requests can observe the renamed open buffer.
+    emit filenameChanged(this, previous, newName);
 }
 
 const QByteArray& Editor::editorEncoding() const noexcept{
@@ -3531,51 +3539,74 @@ void Editor::showHeaderCompletion(bool autoComplete, bool forceShow)
         headerCompletionInsert(); // if only have one suggestion, just use it
 }
 
+static bool commitEditorBackup(const QString &filename, const QByteArray &content, QString &error)
+{
+    QSaveFile target(filename);
+    target.setDirectWriteFallback(false);
+    if (!target.open(QIODevice::WriteOnly) || target.write(content) != content.size() || !target.commit()) {
+        error = target.errorString();
+        return false;
+    }
+    return true;
+}
+
 void Editor::initAutoBackup()
 {
-    cleanAutoBackup();
-    if (mAutoBackupEnabled)
+    if (!mAutoBackupEnabled || !mEditorSettings->enableEditTempBackup()) {
+        cleanAutoBackup();
         return;
-    if (!mEditorSettings->enableEditTempBackup())
+    }
+    if (readOnly()) {
+        mAutoBackupTimer.stop();
         return;
-    if (readOnly())
+    }
+    if (mBackupRetryDelay.isValid() && mBackupRetryDelay.elapsed() < 5000)
+        return; // do not retry a failed destination on every status change
+    // Status changes call this frequently. An enabled backup is idempotent;
+    // only a stopped writer needs an explicit retry, not a fresh file per key.
+    if (mBackupFile && mBackupSourceFilename == mFilename) {
+        if (!mAutoBackupTimer.isActive()) saveAutoBackup();
         return;
-    QFileInfo fileInfo(mFilename);
-    if (fileInfo.isAbsolute()) {
-        mBackupFile=new QFile(getFilePath(
-                                extractFileDir(mFilename),
-                                extractFileName(mFilename)+QString(".%1.editbackup").arg(QDateTime::currentSecsSinceEpoch())));
-        if (mBackupFile->open(QFile::Truncate|QFile::WriteOnly)) {
-            saveAutoBackup();
-        } else {
-            cleanAutoBackup();
-        }
-    } else {
-        mBackupFile=new QFile(
-                    getFilePath(QDir::currentPath(),
-                        mFilename+QString(".%1.editbackup").arg(QDateTime::currentSecsSinceEpoch())));
-        if (!mBackupFile->open(QFile::Truncate|QFile::WriteOnly)) {
-            mBackupFile->setParent(nullptr);
-            delete mBackupFile;
-            mBackupFile=nullptr;
-        }
+    }
+    const QFileInfo source(mFilename);
+    const QString name = source.fileName() + QString(".%1.%2.editbackup")
+            .arg(QDateTime::currentSecsSinceEpoch())
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    auto candidate = std::make_unique<QFile>(QDir(source.absolutePath()).filePath(name));
+    QString error;
+    if (!commitEditorBackup(candidate->fileName(), text().toUtf8(), error)) {
+        mAutoBackupTimer.stop();
+        mBackupRetryDelay.start();
+        qWarning() << "Editor backup failed:" << error;
+        return; // retain the old confirmed backup on rename or retry failure
     }
     if (mBackupFile) {
-        mAutoBackupTimer.start();
+        if (mBackupFile->exists() && !mBackupFile->remove())
+            qWarning() << "Previous editor backup retained:" << mBackupFile->fileName();
+        delete mBackupFile;
     }
+    mBackupFile = candidate.release(); // path holder, no live write handle
+    mBackupSourceFilename = mFilename;
+    mBackupRetryDelay.invalidate();
+    mBackupTime = QDateTime::currentDateTime();
+    mAutoBackupTimer.start();
 }
 
 void Editor::saveAutoBackup()
 {
     if (mBackupFile) {
-        mBackupFile->reset();
-        mBackupTime=QDateTime::currentDateTime();
+        if (!mAutoBackupEnabled || readOnly()) { mAutoBackupTimer.stop(); return; }
         const QByteArray content = text().toUtf8();
-        if (mBackupFile->write(content) != content.size() || !mBackupFile->resize(content.size()) || !mBackupFile->flush()) {
+        QString error;
+        if (!commitEditorBackup(mBackupFile->fileName(), content, error)) {
             mAutoBackupTimer.stop();
-            qWarning() << "Editor backup failed:" << mBackupFile->errorString();
+            mBackupRetryDelay.start();
+            qWarning() << "Editor backup failed:" << error;
+            return;
         }
-        //qDebug()<<mBackupTime<<mBackupFile->size()<<mBackupFile->fileName();
+        mBackupTime = QDateTime::currentDateTime();
+        mBackupRetryDelay.invalidate();
+        if (!mAutoBackupTimer.isActive()) mAutoBackupTimer.start();
     }
 }
 
@@ -3588,6 +3619,8 @@ void Editor::cleanAutoBackup()
         delete mBackupFile;
         mBackupFile=nullptr;
     }
+    mBackupSourceFilename.clear();
+    mBackupRetryDelay.invalidate();
 }
 
 bool Editor::testInFunc(const CharPos& pos)
@@ -4682,6 +4715,7 @@ void Editor::setAutoBackupEnabled(bool newEnableAutoBackup)
 {
     mAutoBackupEnabled = newEnableAutoBackup;
     if (mAutoBackupEnabled) {
+        mBackupRetryDelay.invalidate(); // explicit enable also requests a retry
         initAutoBackup();
     } else {
         cleanAutoBackup();

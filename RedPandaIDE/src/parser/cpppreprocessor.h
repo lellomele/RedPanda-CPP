@@ -20,6 +20,11 @@
 #include <QObject>
 #include <QTextStream>
 #include "parserutils.h"
+#include "../documentstore.h"
+
+// Observes a source read for diagnostics/tests; never supplies text and must
+// not call GUI objects. The parser copies it into each accepted job.
+using SourceReadObserver = std::function<void(const QString &)>;
 
 #define MAX_DEFINE_EXPAND_DEPTH 20
 enum class DefineArgTokenType{
@@ -133,6 +138,8 @@ public:
 
     const QList<QString> &projectIncludePathList() const { return mProjectIncludePathList; }
     void setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream) { mOnGetFileStream = newOnGetFileStream; }
+    void setInputSnapshot(PAnalysisInputSnapshot snapshot) { mInputSnapshot = std::move(snapshot); }
+    void setSourceReadObserver(SourceReadObserver observer) { mSourceReadObserver = std::move(observer); }
 
     static QList<PDefineArgToken> tokenizeValue(const QString& value);
     static void combineLinesEndingWithBackslash(QStringList& text);
@@ -335,6 +342,8 @@ private:
     bool mFileOnlyIncludeOnce;
 
     GetFileStreamFunc mOnGetFileStream;
+    PAnalysisInputSnapshot mInputSnapshot;
+    SourceReadObserver mSourceReadObserver;
 };
 
 using PCppPreprocessor = std::shared_ptr<CppPreprocessor>;

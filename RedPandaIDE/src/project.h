@@ -25,6 +25,7 @@
 #include "customfileiconprovider.h"
 #include "projectoptions.h"
 #include "utils.h"
+#include "operationresult.h"
 
 class Project;
 class Editor;
@@ -77,6 +78,12 @@ using PProjectEditorLayout = std::shared_ptr<ProjectEditorLayout>;
 class ProjectUnit {
 
 public:
+    enum class RelocationState { Resolved, Conflict };
+    struct Relocation {
+        RelocationState state = RelocationState::Resolved;
+        QString expectedFileName;
+        QString diagnostic;
+    };
     explicit ProjectUnit(Project* parent);
     Project* parent() const;
     const QString &fileName() const;
@@ -108,8 +115,11 @@ public:
 
     const QByteArray &realEncoding() const;
     void setRealEncoding(const QByteArray &newRealEncoding);
+    const Relocation &relocation() const { return mRelocation; }
 
 private:
+    friend class Project;
+    Relocation mRelocation;
     Project* mParent;
     QString mFileName;
     QString mFolder;
@@ -194,25 +204,17 @@ class Project : public QObject
 {
     Q_OBJECT
 public:
-    explicit Project(const QString& filename, const QString& name,
-                     EditorManager* editorList,
-                     IconsManager * iconsManager,
-                     QFileSystemWatcher* fileSystemWatcher,
-                     QObject *parent = nullptr);
-
     static std::shared_ptr<Project> load(const QString& filename,
                                     EditorManager* editorList,
                                          IconsManager * iconsManager,
-                                    QFileSystemWatcher* fileSystemWatcher,
-                                    QObject *parent = nullptr);
+                                    QFileSystemWatcher* fileSystemWatcher);
     static std::shared_ptr<Project> create(const QString& filename,
                                            const QString& name,
                                            EditorManager* editorList,
                                            IconsManager * iconsManager,
                                            QFileSystemWatcher* fileSystemWatcher,
                                            const std::shared_ptr<ProjectTemplate> pTemplate,
-                                           bool useCpp,
-                                           QObject *parent = nullptr);
+                                           bool useCpp);
 
     ~Project();
     QString directory() const;
@@ -249,13 +251,24 @@ public:
 
     PProjectModelNode pointerToNode(ProjectModelNode * p, PProjectModelNode parent=PProjectModelNode());
     void rebuildNodes();
-    bool removeUnit(PProjectUnit& unit, bool doClose, bool removeFile = false);
-    bool removeFolder(PProjectModelNode node);
+    using TrashFile = std::function<bool(const QString &)>;
+    OperationResult removeUnit(PProjectUnit& unit, bool doClose, bool removeFile = false,
+                               const TrashFile &trashFile = {});
+    OperationResult removeFolder(PProjectModelNode node);
     void resetParserProjectFiles();
     void saveAll(); // save [Project] and  all [UnitX]
     void saveLayout(); // save all [UnitX]
     void saveOptions();
-    void renameUnit(PProjectUnit& unit, const QString& sFileName);
+    // Existing filesystem-model callers reconcile a rename already on disk.
+    OperationResult renameUnit(PProjectUnit& unit, const QString& sFileName);
+    OperationResult reconcileUnitRename(PProjectUnit &unit, const QString &newFileName);
+    // Explicit controller recovery: no file is copied/deleted, and the chosen
+    // buffer (if any) must be the verified occupant of the selected path.
+    OperationResult resolveUnitRelocation(PProjectUnit &unit, const QString &verifiedFileName,
+                                           Editor *acceptedEditor = nullptr);
+    OperationResult validateBuildInputs() const;
+    OperationResult renameUnitFile(PProjectUnit &unit, const QString &newFileName, bool replaceExisting = false);
+    OperationResult saveMetadata();
     bool saveUnits();
 
     PProjectUnit findUnit(const QString& filename) const;
@@ -312,12 +325,16 @@ signals:
     void modifyChanged(bool value);
 
 private:
+    // Factory ownership is exclusive: no QObject parent may also delete a
+    // Project retained by a background job's shared_ptr.
+    explicit Project(const QString &filename, const QString &name,
+                     EditorManager *editorList, IconsManager *iconsManager,
+                     QFileSystemWatcher *fileSystemWatcher);
     QString relativePath(const QString& filename);
     QStringList relativePaths(const QStringList& files);
     QString absolutePath(const QString& filename);
     QStringList absolutePaths(const QStringList& files);
 
-    bool internalRemoveUnit(PProjectUnit& unit, bool doClose, bool removeFile);
     PProjectUnit internalAddUnit(const QString& inFileName,
                 PProjectModelNode parentNode);
 
@@ -330,6 +347,8 @@ private:
     PProjectModelNode findFileSystemFolderNode(const QString& folderPath, ProjectModelNodeType nodeType);
     PProjectModelNode getCustomeFolderNodeFromName(const QString& name);
     void loadOptions(SimpleIni& ini);
+    void populateUnits(SimpleIni &ini);
+    void populateOptions(SimpleIni &ini);
     //PProjectUnit
     QHash<QString, PProjectEditorLayout> loadLayout();
 
@@ -345,7 +364,6 @@ private:
             PProjectModelNode newParent);
     PProjectModelNode makeProjectNode();
     void open();
-    void removeFolderRecurse(PProjectModelNode node);
     void updateFolderNode(PProjectModelNode node);
     void updateCompilerSetting();
 

@@ -16,6 +16,31 @@ The initial archive and official 3.4 tag identify the same commit. Work on the c
 Original copyrights, attribution and GPL licensing are retained. The fork attribution is **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. About displays it alongside the original credits with an Italian flag; the application name remains Red Panda C++ in every language.
 
 
+## Structural migration 3.5.4 — in development
+
+Version 3.5.4 is developed on `stabilization/3.5.4`. Published packages and the
+working installation remain on the preceding version. The [architecture plan](ARCHITECTURE_3_5_4.md)
+defines responsibilities, contracts, migration steps and verification gates.
+
+The first integration introduces a GUI-owned document store and immutable
+content views for parser requests. Revisions identify completed changes;
+capture during a mutation is explicitly rejected. Rename and Save As register
+their committed path before starting new analysis. Parser inputs and recovery
+observe the same document completion boundary.
+
+Project operations distinguish success, cancellation, conflict, failure and
+changes already applied that need follow-up. Closing first collects document
+decisions without clearing dirty markers while other decisions are pending.
+Metadata, backup copies and colour schemes use checked writes; recovery checks
+budgets before constructing large JSON payloads. Delayed release of a project
+no longer closes editors through its destructor.
+
+New tests cover real editing and persistence operations, open and closed
+project files, write errors and cancellation. Immutable semantic result and
+service lifecycle modules also have isolated tests. Their runtime integration,
+parser dependency freshness and immutable compilation requests remain work to
+complete; this document does not present 3.5.4 as a stable release.
+
 ## Local changes under verification — not yet published
 
 Selecting an editor tab updates the Structure panel context even when focus is on the tab bar or another control. The tree must represent the active editor; completion of another file's analysis must not leave an empty tree or retain the previous context.

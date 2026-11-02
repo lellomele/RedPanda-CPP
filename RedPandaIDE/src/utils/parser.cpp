@@ -87,6 +87,8 @@ void resetCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex)
                             pMainWindow, &MainWindow::onParseStarted);
     pMainWindow->disconnect(parser.get(), &CppParser::cacheResetFinished,
                             pMainWindow, &MainWindow::onCacheResetFinished);
+    pMainWindow->disconnect(parser.get(), &CppParser::inputSnapshotUnavailable,
+                            pMainWindow, &MainWindow::onAnalysisInputUnavailable);
     pMainWindow->connect(parser.get(),
                             &CppParser::parseStarted,
                             pMainWindow,
@@ -103,4 +105,6 @@ void resetCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex)
                          pMainWindow, &MainWindow::onParseStarted);
     pMainWindow->connect(parser.get(), &CppParser::cacheResetFinished,
                          pMainWindow, &MainWindow::onCacheResetFinished);
+    pMainWindow->connect(parser.get(), &CppParser::inputSnapshotUnavailable,
+                         pMainWindow, &MainWindow::onAnalysisInputUnavailable);
 }

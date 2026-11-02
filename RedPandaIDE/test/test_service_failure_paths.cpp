@@ -2,6 +2,9 @@
 #include "src/sessionstore.h"
 #include "src/snippetsstorage.h"
 #include "src/diagnostics.h"
+#include "src/colorscheme.h"
+#include "atomic_replace_lock.h"
+#include <qt_utils/utils.h>
 #include <QTest>
 #include <QFile>
 #include <QTemporaryDir>
@@ -9,6 +12,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <random>
+#include <limits>
 
 static QByteArray readFile(const QString &path) {
     QFile f(path); if (!f.open(QIODevice::ReadOnly)) return {}; return f.readAll();
@@ -46,6 +50,92 @@ void TestServiceFailurePaths::recovery_coordinates_reject_bad_metadata() {
             QVERIFY(!SessionStore::read(path,previous,error)); QCOMPARE(previous[0].text,QString("old text"));
         }
     }
+}
+void TestServiceFailurePaths::recovery_budget_rejects_before_payload_and_keeps_previous_snapshot() {
+    QTemporaryDir dir; QVERIFY(dir.isValid());
+    const QString path = dir.filePath("session.json");
+    QString error;
+    QVERIFY(SessionStore::write(path, {{"keep.cpp", "confirmed", 1, 2}}, error));
+    const QByteArray before = readFile(path);
+    // The two inputs share their QString storage. Their individual size and
+    // encoded file size fit the old limits, but their aggregate text does not.
+    const QString sharedText(int(SessionStore::MaxTotalTextCharacters / 2 + 1), QChar('x'));
+    const QList<RecoveryDocument> excessive{{"a.cpp", sharedText, 0, 0}, {"b.cpp", sharedText, 0, 0}};
+    QVERIFY(!SessionStore::write(path, excessive, error));
+    QVERIFY(!error.isEmpty());
+    QCOMPARE(readFile(path), before);
+
+    SessionStore::SnapshotBudget budget(1024, 10);
+    QVERIFY(budget.beginDocument("a", error));
+    const QString first = QStringLiteral("1234567");
+    QVERIFY(budget.appendText(QStringView{first}, error));
+    QVERIFY(budget.beginDocument("b", error));
+    const QString tooMuch = QStringLiteral("8901");
+    QVERIFY(!budget.appendText(QStringView{tooMuch}, error));
+    QCOMPARE(budget.textCharacters(), qint64(7));
+    const QString fits = QStringLiteral("890");
+    QVERIFY(budget.appendText(QStringView{fits}, error));
+    QCOMPARE(budget.textCharacters(), qint64(10));
+}
+void TestServiceFailurePaths::recovery_budget_accounts_for_json_escaping_and_unicode() {
+    QString text;
+    text.reserve(65536);
+    for (uint c = 0; c <= 0xffff; ++c) text.append(QChar(ushort(c)));
+    const QString filename = QString::fromUtf8("quote\" slash/ backslash\\\nα🙂.cpp");
+    SessionStore::SnapshotBudget budget;
+    QString error;
+    QVERIFY(budget.beginDocument(filename, error));
+    QVERIFY(budget.appendText(QStringView{text}, error));
+    const QByteArray encoded = QJsonDocument(QJsonObject{
+        {"version", 1}, {"savedAt", "2026-11-02T00:00:00Z"},
+        {"documents", QJsonArray{QJsonObject{{"filename", filename}, {"text", text},
+            {"line", std::numeric_limits<int>::min()}, {"column", std::numeric_limits<int>::max()}}}}
+    }).toJson(QJsonDocument::Compact);
+    QVERIFY2(budget.estimatedBytes() >= encoded.size(), "Preflight must bound the actual serializer output");
+    QCOMPARE(budget.textCharacters(), qint64(text.size()));
+
+    SessionStore::SnapshotBudget small(240, 100);
+    QVERIFY(small.beginDocument("x", error));
+    const QString controls(10, QChar(0));
+    QVERIFY(!small.appendText(QStringView{controls}, error));
+    QCOMPARE(small.textCharacters(), qint64(0));
+}
+void TestServiceFailurePaths::color_scheme_write_failure_is_reported() {
+    QTemporaryDir dir; QVERIFY(dir.isValid());
+    ColorScheme scheme;
+    scheme.addItem("test");
+    scheme.items().value("test")->setForeground(Qt::red);
+    const QString path = dir.filePath("scheme.json");
+    scheme.save(path);
+    const QByteArray before = readFile(path);
+    QVERIFY(!before.isEmpty());
+    bool failed = false;
+    try { scheme.save(dir.path()); } catch (const FileError &) { failed = true; }
+    QVERIFY(failed);
+    QCOMPARE(readFile(path), before);
+}
+void TestServiceFailurePaths::color_scheme_failed_commit_preserves_previous_file() {
+#ifdef Q_OS_WIN
+    QTemporaryDir dir; QVERIFY(dir.isValid());
+    ColorScheme scheme;
+    scheme.addItem("test");
+    auto item = scheme.items().value("test");
+    item->setForeground(Qt::red);
+    const QString path = dir.filePath("scheme.json");
+    scheme.save(path);
+    const QByteArray before = readFile(path);
+    AtomicReplaceLock lock(path); QVERIFY(lock.locked());
+    item->setForeground(Qt::blue);
+    bool failed = false;
+    try { scheme.save(path); } catch (const FileError &) { failed = true; }
+    QVERIFY(failed);
+    QCOMPARE(readFile(path), before);
+    lock.release();
+    scheme.save(path);
+    QVERIFY(readFile(path) != before);
+#else
+    QSKIP("Commit-failure test requires Windows file-sharing semantics");
+#endif
 }
 void TestServiceFailurePaths::snippet_read_write_failure_is_transactional() {
     QTemporaryDir dir; auto snippet=std::make_shared<CodeSnippet>(); snippet->caption="Example"; snippet->prefix="example"; snippet->code="int value = %REPL_BEGIN%42%REPL_END%;"; snippet->section=0;

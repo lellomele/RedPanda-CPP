@@ -10,6 +10,7 @@
 #include <QSet>
 class Editor;
 class MainWindow;
+class RecoveryChecks;
 class SessionRecovery : public QObject {
     Q_OBJECT
 public:
@@ -18,7 +19,11 @@ public:
     void restorePreviousSessions();
     void checkpoint();
     void finishCleanly();
+    bool isWriting() const;
+    void stopScheduling();
 private:
+    friend class RecoveryChecks;
+    void reportFailure(const QString &error);
     MainWindow *mWindow;
     QString mDirectory;
     QString mPath;
@@ -34,5 +39,6 @@ private:
     QString mLastState;
     QString mScheduledState;
     bool mStopping = false;
+    bool mWritePending = false; // cleared only after the GUI consumes the result
 };
 #endif

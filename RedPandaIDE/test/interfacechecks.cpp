@@ -1,5 +1,6 @@
 #include "src/cpprefacter.h"
 #include "src/project.h"
+#include "src/projecttemplate.h"
 #include "src/syntaxermanager.h"
 #include "src/parser/cppparser.h"
 #include <QCheckBox>
@@ -12,6 +13,10 @@
 #include <qsynedit/syntaxer/cpp.h>
 #include "interfacechecks.h"
 #include "compilerworkflowchecks.h"
+#include "closeplanchecks.h"
+#include "documentstorechecks.h"
+#include "recoverychecks.h"
+#include "projectoperationchecks.h"
 #include "src/utils/os.h"
 #include "src/mainwindow.h"
 #include "src/sessionrecovery.h"
@@ -106,8 +111,39 @@ private:
 static QString prefText(const char *source) { return QCoreApplication::translate("SettingsDialog", source); }
 static void waitForUi(int milliseconds = 150) { QEventLoop loop; QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit); loop.exec(); }
 int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &outputDirectory) {
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_RECOVERY_CACHE_ONLY"))
+        return runRecoveryChecks(window, recovery, outputDirectory);
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_DOCUMENT_STORE_ONLY"))
+        return runDocumentStoreChecks(window, outputDirectory);
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_CLOSE_PLAN_ONLY"))
+        return runClosePlanChecks(window, outputDirectory);
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_PROJECT_OPERATIONS"))
+        return runProjectOperationChecks(window, outputDirectory);
     QDir().mkpath(outputDirectory); QJsonArray checks; QJsonArray skipped; int failures = 0;
-    auto check = [&](const QString &name, bool passed) { checks.append(QJsonObject{{"name", name}, {"passed", passed}}); if (!passed) ++failures; };
+    QFile progress(QDir(outputDirectory).filePath("ui-progress.jsonl"));
+    if (!progress.open(QIODevice::WriteOnly)) return 2;
+    const auto trace = [&](const QJsonObject &record) {
+        const QByteArray bytes = QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n';
+        return progress.write(bytes) == bytes.size() && progress.flush();
+    };
+    QTimer modalObserver;
+    modalObserver.setInterval(1000);
+    QPointer<QWidget> lastModal;
+    QObject::connect(&modalObserver, &QTimer::timeout, &window, [&] {
+        auto *modal = QApplication::activeModalWidget();
+        if (!modal || modal == lastModal) return;
+        lastModal = modal;
+        QJsonObject record{{"modalClass", QString::fromLatin1(modal->metaObject()->className())},
+            {"title", modal->windowTitle()}};
+        if (const auto *message = qobject_cast<QMessageBox *>(modal)) record["message"] = message->text();
+        trace(record);
+    });
+    modalObserver.start();
+    auto check = [&](const QString &name, bool passed) {
+        const QJsonObject record{{"name", name}, {"passed", passed}};
+        checks.append(record);
+        if (!passed || !trace(record)) ++failures;
+    };
     auto skip = [&](const QString &name, const QString &reason) { skipped.append(QJsonObject{{"name", name}, {"reason", reason}}); };
 
     if (qEnvironmentVariableIsSet("REDPANDA_QA_RENAME_ONLY")) {
@@ -488,13 +524,11 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             QElapsedTimer idleWait; idleWait.start();
             while (idleWait.elapsed() < 5000 && !(frozen = parser->freeze())) waitForUi(10);
             if (!frozen) return finish(false, "parser did not become available for QA setup", children, -1, -1);
-            parser->setOnGetFileStream([expected, requested, entered, proceed](const QString &filename, QStringList &) {
+            parser->setSourceReadObserver([expected, requested, entered, proceed](const QString &filename) {
                 if (QDir::cleanPath(filename) == expected && requested->exchange(false)) {
                     entered->release();
                     proceed->tryAcquire(1, 6000);
                 }
-                // All inputs are copies on disk; false invokes the normal disk reader.
-                return false;
             });
             parser->unFreeze();
             qint64 maxSwitchMs = 0;
@@ -1239,6 +1273,15 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         if (cleanAction && cleanAction->isEnabled()) { cancelCleanup(); cleanAction->trigger(); }
         check("Cancelled cleanup preserves every file", QFile::exists(sourcePath) && QFile::exists(executablePath) && QFile::exists(objectPath) && QFile::exists(unrelated));
         if (cleanAction && cleanAction->isEnabled()) {
+            QTimer cleanupErrors;
+            cleanupErrors.setInterval(5);
+            QObject::connect(&cleanupErrors, &QTimer::timeout, &window, [&] {
+                auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+                if (!message || message->windowTitle() != QCoreApplication::translate("MainWindow", "Clean Build Artifacts")) return;
+                trace(QJsonObject{{"cleanupError", message->text()}});
+                if (auto *ok = message->button(QMessageBox::Ok)) ok->click();
+            });
+            cleanupErrors.start();
             QTimer::singleShot(0, &window, [] {
                 for (auto *widget : QApplication::topLevelWidgets()) if (widget->objectName() == "buildArtifactsDialog") {
                     auto *dialog = qobject_cast<QDialog *>(widget); auto *list = dialog->findChild<QTreeWidget *>("buildArtifactsList");
@@ -1247,6 +1290,7 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                 }
             });
             cleanAction->trigger();
+            cleanupErrors.stop();
             check("Selected fake executable moved out of the build directory", !QFile::exists(executablePath));
             check("Cleanup preserves source, unchecked object and unrelated artifact", QFile::exists(sourcePath) && QFile::exists(objectPath) && QFile::exists(unrelated));
         }
@@ -1807,24 +1851,34 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     }());
 
     QFileSystemWatcher watcher;
-    Project project(files.filePath("project.dev"), "Document workflow test", window.editorManager(), window.iconsManager(), &watcher);
+    const QString layoutProjectPath = files.filePath("project.dev");
+    auto layoutTemplate = std::make_shared<ProjectTemplate>();
+    layoutTemplate->setVersion(0);
+    ProjectOptions layoutOptions;
+    layoutOptions.modelType = ProjectModelType::Custom;
+    layoutOptions.icon.clear();
+    layoutTemplate->setOptions(layoutOptions);
+    auto layoutProject = Project::create(layoutProjectPath, "Document workflow test", window.editorManager(),
+        window.iconsManager(), &watcher, layoutTemplate, true);
+    check("Project layout fixture metadata written", layoutProject && QFile::exists(layoutProjectPath));
+    if (!layoutProject) return 2;
     const QString layout = files.filePath("project.layout");
-    project.saveLayout();
+    layoutProject->saveLayout();
     check("Project layout saves valid JSON", QJsonDocument::fromJson(readBytes(layout)).isArray());
     // A directory is a deterministic unwritable destination on Windows and Linux.
     const QByteArray previousLayout = readBytes(layout);
     check("Project layout fault fixture prepared", QFile::rename(layout, layout + ".saved") && QDir().mkdir(layout));
     bool rejected = false;
-    try { project.saveLayout(); } catch (const FileError &) { rejected = true; }
+    try { layoutProject->saveLayout(); } catch (const FileError &) { rejected = true; }
     check("Project layout failure is reported and original saved layout remains", rejected && readBytes(layout + ".saved") == previousLayout);
     check("Project layout retry target prepared", QDir().rmdir(layout) && QFile::rename(layout + ".saved", layout));
-    project.saveLayout();
+    layoutProject->saveLayout();
 
     check("Project layout can save after a previous failure", QJsonDocument::fromJson(readBytes(layout)).isArray());
 
     // Exercise the native close-event path, not merely Project::saveLayout.
-    // A project-layout failure occurs before closeAll can prompt for a separate
-    // unsaved editor; retries must still run those document prompts.
+    // A layout failure follows staged document decisions. A retry must still
+    // request those decisions because no document-close commit occurred.
     const bool oldAutoLoad = pSettings->editor().autoLoadLastFiles();
     pSettings->editor().setAutoLoadLastFiles(false);
     auto restoreAutoLoad = finally([&] { pSettings->editor().setAutoLoadLastFiles(oldAutoLoad); });
@@ -1839,7 +1893,11 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         if (auto *message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
             if (stage == 1 && message->text().contains("close-workflow.layout"))
                 ++layoutErrors;
-            if (stage == 2 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
+            if (stage == 1 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
+                // The discard is a prepared decision. A later layout failure
+                // must leave the still-open buffer dirty and recoverable.
+                message->button(QMessageBox::No)->click();
+            } else if (stage == 2 && message->standardButtons().testFlag(QMessageBox::Cancel)) {
                 ++cancelledDocumentPrompts;
                 if (!nestedCloseChecked) {
                     nestedCloseChecked = true;
@@ -1865,6 +1923,15 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     const auto closeProject = window.project();
     check("Close workflow opens a real project", closeProject && closeProject->filename() == closeProjectPath);
     if (closeProject) {
+        QPointer<Editor> detachedUnit = window.editorManager()->newEditor(files.filePath("unassociated-project.cpp"),
+                ENCODING_UTF8, FileType::CppSource, QString(), false, true);
+        if (detachedUnit) {
+            detachedUnit->setContent("int unassociated_project_document = 1;");
+            detachedUnit->setModified(false);
+            detachedUnit->setInProject(true, false);
+        }
+        check("Close workflow includes an unassociated project editor", detachedUnit
+              && detachedUnit->inProject() && !closeProject->findUnit(detachedUnit.data()));
         QPointer<Editor> extra = window.editorManager()->newEditor(files.filePath("unsaved-extra.cpp"),
                 ENCODING_UTF8, FileType::CppSource, QString(), false, true);
         check("Close workflow has an independent unsaved editor", extra && !extra->inProject());
@@ -1905,7 +1972,7 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                   && !window.isQuitting() && !window.isClosingAll() && !window.closingProject());
             check("Cancelling close retry preserves the independent unsaved buffer",
                   extra && extra->modified() && extra->text() == unsavedText);
-            check("Close retry commits a valid layout before document cancellation",
+            check("Cancelling close retains the previous valid layout",
                   QJsonDocument::fromJson(readBytes(closeLayout)).isArray());
             stage = 3;
             QCloseEvent noChoice;
@@ -1925,6 +1992,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         }
         if (window.project())
             QMetaObject::invokeMethod(&window, "on_actionClose_Project_triggered", Qt::DirectConnection);
+        check("Project close retires planned project editors even without a unit association",
+              !window.project() && detachedUnit.isNull());
     }
     handleCloseMessages.stop();
 }

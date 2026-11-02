@@ -50,6 +50,9 @@ public:
     bool compiling() const;
     bool backgroundSyntaxChecking() const;
     bool running() const;
+    // Owner-thread registry observation; -1 means the calling thread is invalid.
+    // A finished thread may still own objects until its queued disposal runs.
+    int trackedWorkerCount() const;
 
     void compile(const QString& filename, FileType fileType, const QByteArray& encoding, bool rebuild, CppCompileType compileType);
     void compileProject(std::shared_ptr<Project> project, bool rebuild);

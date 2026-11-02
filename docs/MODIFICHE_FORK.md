@@ -16,6 +16,34 @@ L'archivio iniziale e il tag ufficiale 3.4 identificano lo stesso commit. Il lav
 Copyright, attribuzioni e licenza GPL originali sono mantenuti. L'attribuzione del fork è **Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com)**. La finestra Informazioni la mostra accanto ai crediti originali con una bandiera italiana; il nome dell'applicazione resta Red Panda C++ in ogni lingua.
 
 
+## Migrazione strutturale 3.5.4 — in sviluppo
+
+La 3.5.4 è sviluppata nel ramo `stabilization/3.5.4`. I pacchetti pubblicati e
+l'installazione in uso rimangono quelli precedenti. Il [piano architetturale](PIANO_3_5_4.md)
+definisce responsabilità, contratti, passaggi di migrazione e criteri di verifica.
+
+La prima integrazione introduce un archivio dei documenti posseduto
+dall'interfaccia e copie immutabili dei contenuti per le richieste del parser.
+Le revisioni identificano modifiche completate: un'acquisizione durante una
+modifica viene rifiutata esplicitamente. Rinomina e «Salva con nome» aggiornano
+l'identità del percorso prima di avviare nuove analisi. Parser e recupero del
+lavoro osservano lo stesso confine di completamento del documento.
+
+Le operazioni sui progetti distinguono riuscita, annullamento, conflitto,
+fallimento e modifiche già applicate che richiedono un completamento.
+La chiusura raccoglie prima le decisioni sui documenti, senza cancellare i
+segnali di modifica in attesa delle altre risposte. Metadati, copie di backup e
+schemi colore usano scritture controllate; il recupero verifica i limiti prima
+di costruire grandi contenuti JSON. Il rilascio ritardato di un progetto non
+chiude più editor attraverso il suo distruttore.
+
+I nuovi test comprendono operazioni reali di editing e persistenza, file di
+progetto aperti e chiusi, errori di scrittura e annullamenti. I moduli per
+risultati semantici immutabili e arresto coordinato dei servizi hanno anche
+test isolati. La loro integrazione nel runtime, la validazione delle dipendenze
+del parser e le richieste di compilazione immutabili restano lavori da
+completare: questo documento non presenta la 3.5.4 come release stabile.
+
 ## Modifiche locali in verifica — non ancora pubblicate
 
 La selezione di una scheda aggiorna il contesto del pannello Struttura anche quando il focus si trova nella barra delle schede o in un altro controllo. Il file mostrato dall'albero deve corrispondere all'editor attivo; il completamento dell'analisi di un altro file non deve lasciare un albero vuoto o riferito al contesto precedente.

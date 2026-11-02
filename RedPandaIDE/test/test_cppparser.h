@@ -43,6 +43,12 @@ private slots:
     void test_inheritance_records_stay_bounded_after_reparse();
     void test_split_expression_ignores_comments_data();
     void test_split_expression_ignores_comments();
+    void test_document_store_lazy_immutable_revisions();
+    void test_snapshot_input_failure_and_empty_buffer();
+    void test_snapshot_source_includes_survive_provider_destruction();
+    void test_snapshot_requests_coalesce_latest_revision();
+    void test_snapshot_submission_owner_and_destroyed_parser();
+    void test_snapshot_project_list_keeps_one_input_view();
 
 protected:
     std::shared_ptr<CppParser> mParser;

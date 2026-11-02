@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "project.h"
+#include "projectfileoperations.h"
 #include "editor.h"
 #include "editormanager.h"
 #include "qt_utils/utils.h"
@@ -40,17 +41,36 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
+#include <QPointer>
+#include "editorcloseplan.h"
 #include "customfileiconprovider.h"
 #include <QMimeData>
 #include "settings.h"
 #include "vcs/gitrepository.h"
 #include "utils/parser.h"
+
+namespace {
+void requireProjectOwnerThread(EditorManager *editors, QFileSystemWatcher *watcher)
+{
+    if (!editors || !watcher || QThread::currentThread() != editors->thread()
+            || QThread::currentThread() != watcher->thread())
+        throw FileError(Project::tr("Projects must be created on the editor's owner thread."));
+}
+
+void deleteProjectOnOwnerThread(Project *project)
+{
+    if (QThread::currentThread() == project->thread())
+        delete project;
+    else
+        project->deleteLater();
+}
+}
+
 Project::Project(const QString &filename, const QString &name,
                  EditorManager* editorList,
                  IconsManager * iconsManager,
-                 QFileSystemWatcher* fileSystemWatcher,
-                 QObject *parent) :
-    QObject(parent),
+                 QFileSystemWatcher* fileSystemWatcher) :
+    QObject(nullptr),
     mName(name),
     mModified(false),
     mEditorManager(editorList),
@@ -60,23 +80,16 @@ Project::Project(const QString &filename, const QString &name,
     mFilename = QFileInfo(filename).absoluteFilePath();
     mParser = std::make_shared<CppParser>();
     mParser->setSharedByFiles(true);
-    mParser->setOnGetFileStream(
-                std::bind(
-                    &EditorManager::getContentFromOpenedEditor,mEditorManager,
-                    std::placeholders::_1, std::placeholders::_2));
-    mFileSystemWatcher->addPath(directory());
+    mEditorManager->bindParserInput(mParser);
 }
 
 std::shared_ptr<Project> Project::load(const QString &filename, EditorManager *editorList,
                                        IconsManager * iconsManager,
-                                       QFileSystemWatcher *fileSystemWatcher, QObject *parent)
+                                       QFileSystemWatcher *fileSystemWatcher)
 {
-    std::shared_ptr<Project> project=std::make_shared<Project>(filename,
-                                                               "",
-                                                               editorList,
-                                                               iconsManager,
-                                                               fileSystemWatcher,
-                                                               parent);
+    requireProjectOwnerThread(editorList, fileSystemWatcher);
+    std::shared_ptr<Project> project(new Project(filename, "", editorList, iconsManager, fileSystemWatcher),
+                                     deleteProjectOnOwnerThread);
     project->open();
     project->mModified = false;
     resetCppParser(project->mParser, project->mOptions.compilerSet);
@@ -88,14 +101,11 @@ std::shared_ptr<Project> Project::create(
         EditorManager *editorList,
         IconsManager * iconsManager, QFileSystemWatcher *fileSystemWatcher,
         const std::shared_ptr<ProjectTemplate> pTemplate,
-        bool useCpp,  QObject *parent)
+        bool useCpp)
 {
-    std::shared_ptr<Project> project=std::make_shared<Project>(filename,
-                                                               name,
-                                                               editorList,
-                                                               iconsManager,
-                                                               fileSystemWatcher,
-                                                               parent);
+    requireProjectOwnerThread(editorList, fileSystemWatcher);
+    std::shared_ptr<Project> project(new Project(filename, name, editorList, iconsManager, fileSystemWatcher),
+                                     deleteProjectOnOwnerThread);
     SimpleIni ini;
     ini.SetValue("Project","filename", toByteArray(extractRelativePath(project->directory(),
                                                                        project->mFilename)));
@@ -106,24 +116,15 @@ std::shared_ptr<Project> Project::create(
     resetCppParser(project->mParser, project->mOptions.compilerSet);
 
     project->mModified = true;
-    ini.SaveFile(project->mFilename.toLocal8Bit());
+    const auto result = ProjectFileOperations::saveIni(project->mFilename, ini);
+    if (!result.succeeded())
+        throw FileError(result.error);
     return project;
 }
 
-Project::~Project()
-{
-    mFileSystemWatcher->removePath(directory());
-    mEditorManager->beginUpdate();
-    foreach (const PProjectUnit& unit, mUnits) {
-        Editor * editor = unitEditor(unit);
-        if (editor) {
-            editor->setInProject(false,false);
-            if (fileExists(directory()))
-                mEditorManager->forceCloseEditor(editor);
-        }
-    }
-    mEditorManager->endUpdate();
-}
+// Resource closure is an explicit controller operation. A delayed release by
+// a compiler/task must never close a reopened editor or touch GUI services.
+Project::~Project() = default;
 
 QString Project::directory() const
 {
@@ -222,7 +223,9 @@ void Project::open()
     });
 //    QFile fileInfo(mFilename);
     SimpleIni ini;
-    ini.LoadFile(mFilename.toLocal8Bit());
+    const auto loadResult = ProjectFileOperations::loadIni(mFilename, ini);
+    if (!loadResult.succeeded())
+        throw FileError(loadResult.error);
     loadOptions(ini);
 
     mRootNode = makeProjectNode();
@@ -267,6 +270,17 @@ void Project::open()
             newUnit->setEncoding(ENCODING_PROJECT);
         }
         newUnit->setRealEncoding(ini.GetValue(groupName, "RealEncoding",""));
+        const QByteArray relocationState = ini.GetValue(groupName, "RmeleRelocationState", "");
+        if (!relocationState.isEmpty()) {
+            const QString expectedPath = fromByteArray(ini.GetValue(groupName, "RmeleRelocationTarget", ""));
+            if (relocationState != "conflict" || expectedPath.isEmpty())
+                throw FileError(tr("Invalid saved relocation state for project file '%1'.").arg(newUnit->fileName()));
+            QString diagnostic = fromByteArray(ini.GetValue(groupName, "RmeleRelocationDiagnostic", ""));
+            if (diagnostic.isEmpty())
+                diagnostic = tr("This project file has an unresolved rename conflict. Save detached buffers with Save As, then resolve or remove and re-add the unit.");
+            newUnit->mRelocation = {ProjectUnit::RelocationState::Conflict,
+                                   cleanPath(dir.absoluteFilePath(expectedPath)), diagnostic};
+        }
 
         PProjectModelNode parentNode;
         if (mOptions.modelType==ProjectModelType::FileSystem) {
@@ -440,14 +454,14 @@ Editor *Project::openUnit(PProjectUnit &unit, const PProjectEditorLayout &layout
 
 Editor *Project::unitEditor(const PProjectUnit &unit) const
 {
-    if (!unit)
+    if (!unit || unit->relocation().state != ProjectUnit::RelocationState::Resolved)
         return nullptr;
     return mEditorManager->getOpenedEditor(unit->fileName());
 }
 
 Editor *Project::unitEditor(const ProjectUnit *unit) const
 {
-    if (!unit)
+    if (!unit || unit->relocation().state != ProjectUnit::RelocationState::Resolved)
         return nullptr;
     return mEditorManager->getOpenedEditor(unit->fileName());
 }
@@ -513,94 +527,135 @@ void Project::rebuildNodes()
     mModel->endUpdate();
 }
 
-bool Project::removeUnit(PProjectUnit& unit, bool doClose , bool removeFile)
+OperationResult Project::removeUnit(PProjectUnit &unit, bool doClose, bool removeFile,
+                                     const TrashFile &trashFile)
 {
-    bool result=internalRemoveUnit(unit,doClose,removeFile);
+    if (!unit || mUnits.value(unit->fileName()) != unit)
+        return OperationResult::conflict(tr("The project unit changed before removal could be applied."));
+    const QString fileName = unit->fileName();
+    if (removeFile && !QFileInfo(fileName).isFile())
+        return OperationResult::failure(tr("The project file cannot be moved to the Recycle Bin: '%1'.").arg(fileName));
 
-    if (result) {
-        emit unitRemoved(unit->fileName());
+    const QPointer<Project> lifetime(this);
+    const QPointer<EditorManager> editors(mEditorManager);
+    const QPointer<Editor> editor(unitEditor(unit));
+    EditorClosePlan closePlan;
+    if (editor && doClose) {
+        // Temporary legacy controller adapter: collect the decision without
+        // closing/detaching a buffer. The plan owns the accepted revision.
+        const auto prepared = closePlan.prepare({editor.data()}, [](Editor *candidate, bool &discard) {
+            const QPointer<Editor> live(candidate);
+            const auto answer = QMessageBox::question(candidate, QObject::tr("Save"),
+                QObject::tr("Save changes to %1?").arg(candidate->filename()),
+                QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+            if (!live)
+                return OperationResult::conflict(tr("A document was closed while preparing removal."));
+            if (answer == QMessageBox::No) {
+                discard = true;
+                return OperationResult::success();
+            }
+            if (answer != QMessageBox::Yes)
+                return OperationResult::cancelled();
+            if (!live->save(false, false))
+                return OperationResult::failure(tr("The document could not be saved. It was not removed from the project."));
+            return OperationResult::success();
+        });
+        if (!prepared.succeeded()) return prepared;
+        if (!lifetime || !editors)
+            return OperationResult::conflict(tr("The project was closed while preparing removal."));
+        const auto valid = closePlan.validate(*editors, EditorCloseScope::PlannedEditors);
+        if (!valid.succeeded()) return valid;
     }
-    return result;
-}
+    if (!lifetime || !editors || !unit || unit->fileName() != fileName || mUnits.value(fileName) != unit
+            || unitEditor(unit) != editor.data())
+        return OperationResult::conflict(tr("The project unit changed before removal could be applied."));
 
-bool Project::internalRemoveUnit(PProjectUnit& unit, bool doClose , bool removeFile)
-{
-    if (!unit)
-        return false;
-
-//    qDebug()<<unit->fileName();
-//    qDebug()<<(qint64)unit->editor();
-    // Attempt to close it
-    if (doClose) {
-        Editor* editor = unitEditor(unit);
-        if (editor) {
-            editor->setInProject(false,false);
-            mEditorManager->closeEditor(editor);
+    // A failure to trash is a failure to remove, not permission to permanently
+    // delete the file. No editor/model changes have happened at this point.
+    if (removeFile && !(trashFile ? trashFile(fileName) : QFile::moveToTrash(fileName)))
+        return OperationResult::failure(tr("The project file could not be moved to the Recycle Bin: '%1'.").arg(fileName));
+    bool committed = removeFile;
+    QString followUpError;
+    try {
+        mModel->beginUpdate();
+        {
+            const auto finishModel = finally([this] { mModel->endUpdate(); });
+            mUnits.remove(fileName);
+            committed = true;
+            setModified(true);
+            rebuildNodes();
         }
+        emit unitRemoved(fileName);
+        if (!lifetime)
+            return {OperationStatus::CommittedWithFollowUpPending,
+                    tr("The project was closed after the file removal committed.")};
+        if (editor) {
+            if (doClose) {
+                // Model-reset callbacks may have edited a buffer. An accepted
+                // discard never authorizes destroying that different revision.
+                const auto stillValid = closePlan.validate(*editors, EditorCloseScope::PlannedEditors);
+                editor->setInProject(false, false);
+                if (!stillValid.succeeded())
+                    followUpError = stillValid.error;
+                else
+                    editors->forceCloseEditor(editor);
+            } else {
+                editor->setInProject(false, false);
+                editor->setCppParser();
+            }
+        }
+        if (!lifetime)
+            return {OperationStatus::CommittedWithFollowUpPending,
+                    tr("The project was closed after the file removal committed.")};
+        if (mParser) {
+            mParser->removeProjectFile(fileName);
+            mParser->invalidateFile(fileName);
+        }
+    } catch (const BaseError &error) {
+        return committed ? OperationResult{OperationStatus::CommittedWithFollowUpPending, error.reason()}
+                         : OperationResult::failure(error.reason());
     }
-
-    if (removeFile) {
-        if (!QFile::moveToTrash(unit->fileName()))
-            QFile::remove(unit->fileName());
-    }
-
-//if not fUnits.GetItem(index).fNew then
-    PProjectModelNode node = unit->node();
-    PProjectModelNode parentNode = node->parent.lock();
-    if (!parentNode) {
-        mUnits.remove(unit->fileName());
-        return true;
-    }
-
-    int row = parentNode->children.indexOf(unit->node());
-    if (row<0) {
-        mUnits.remove(unit->fileName());
-        return true;
-    }
-
-    QModelIndex parentIndex = mModel->getNodeIndex(parentNode.get());
-
-    mModel->removeRow(row,parentIndex);
-    mUnits.remove(unit->fileName());
-
-    //remove empty parent node
-    PProjectModelNode currentNode = parentNode;
-    while (currentNode && currentNode->folderNodeType == ProjectModelNodeType::Folder && currentNode->children.isEmpty()) {
-        parentNode = currentNode->parent.lock();
-        if (!parentNode)
-            break;
-        row = parentNode->children.indexOf(currentNode);
-        if (row<0)
-            break;
-        parentIndex = mModel->getNodeIndex(parentNode.get());
-        mModel->removeRow(row,parentIndex);
-        currentNode = parentNode;
-    }
-
-    setModified(true);
-    return true;
+    if (!followUpError.isEmpty())
+        return {OperationStatus::CommittedWithFollowUpPending, followUpError};
+    return OperationResult::success();
 }
 
-bool Project::removeFolder(PProjectModelNode node)
+OperationResult Project::removeFolder(PProjectModelNode node)
 {
+    if (!node || node->isUnit || node->level < 1)
+        return OperationResult::conflict(tr("The project folder is no longer available."));
+    const QPointer<Project> lifetime(this);
+    const QString folderPath = getNodePath(node);
+    QList<PProjectUnit> units;
+    const std::function<void(const PProjectModelNode &)> collect = [&](const PProjectModelNode &parent) {
+        for (const auto &child : parent->children) {
+            if (child->isUnit) {
+                if (const auto unit = child->pUnit.lock()) units.append(unit);
+            } else collect(child);
+        }
+    };
+    collect(node);
+    int removed = 0;
+    for (auto &unit : units) {
+        const auto result = removeUnit(unit, true);
+        if (!lifetime) return {OperationStatus::CommittedWithFollowUpPending,
+                              tr("The project was closed during folder removal.")};
+        if (!result.succeeded()) {
+            if (removed || result.committed())
+                return {OperationStatus::CommittedWithFollowUpPending,
+                        tr("Some project files were already removed. No further files were removed.") + QLatin1Char('\n') + result.error};
+            return result;
+        }
+        ++removed;
+    }
     mModel->beginUpdate();
-    auto action = finally([this]{
-        mModel->endUpdate();
-    });
-    // Sanity check
-    if (!node)
-        return false;
-
-    // Check if this is actually a folder
-    if (node->isUnit || node->level<1)
-        return false;
-
-    // Let this function call itself
-    removeFolderRecurse(node);
-
-    // Update list of folders (sets modified)
-    updateFolders();
-    return true;
+    const auto finishModel = finally([this] { mModel->endUpdate(); });
+    for (int i = mFolders.size() - 1; i >= 0; --i)
+        if (mFolders[i] == folderPath || mFolders[i].startsWith(folderPath + QLatin1Char('/')))
+            mFolders.removeAt(i);
+    rebuildNodes();
+    setModified(true);
+    return OperationResult::success();
 }
 
 void Project::resetParserProjectFiles()
@@ -617,21 +672,40 @@ void Project::resetParserProjectFiles()
     }
 }
 
+OperationResult Project::saveMetadata()
+{
+    SimpleIni candidate;
+    auto result = ProjectFileOperations::loadIni(mFilename, candidate);
+    if (!result.succeeded()) {
+        setModified(true);
+        return result;
+    }
+    populateUnits(candidate);
+    populateOptions(candidate);
+    result = ProjectFileOperations::saveIni(mFilename, candidate);
+    if (!result.succeeded())
+        setModified(true);
+    return result;
+}
+
 void Project::saveAll()
 {
-    if (!saveUnits())
-        return;
-    saveOptions(); // update other data, and save to disk
-    saveLayout(); // save current opened files, and which is "active".
-
-    // We have saved everything to disk, so mark unmodified
+    // Legacy controller adapter. Metadata is one candidate/commit, not two
+    // separate writes that can leave units and options from different saves.
+    setModified(true);
+    const auto result = saveMetadata();
+    if (!result.succeeded())
+        throw FileError(result.error);
+    saveLayout();
+    // Layout failure leaves the project dirty for a visible retry. A metadata
+    // commit that already succeeded is retained; no false rollback is claimed.
     setModified(false);
 }
 
 void Project::saveLayout()
 {
-    if (!fileExists(directory()))
-        return;
+    if (!QFileInfo(directory()).isDir())
+        throw FileError(tr("Project directory does not exist: '%1'.").arg(directory()));
 
     QHash<QString, PProjectEditorLayout> oldLayouts = loadLayout();
 
@@ -695,47 +769,213 @@ void Project::saveLayout()
         throw FileError(tr("Cannot save '%1': %2").arg(jsonFilename, file.errorString()));
 }
 
-void Project::renameUnit(PProjectUnit& unit, const QString &newFileName)
+OperationResult Project::reconcileUnitRename(PProjectUnit &unit, const QString &newFileName)
 {
-    if (!unit)
-        return;
-    if (newFileName.compare(unit->fileName(),PATH_SENSITIVITY)==0)
-        return;
-
-    if (mParser) {
-        mParser->removeProjectFile(unit->fileName());
-        mParser->addProjectFile(newFileName,true);
+    if (!unit || mUnits.value(unit->fileName()) != unit)
+        return OperationResult::conflict(tr("The project unit changed before the rename could be applied."));
+    const QString oldFileName = unit->fileName();
+    if (newFileName == oldFileName && unit->relocation().state == ProjectUnit::RelocationState::Resolved)
+        return OperationResult::success();
+    if (!QFileInfo(newFileName).isFile())
+        return OperationResult::failure(tr("The renamed project file does not exist: '%1'.").arg(newFileName));
+    Editor *editor = unitEditor(unit);
+    Editor *targetEditor = mEditorManager->getOpenedEditor(newFileName);
+    const PProjectUnit target = findUnit(newFileName);
+    const bool bufferConflict = targetEditor && targetEditor != editor;
+    const auto unresolved = [&](const QString &diagnostic) {
+        unit->mRelocation = {ProjectUnit::RelocationState::Conflict, newFileName, diagnostic};
+        if (editor) {
+            editor->setInProject(false, false);
+            editor->setModified(true);
+        }
+        setModified(true);
+        return OperationResult{OperationStatus::CommittedWithFollowUpPending, diagnostic};
+    };
+    if (target && target != unit)
+        return unresolved(tr("The file was renamed on disk to '%1', but another project unit already owns that path. "
+                             "Both units and open buffers were preserved. Save detached buffers with Save As, then remove and re-add the unresolved unit.")
+                          .arg(newFileName));
+    const QString contextFile = editor ? editor->contextFile() : QString();
+    // Commit identity without replacing the ProjectUnit: encoding, compile
+    // flags, custom command, priority and folder all remain attached to it.
+    {
+        mModel->beginUpdate();
+        const auto finishModelUpdate = finally([this] { mModel->endUpdate(); });
+        mUnits.remove(oldFileName);
+        unit->setFileName(newFileName);
+        unit->mRelocation = bufferConflict
+                ? ProjectUnit::Relocation{ProjectUnit::RelocationState::Conflict, newFileName,
+                    tr("The file was renamed on disk, but its destination is open in another editor. "
+                       "Both buffers were preserved. Save detached buffers with Save As, then resolve or remove and re-add the project unit.")}
+                : ProjectUnit::Relocation{};
+        mUnits.insert(newFileName, unit);
+        rebuildNodes();
     }
-
-    if (mParser)
-        mParser->invalidateFile(unit->fileName());
-    Editor *editor=unitEditor(unit);
-    copyFile(unit->fileName(),newFileName,true);
-    if (editor) {
-        editor->rename(newFileName);
-    }
-    if (mParser)
-        CppParser::parseFileNonBlocking(mParser,newFileName,true, editor->contextFile());
-
-    internalRemoveUnit(unit,false,true);
-
-    PProjectModelNode parentNode = unit->node()->parent.lock();
-    internalAddUnit(newFileName,parentNode);
     setModified(true);
 
-    emit unitRenamed(unit->fileName(),newFileName);
-    emit nodeRenamed();
+    // The file/model commit is already complete. A recoverable parser failure
+    // is a follow-up failure, never permission to remove either disk file.
+    try {
+        if (bufferConflict) {
+            if (editor) {
+                editor->setInProject(false, false);
+                editor->setModified(true);
+            }
+        } else if (editor) {
+            editor->rename(newFileName);
+            if (editor->filename() != newFileName)
+                return unresolved(tr("The file and project were renamed, but the editor could not adopt the new path. "
+                                     "Its contents were preserved. Save the detached buffer with Save As and resolve the project unit."));
+        }
+        emit unitRenamed(oldFileName, newFileName);
+        emit nodeRenamed();
+        if (mParser) {
+            mParser->removeProjectFile(oldFileName);
+            mParser->addProjectFile(newFileName, true);
+            mParser->invalidateFile(oldFileName);
+            CppParser::parseFileNonBlocking(mParser, newFileName, true, contextFile);
+        }
+    } catch (const BaseError &error) {
+        return {OperationStatus::CommittedWithFollowUpPending, error.reason()};
+    }
+    if (bufferConflict)
+        return {OperationStatus::CommittedWithFollowUpPending, unit->relocation().diagnostic};
+    return OperationResult::success();
+}
+
+OperationResult Project::resolveUnitRelocation(PProjectUnit &unit, const QString &verifiedFileName,
+                                               Editor *acceptedEditor)
+{
+    if (!unit || mUnits.value(unit->fileName()) != unit || !QFileInfo(verifiedFileName).isFile())
+        return OperationResult::conflict(tr("The project unit or selected recovery file is no longer available."));
+    const auto target = findUnit(verifiedFileName);
+    if (target && target != unit)
+        return OperationResult::conflict(tr("File '%1' is already in the project.").arg(verifiedFileName));
+    Editor *occupant = mEditorManager->getOpenedEditor(verifiedFileName);
+    if (occupant != acceptedEditor || (acceptedEditor && acceptedEditor->filename() != verifiedFileName))
+        return OperationResult::conflict(tr("Choose explicitly which open buffer belongs to the recovered project unit."));
+    const QString contextFile = acceptedEditor ? acceptedEditor->contextFile() : QString();
+    const QString previous = unit->fileName();
+    mModel->beginUpdate();
+    {
+        const auto finishModel = finally([this] { mModel->endUpdate(); });
+        mUnits.remove(previous);
+        unit->setFileName(verifiedFileName);
+        unit->mRelocation = {};
+        mUnits.insert(verifiedFileName, unit);
+        rebuildNodes();
+    }
+    setModified(true);
+    try {
+        if (acceptedEditor) associateEditorToUnit(acceptedEditor, unit);
+        if (mParser) {
+            mParser->removeProjectFile(previous);
+            mParser->addProjectFile(verifiedFileName, true);
+            mParser->invalidateFile(previous);
+            CppParser::parseFileNonBlocking(mParser, verifiedFileName, true, contextFile);
+        }
+        if (previous != verifiedFileName) emit unitRenamed(previous, verifiedFileName);
+        emit nodeRenamed();
+    } catch (const BaseError &error) {
+        return {OperationStatus::CommittedWithFollowUpPending, error.reason()};
+    }
+    return OperationResult::success();
+}
+
+OperationResult Project::validateBuildInputs() const
+{
+    for (const auto &unit : mUnits) {
+        if (unit->relocation().state != ProjectUnit::RelocationState::Resolved) {
+            const QString diagnostic = unit->relocation().diagnostic.isEmpty()
+                    ? tr("This project file has an unresolved rename conflict. Save detached buffers with Save As, then resolve or remove and re-add the unit.")
+                    : unit->relocation().diagnostic;
+            return OperationResult::conflict(unit->fileName() + QLatin1Char('\n') + diagnostic);
+        }
+    }
+    return OperationResult::success();
+}
+
+OperationResult Project::renameUnit(PProjectUnit &unit, const QString &newFileName)
+{
+    // Adapter for QFileSystemModel notifications: the filesystem rename has
+    // already happened. Never copy/delete the old path here.
+    const auto result = reconcileUnitRename(unit, newFileName);
+    return result.committed() ? result
+        : OperationResult{OperationStatus::CommittedWithFollowUpPending, result.error};
+}
+
+OperationResult Project::renameUnitFile(PProjectUnit &unit, const QString &newFileName, bool replaceExisting)
+{
+    if (!unit || mUnits.value(unit->fileName()) != unit)
+        return OperationResult::conflict(tr("The project unit changed before the rename could be applied."));
+    const QString oldFileName = unit->fileName();
+    if (oldFileName == newFileName)
+        return OperationResult::success();
+    const PProjectUnit replacedUnit = findUnit(newFileName);
+    if (replacedUnit && replacedUnit != unit && !replaceExisting)
+        return OperationResult::conflict(tr("File '%1' is already in the project.").arg(newFileName));
+    Editor *targetEditor = mEditorManager->getOpenedEditor(newFileName);
+    if (targetEditor && targetEditor != unitEditor(unit))
+        return OperationResult::conflict(tr("Close the destination editor before renaming the project file."));
+
+    const bool watchedOld = mFileSystemWatcher->files().contains(oldFileName);
+    const bool watchedTarget = mFileSystemWatcher->files().contains(newFileName);
+    mFileSystemWatcher->removePath(oldFileName);
+    mFileSystemWatcher->removePath(newFileName);
+    ProjectFileOperations::RenameTransaction transaction(oldFileName, newFileName, replaceExisting);
+    const auto diskResult = transaction.commit();
+    if (!diskResult.succeeded()) {
+        if (watchedOld) mFileSystemWatcher->addPath(oldFileName);
+        if (watchedTarget) mFileSystemWatcher->addPath(newFileName);
+        return diskResult;
+    }
+    // Nothing was removed from the model before the filesystem commit.
+    if (replacedUnit && replacedUnit != unit) {
+        mUnits.remove(replacedUnit->fileName());
+    }
+    const auto pendingResult = [&transaction](QString error) {
+        if (!transaction.retainedBackup().isEmpty())
+            error += QLatin1Char('\n') + tr("The previous destination is preserved at '%1'.").arg(transaction.retainedBackup());
+        return OperationResult{OperationStatus::CommittedWithFollowUpPending, std::move(error)};
+    };
+    OperationResult modelResult;
+    try {
+        modelResult = reconcileUnitRename(unit, newFileName);
+    } catch (const BaseError &error) {
+        setModified(true);
+        if (watchedOld || watchedTarget)
+            mFileSystemWatcher->addPath(newFileName);
+        return pendingResult(error.reason());
+    }
+    if (replacedUnit && replacedUnit != unit)
+        emit unitRemoved(replacedUnit->fileName());
+    if (watchedOld || watchedTarget || unitEditor(unit))
+        mFileSystemWatcher->addPath(newFileName);
+    if (!modelResult.succeeded()) {
+        setModified(true);
+        return pendingResult(modelResult.error);
+    }
+    return transaction.finish();
 }
 
 bool Project::saveUnits()
 {
-    if (!fileExists(directory()))
-        return false;
+    SimpleIni candidate;
+    auto result = ProjectFileOperations::loadIni(mFilename, candidate);
+    if (result.succeeded()) {
+        populateUnits(candidate);
+        result = ProjectFileOperations::saveIni(mFilename, candidate);
+    }
+    if (!result.succeeded()) {
+        setModified(true);
+        throw FileError(result.error);
+    }
+    return true;
+}
+
+void Project::populateUnits(SimpleIni &ini)
+{
     int count = 0;
-    SimpleIni ini;
-    SI_Error error = ini.LoadFile(mFilename.toLocal8Bit());
-    if (error != SI_Error::SI_OK)
-        return false;
     int i=0;
     foreach (const PProjectUnit& unit, mUnits) {
         i++;
@@ -774,7 +1014,6 @@ bool Project::saveUnits()
             ini.SetLongValue(groupName,"CompileCpp", unit->compileCpp());
             break;
         case FileType::WindowsResourceSource:
-            unit->setFolder("Resources");
         default:
             break;
         }
@@ -788,10 +1027,18 @@ bool Project::saveUnits()
         ini.Delete(groupName,"DetectEncoding");
         ini.SetValue(groupName,"FileEncoding", unit->encoding());
         ini.SetValue(groupName,"RealEncoding",unit->realEncoding());
+        if (unit->relocation().state == ProjectUnit::RelocationState::Conflict) {
+            ini.SetValue(groupName, "RmeleRelocationState", "conflict");
+            ini.SetValue(groupName, "RmeleRelocationTarget",
+                         toByteArray(extractRelativePath(directory(), unit->relocation().expectedFileName)));
+            ini.SetValue(groupName, "RmeleRelocationDiagnostic", toByteArray(unit->relocation().diagnostic));
+        } else {
+            ini.Delete(groupName, "RmeleRelocationState");
+            ini.Delete(groupName, "RmeleRelocationTarget");
+            ini.Delete(groupName, "RmeleRelocationDiagnostic");
+        }
     }
     ini.SetLongValue("Project","UnitCount",count);
-    ini.SaveFile(mFilename.toLocal8Bit());
-    return true;
 }
 
 PProjectUnit Project::findUnit(const QString &filename) const
@@ -803,7 +1050,8 @@ PProjectUnit Project::findUnit(const Editor *editor) const
 {
     if (!editor)
         return PProjectUnit();
-    return findUnit(editor->filename());
+    const auto unit = findUnit(editor->filename());
+    return unit && unitEditor(unit) == editor ? unit : PProjectUnit{};
 }
 
 bool Project::inProject(const QString &filename) const
@@ -826,6 +1074,8 @@ void Project::associateEditor(Editor *editor)
 
 void Project::associateEditorToUnit(Editor *editor, PProjectUnit unit)
 {
+    if (unit && unit->relocation().state != ProjectUnit::RelocationState::Resolved)
+        return; // Recovery requires an explicit controller choice, not path lookup.
     if (!unit) {
         if (editor)
             editor->setInProject(false);
@@ -1058,7 +1308,11 @@ bool Project::saveAsTemplate(const QString &templateFolder,
     ini->SetValue("Template", "Description", description.toUtf8());
     if (fileExists(mOptions.icon)) {
         QString iconName = extractFileName(mOptions.icon);
-        copyFile(mOptions.icon, cleanPath(dir.absoluteFilePath(iconName)),true);
+        const auto iconResult = ProjectFileOperations::copyFile(mOptions.icon, cleanPath(dir.absoluteFilePath(iconName)));
+        if (!iconResult.succeeded()) {
+            QMessageBox::warning(nullptr, tr("Warning"), iconResult.error);
+            return false;
+        }
         if (dir.exists(iconName))
             ini->SetValue("Template", "Icon", iconName.toUtf8());
     }
@@ -1110,11 +1364,13 @@ bool Project::saveAsTemplate(const QString &templateFolder,
     foreach (const PProjectUnit &unit, mUnits) {
         QString unitName = extractFileName(unit->fileName());
         QByteArray section = toByteArray(QString("Unit%1").arg(i));
-        if (!copyFile(unit->fileName(), cleanPath(dir.absoluteFilePath(unitName)),true)) {
+        const auto copyResult = ProjectFileOperations::copyFile(unit->fileName(), cleanPath(dir.absoluteFilePath(unitName)));
+        if (!copyResult.succeeded()) {
             QMessageBox::warning(nullptr,
                                   tr("Warning"),
                                   tr("Can't save file %1").arg(cleanPath(dir.absoluteFilePath(unitName))),
                                   QMessageBox::Ok);
+            return false;
         }
         switch(getFileType(unit->fileName())) {
         case FileType::CSource:
@@ -1138,7 +1394,8 @@ bool Project::saveAsTemplate(const QString &templateFolder,
         i++;
     }
     ini->SetLongValue("Project","UnitCount",mUnits.count());
-    if (ini->SaveFile(fileName.toLocal8Bit())!=SI_OK) {
+    const auto templateResult = ProjectFileOperations::saveIni(fileName, *ini);
+    if (!templateResult.succeeded()) {
         QMessageBox::critical(nullptr,
                               tr("Error"),
                               tr("Can't save file %1").arg(fileName),
@@ -1166,10 +1423,20 @@ void Project::setEncoding(const QByteArray &encoding)
 
 void Project::saveOptions()
 {
-    if (!fileExists(directory()))
-        return;
-    SimpleIni ini;
-    ini.LoadFile(mFilename.toLocal8Bit());
+    SimpleIni candidate;
+    auto result = ProjectFileOperations::loadIni(mFilename, candidate);
+    if (result.succeeded()) {
+        populateOptions(candidate);
+        result = ProjectFileOperations::saveIni(mFilename, candidate);
+    }
+    if (!result.succeeded()) {
+        setModified(true);
+        throw FileError(result.error);
+    }
+}
+
+void Project::populateOptions(SimpleIni &ini)
+{
     ini.SetValue("Project","FileName", toByteArray(extractRelativePath(directory(), mFilename)));
     ini.SetValue("Project","Name", toByteArray(mName));
     ini.SetLongValue("Project","Type", static_cast<int>(mOptions.type));
@@ -1247,7 +1514,6 @@ void Project::saveOptions()
     ini.Delete("Project","CompilerOptions");
     ini.Delete("Project","Use_GPP");
 
-    ini.SaveFile(mFilename.toLocal8Bit());
 }
 
 PProjectModelNode Project::addFolder(PProjectModelNode parentFolder,const QString &s)
@@ -1658,7 +1924,9 @@ void Project::checkProjectFileForUpdate(SimpleIni &ini)
         ini.Delete("Project","Order");
         ini.Delete("Project","DebugInfo");
         ini.Delete("Project","ProfileInfo");
-        ini.SaveFile(mFilename.toLocal8Bit());
+        const auto conversionResult = ProjectFileOperations::saveIni(mFilename, ini);
+        if (!conversionResult.succeeded())
+            throw FileError(conversionResult.error);
     }
 
     if (cnvt)
@@ -2193,31 +2461,6 @@ PCppParser Project::cppParser()
     return mParser;
 }
 
-void Project::removeFolderRecurse(PProjectModelNode node)
-{
-    if (!node)
-        return ;
-    // Recursively remove folders
-    for (int i=node->children.count()-1;i>=0;i++) {
-        PProjectModelNode childNode = node->children[i];
-        // Remove folder inside folder
-        if (!childNode->isUnit && childNode->level>0) {
-            removeFolderRecurse(childNode);
-        // Or remove editors at this level
-        } else if (childNode->isUnit && childNode->level > 0) {
-            // Remove editor in folder from project
-            PProjectUnit unit = childNode->pUnit.lock();
-            if (!removeUnit(unit,true))
-                return;
-        }
-    }
-
-    PProjectModelNode parent = node->parent.lock();
-    if (parent) {
-        parent->children.removeAll(node);
-    }
-}
-
 void Project::updateFolderNode(PProjectModelNode node)
 {
     for (int i=0;i<node->children.count();i++){
@@ -2668,6 +2911,8 @@ Qt::ItemFlags ProjectModel::flags(const QModelIndex &index) const
 
 bool ProjectModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
+    QPointer<ProjectModel> modelLifetime(this);
+    QPointer<Project> projectLifetime(mProject);
     if (!index.isValid())
         return false;
     ProjectModelNode* p = static_cast<ProjectModelNode*>(index.internalPointer());
@@ -2695,59 +2940,57 @@ bool ProjectModel::setData(const QModelIndex &index, const QVariant &value, int 
             QString oldName = unit->fileName();
             QString curDir = extractFilePath(oldName);
             newName = generateAbsolutePath(curDir,newName);
-            // Only continue if the user says so...
-            if (fileExists(newName) && newName.compare(oldName, PATH_SENSITIVITY)!=0) {
-                // don't remove when changing case for example
-                if (QMessageBox::question(nullptr,
-                                          tr("File exists"),
-                                          tr("File '%1' already exists. Delete it now?")
-                                          .arg(newName),
-                                          QMessageBox::Yes | QMessageBox::No,
-                                          QMessageBox::No) == QMessageBox::Yes) {
-                    // Close the target file...
-                    Editor * e=mProject->editorList()->getOpenedEditor(newName);
-                    if (e)
-                        mProject->editorList()->closeEditor(e);
-
-                    // Remove it from the current project...
-                    PProjectUnit unit = mProject->findUnit(newName);
-                    if (unit) {
-                        mProject->removeUnit(unit,false);
-                    }
-
-                    // All references to the file are removed. Delete the file from disk
-                    if (!QFile::remove(newName)) {
-                        QMessageBox::critical(nullptr,
-                                              tr("Remove failed"),
-                                              tr("Failed to remove file '%1'")
-                                              .arg(newName),
-                                              QMessageBox::Ok);
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-            // Target filename does not exist anymore. Do a rename
-            // change name in project file first (no actual file renaming on disk)
-            //save old file, if it is opened;
-            // remove old file from monitor list
-            mProject->fileSystemWatcher()->removePath(oldName);
-
-            if (!QFile::rename(oldName,newName)) {
-                QMessageBox::critical(nullptr,
-                                      tr("Rename failed"),
-                                      tr("Failed to rename file '%1' to '%2'")
-                                      .arg(oldName,newName),
-                                      QMessageBox::Ok);
+            // The model is the legacy UI adapter: collect decisions before
+            // delegating disk/model commit to the project operation.
+            if (!QFileInfo(oldName).isFile()) {
+                QMessageBox::critical(nullptr, tr("Rename failed"),
+                                      tr("Cannot rename missing project file '%1'.").arg(oldName));
                 return false;
             }
-            mProject->renameUnit(unit,newName);
-
-            // Add new filename to file minitor
-            mProject->fileSystemWatcher()->addPath(newName);
-
-            mProject->saveAll();
+            bool replaceExisting = false;
+            if (QFileInfo::exists(newName) && newName.compare(oldName, PATH_SENSITIVITY) != 0) {
+                if (!QFileInfo(newName).isFile()) {
+                    QMessageBox::critical(nullptr, tr("Rename failed"),
+                                          tr("The rename destination is not a file: '%1'.").arg(newName));
+                    return false;
+                }
+                const auto replacementChoice = QMessageBox::question(nullptr, tr("File exists"),
+                        tr("File '%1' already exists. Replace it?").arg(newName),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (!modelLifetime || !projectLifetime)
+                    return false;
+                if (replacementChoice != QMessageBox::Yes)
+                    return false;
+                if (mProject->findUnit(oldName) != unit || unit->fileName() != oldName || !QFileInfo(oldName).isFile())
+                    return false;
+                QPointer<Editor> targetEditor = mProject->editorList()->getOpenedEditor(newName);
+                if (targetEditor && !mProject->editorList()->closeEditor(targetEditor))
+                    return false;
+                if (!modelLifetime || !projectLifetime)
+                    return false;
+                replaceExisting = true;
+            }
+            // A dialog can process other events. Validate the resource plan
+            // again before any watcher, file or model is changed.
+            if (mProject->findUnit(oldName) != unit || unit->fileName() != oldName)
+                return false;
+            const auto result = mProject->renameUnitFile(unit, newName, replaceExisting);
+            if (!result.committed()) {
+                QMessageBox::critical(nullptr, tr("Rename failed"), result.error);
+                return false;
+            }
+            if (!result.succeeded()) {
+                QMessageBox::warning(nullptr, tr("Rename completed with pending updates"), result.error);
+                if (!modelLifetime || !projectLifetime)
+                    return true; // the rename already committed
+            }
+            try {
+                mProject->saveAll();
+            } catch (const FileError &error) {
+                // The rename is committed; keep the dirty project and state
+                // which metadata still needs a retry instead of undoing UI.
+                QMessageBox::warning(nullptr, tr("Save Error"), error.reason());
+            }
 
             return true;
         } else {

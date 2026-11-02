@@ -808,6 +808,11 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Memory</source>
             <translation>Memoria</translation>
         </message>
+        <message>
+            <source>Project input conflict</source>
+            <translation>Conflitto nei file del progetto</translation>
+        </message>
+
     </context>
     <context>
         <name>CompilerNASMWidget</name>
@@ -1933,6 +1938,11 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Scheme '%1' will be deleted!&lt;br /&gt;Do you really want to continue?</source>
             <translation>Lo schema '%1' verrà cancellato!&lt;br /&gt;Vuoi davvero continuare?</translation>
         </message>
+        <message>
+            <source>Color scheme %1 is no longer available.</source>
+            <translation>Lo schema colori %1 non è più disponibile.</translation>
+        </message>
+
     </context>
     <context>
         <name>EditorFontDialog</name>
@@ -7234,6 +7244,38 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
         <source>Cannot copy the diagnostic to the clipboard. Please retry.</source>
         <translation>Impossibile copiare il messaggio diagnostico negli appunti. Riprova.</translation>
     </message>
+        <message>
+            <source>A document was closed while preparing to close.</source>
+            <translation>Un documento è stato chiuso durante la preparazione della chiusura.</translation>
+        </message>
+        <message>
+            <source>The project is already closing.</source>
+            <translation>La chiusura del progetto è già in corso.</translation>
+        </message>
+        <message>
+            <source>Close Error</source>
+            <translation>Errore di chiusura</translation>
+        </message>
+        <message>
+            <source>New documents were opened while closing. They remain open.</source>
+            <translation>Durante la chiusura sono stati aperti nuovi documenti, che sono rimasti aperti.</translation>
+        </message>
+        <message>
+            <source>Code analysis could not start: %1</source>
+            <translation>Impossibile avviare l’analisi del codice: %1</translation>
+        </message>
+        <message>
+            <source>Could not monitor the project folder: %1</source>
+            <translation>Impossibile monitorare la cartella del progetto: %1</translation>
+        </message>
+        <message>
+            <source>Project changes were applied, but the project file could not be saved:
+%1</source>
+            <translation>Le modifiche al progetto sono state applicate, ma non è stato possibile salvare il file del progetto:
+%1</translation>
+        </message>
+
+
 </context>
     <context>
         <name>MemoryModel</name>
@@ -7783,6 +7825,160 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
         <source>Cannot save '%1': %2</source>
         <translation>Impossibile salvare '%1': %2</translation>
     </message>
+        <message>
+            <source>Projects must be created on the editor's owner thread.</source>
+            <translation>I progetti devono essere creati nel thread dell'editor.</translation>
+        </message>
+        <message>
+            <source>Cannot load project metadata '%1': %2</source>
+            <translation>Impossibile leggere i dati del progetto '%1': %2</translation>
+        </message>
+        <message>
+            <source>Project metadata exceeds the size limit: '%1'.</source>
+            <translation>Il file di progetto supera il limite di dimensione: '%1'.</translation>
+        </message>
+        <message>
+            <source>Invalid project metadata: '%1'.</source>
+            <translation>Dati del progetto non validi: '%1'.</translation>
+        </message>
+        <message>
+            <source>Cannot save project metadata '%1': %2</source>
+            <translation>Impossibile salvare i dati del progetto '%1': %2</translation>
+        </message>
+        <message>
+            <source>Cannot serialize project metadata: '%1'.</source>
+            <translation>Impossibile preparare i dati del progetto per il salvataggio: '%1'.</translation>
+        </message>
+        <message>
+            <source>Cannot copy project file '%1': %2</source>
+            <translation>Impossibile copiare il file del progetto '%1': %2</translation>
+        </message>
+        <message>
+            <source>Cannot copy project file to '%1': %2</source>
+            <translation>Impossibile copiare il file del progetto in '%1': %2</translation>
+        </message>
+        <message>
+            <source>The project file rename was already committed.</source>
+            <translation>La rinomina del file del progetto è già stata completata.</translation>
+        </message>
+        <message>
+            <source>Cannot rename missing project file '%1'.</source>
+            <translation>Impossibile rinominare il file del progetto '%1': il file non esiste.</translation>
+        </message>
+        <message>
+            <source>The rename destination is not a file: '%1'.</source>
+            <translation>La destinazione della rinomina non è un file: '%1'.</translation>
+        </message>
+        <message>
+            <source>Cannot prepare project file rename to '%1'.</source>
+            <translation>Impossibile preparare la rinomina del file del progetto in '%1'.</translation>
+        </message>
+        <message>
+            <source>Project file rename failed. The original file is preserved at '%1'.</source>
+            <translation>Rinomina del file del progetto non riuscita. Il file originale è conservato in '%1'.</translation>
+        </message>
+        <message>
+            <source>The project file rename has not been committed.</source>
+            <translation>La rinomina del file del progetto non è stata completata.</translation>
+        </message>
+        <message>
+            <source>The file was renamed. The previous destination remains at '%1'.</source>
+            <translation>Il file è stato rinominato. La versione precedente della destinazione è conservata in '%1'.</translation>
+        </message>
+        <message>
+            <source>Project directory does not exist: '%1'.</source>
+            <translation>La cartella del progetto non esiste: '%1'.</translation>
+        </message>
+        <message>
+            <source>The project unit changed before the rename could be applied.</source>
+            <translation>Il progetto è cambiato durante la rinomina. Riprovare.</translation>
+        </message>
+        <message>
+            <source>The renamed project file does not exist: '%1'.</source>
+            <translation>Il file rinominato del progetto non esiste: '%1'.</translation>
+        </message>
+        <message>
+            <source>File '%1' is already in the project.</source>
+            <translation>Il file '%1' è già presente nel progetto.</translation>
+        </message>
+        <message>
+            <source>Close the destination editor before renaming the project file.</source>
+            <translation>Chiudere il file di destinazione nell'editor prima di rinominare il file del progetto.</translation>
+        </message>
+        <message>
+            <source>The previous destination is preserved at '%1'.</source>
+            <translation>La versione precedente del file di destinazione è conservata in '%1'.</translation>
+        </message>
+        <message>
+            <source>The project unit changed before removal could be applied.</source>
+            <translation>Il file del progetto è cambiato durante la rimozione. Riprovare.</translation>
+        </message>
+        <message>
+            <source>The project file cannot be moved to the Recycle Bin: '%1'.</source>
+            <translation>Il file del progetto non può essere spostato nel Cestino: '%1'.</translation>
+        </message>
+        <message>
+            <source>A document was closed while preparing removal.</source>
+            <translation>Un documento è stato chiuso durante la preparazione della rimozione.</translation>
+        </message>
+        <message>
+            <source>The document could not be saved. It was not removed from the project.</source>
+            <translation>Impossibile salvare il documento. Il file non è stato rimosso dal progetto.</translation>
+        </message>
+        <message>
+            <source>The project was closed while preparing removal.</source>
+            <translation>Il progetto è stato chiuso durante la preparazione della rimozione.</translation>
+        </message>
+        <message>
+            <source>The project file could not be moved to the Recycle Bin: '%1'.</source>
+            <translation>Impossibile spostare il file del progetto nel Cestino: '%1'.</translation>
+        </message>
+        <message>
+            <source>The project was closed after the file removal committed.</source>
+            <translation>Il progetto è stato chiuso dopo la rimozione del file.</translation>
+        </message>
+        <message>
+            <source>The project folder is no longer available.</source>
+            <translation>La cartella del progetto non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The project was closed during folder removal.</source>
+            <translation>Il progetto è stato chiuso durante la rimozione della cartella.</translation>
+        </message>
+        <message>
+            <source>Some project files were already removed. No further files were removed.</source>
+            <translation>Alcuni file erano già stati rimossi dal progetto. La rimozione dei file successivi è stata interrotta.</translation>
+        </message>
+        <message>
+            <source>The file was renamed on disk to '%1', but another project unit already owns that path. Both units and open buffers were preserved. Save detached buffers with Save As, then remove and re-add the unresolved unit.</source>
+            <translation>Il file è stato rinominato su disco in '%1', ma quel percorso appartiene già a un altro file del progetto. Entrambe le unità e i documenti aperti sono stati conservati. Salvare i documenti scollegati con Salva con nome, quindi rimuovere e aggiungere nuovamente l'unità in conflitto.</translation>
+        </message>
+        <message>
+            <source>The file was renamed on disk, but its destination is open in another editor. Both buffers were preserved. Save detached buffers with Save As, then resolve or remove and re-add the project unit.</source>
+            <translation>Il file è stato rinominato su disco, ma la destinazione è aperta in un altro editor. Entrambi i documenti sono stati conservati. Salvare i documenti scollegati con Salva con nome, quindi risolvere il conflitto oppure rimuovere e aggiungere nuovamente il file al progetto.</translation>
+        </message>
+        <message>
+            <source>The file and project were renamed, but the editor could not adopt the new path. Its contents were preserved. Save the detached buffer with Save As and resolve the project unit.</source>
+            <translation>Il file e il progetto sono stati rinominati, ma l'editor non ha potuto adottare il nuovo percorso. Il contenuto è stato conservato. Salvare il documento scollegato con Salva con nome e risolvere il conflitto nel progetto.</translation>
+        </message>
+        <message>
+            <source>The project unit or selected recovery file is no longer available.</source>
+            <translation>Il file del progetto o quello scelto per il ripristino non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>Choose explicitly which open buffer belongs to the recovered project unit.</source>
+            <translation>Selezionare esplicitamente il documento aperto da associare al file del progetto ripristinato.</translation>
+        </message>
+        <message>
+            <source>Invalid saved relocation state for project file '%1'.</source>
+            <translation>Stato di rinomina salvato non valido per il file del progetto '%1'.</translation>
+        </message>
+        <message>
+            <source>This project file has an unresolved rename conflict. Save detached buffers with Save As, then resolve or remove and re-add the unit.</source>
+            <translation>Questo file del progetto ha un conflitto di rinomina non risolto. Salvare i documenti scollegati con Salva con nome, quindi risolvere il conflitto oppure rimuovere e aggiungere nuovamente il file al progetto.</translation>
+        </message>
+
+
 </context>
     <context>
         <name>ProjectAlreadyOpenDialog</name>
@@ -8306,6 +8502,23 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>Failed to rename file '%1' to '%2'</source>
             <translation>Impossibile rinominare il file '%1' in '%2'</translation>
         </message>
+        <message>
+            <source>Cannot rename missing project file '%1'.</source>
+            <translation>Impossibile rinominare il file del progetto '%1': il file non esiste.</translation>
+        </message>
+        <message>
+            <source>The rename destination is not a file: '%1'.</source>
+            <translation>La destinazione della rinomina non è un file: '%1'.</translation>
+        </message>
+        <message>
+            <source>File '%1' already exists. Replace it?</source>
+            <translation>Il file '%1' esiste già. Sostituirlo?</translation>
+        </message>
+        <message>
+            <source>Rename completed with pending updates</source>
+            <translation>Rinomina completata con avvisi</translation>
+        </message>
+
     </context>
     <context>
         <name>ProjectOutputWidget</name>
@@ -10015,6 +10228,11 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>Window text</source>
             <translation>Testo della finestra</translation>
         </message>
+        <message>
+            <source>Can't save file '%1': %2</source>
+            <translation>Impossibile salvare il file '%1': %2</translation>
+        </message>
+
     </context>
     <context>
         <name>RegisterModel</name>
@@ -11841,6 +12059,15 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>Too many documents in recovery snapshot.</source>
             <translation>Troppi documenti nella copia di recupero.</translation>
         </message>
+        <message>
+            <source>Recovery snapshot exceeds the total text size limit (32 Mi characters).</source>
+            <translation>La copia di recupero supera il limite complessivo di testo (32 Mi caratteri).</translation>
+        </message>
+        <message>
+            <source>Invalid recovery snapshot budget state.</source>
+            <translation>Impossibile preparare la copia di recupero: stato dei limiti non valido.</translation>
+        </message>
+
     </context>
     <context>
         <name>Document</name>
@@ -11875,4 +12102,38 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
         <translation>Il file contiene dati Unicode non validi: %1</translation>
     </message>
 </context>
+    <context>
+        <name>EditorClosePlan</name>
+        <message>
+            <source>Open documents changed while preparing to close. No further documents were closed. Please try again.</source>
+            <translation>I documenti aperti sono cambiati durante la preparazione della chiusura. Gli altri documenti sono rimasti aperti. Riprovare.</translation>
+        </message>
+    </context>
+    <context>
+        <name>DocumentStore</name>
+        <message>
+            <source>Document input must be captured in its owning thread.</source>
+            <translation>Il contenuto del documento non è disponibile per questa operazione. Riprovare.</translation>
+        </message>
+        <message>
+            <source>An open document could not be captured: %1</source>
+            <translation>Impossibile acquisire il contenuto del documento aperto: %1</translation>
+        </message>
+        <message>
+            <source>Several open documents have the same path: %1</source>
+            <translation>Più documenti aperti hanno lo stesso percorso: %1</translation>
+        </message>
+        <message>
+            <source>An open document is being modified.</source>
+            <translation>Un documento aperto è in corso di modifica.</translation>
+        </message>
+
+    </context>
+    <context>
+        <name>CppParser</name>
+        <message>
+            <source>Document input must be captured in the parser's owning thread.</source>
+            <translation>Il contenuto dei documenti non è disponibile per avviare l’analisi. Riprovare.</translation>
+        </message>
+    </context>
 </TS>

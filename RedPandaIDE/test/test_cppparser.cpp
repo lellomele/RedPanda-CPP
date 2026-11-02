@@ -1305,3 +1305,230 @@ void TestCppParser::test_sync_reservation_hard_defines_serialize()
                               QString(), false, false, true));
     QVERIFY(parser->findStatement(QStringLiteral("after_reserved_define")));
 }
+
+void TestCppParser::test_document_store_lazy_immutable_revisions()
+{
+    DocumentStore store;
+    QStringList text{QStringLiteral("int first_revision;")};
+    std::atomic<int> reads{0};
+    const DocumentId id = store.add(QStringLiteral("open.cpp"), [&](QStringList &lines) {
+        ++reads;
+        lines = text;
+        return true;
+    });
+    QVERIFY(id != 0);
+    QCOMPARE(reads.load(), 0);
+    const auto first = store.capture();
+    QVERIFY(first.succeeded());
+    QCOMPARE(reads.load(), 1);
+    const auto firstDocument = first.snapshot->document(QStringLiteral("open.cpp"));
+    QVERIFY(firstDocument);
+    QCOMPARE(firstDocument->id, id);
+    QCOMPARE(firstDocument->revision, DocumentRevision(1));
+    QVERIFY(store.changed(id));
+    text = {QStringLiteral("int second_revision;")};
+    QCOMPARE(reads.load(), 1); // No full-buffer copy for dirty notification.
+    const auto second = store.capture();
+    QVERIFY(second.succeeded());
+    QCOMPARE(reads.load(), 2);
+    QCOMPARE(second.snapshot->document(QStringLiteral("open.cpp"))->revision, DocumentRevision(2));
+    QCOMPARE(firstDocument->lines.first(), QStringLiteral("int first_revision;"));
+    QCOMPARE(store.capture().snapshot, second.snapshot);
+    QCOMPARE(reads.load(), 2);
+    InputCaptureStatus offThread = InputCaptureStatus::Captured;
+    std::thread wrongOwner([&] { offThread = store.capture().status; });
+    wrongOwner.join();
+    QVERIFY(offThread == InputCaptureStatus::WrongThread);
+    QCOMPARE(reads.load(), 2);
+    QVERIFY(store.renamed(id, QStringLiteral("renamed.cpp")));
+    const auto renamed = store.capture();
+    QVERIFY(renamed.succeeded());
+    QVERIFY(!renamed.snapshot->document(QStringLiteral("open.cpp")));
+    QCOMPARE(renamed.snapshot->document(QStringLiteral("renamed.cpp"))->id, id);
+    QVERIFY(store.remove(id));
+    QVERIFY(store.capture().snapshot->documents().isEmpty());
+    QVERIFY(first.snapshot->document(QStringLiteral("open.cpp")));
+}
+
+void TestCppParser::test_snapshot_input_failure_and_empty_buffer()
+{
+    init_parser();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString file = QDir::fromNativeSeparators(directory.filePath(QStringLiteral("open.cpp")));
+    QFile disk(file);
+    QVERIFY(disk.open(QIODevice::WriteOnly));
+    QVERIFY(disk.write("int must_not_come_from_disk;\n") > 0);
+    disk.close();
+    auto store = std::make_shared<DocumentStore>();
+    bool readable = false;
+    store->add(file, [&](QStringList &lines) { lines.clear(); return readable; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    std::atomic<int> legacyReads{0};
+    mParser->setOnGetFileStream([&](const QString &, QStringList &) { ++legacyReads; return false; });
+    QSignalSpy rejected(mParser.get(), &CppParser::inputSnapshotUnavailable);
+    QVERIFY(CppParser::parseFileBlocking(mParser, file, false, {}) == CppParser::ParseResult::InputUnavailable);
+    QVERIFY(CppParser::parseFileNonBlocking(mParser, file, false, {}) == CppParser::RequestResult::InputUnavailable);
+    QCOMPARE(rejected.count(), 2);
+    QVERIFY(!mParser->hasPendingWork());
+    QCOMPARE(legacyReads.load(), 0);
+    readable = true;
+    QVERIFY(CppParser::parseFileBlocking(mParser, file, false, {}) == CppParser::ParseResult::Parsed);
+    QVERIFY(!mParser->findStatement(QStringLiteral("must_not_come_from_disk")));
+    QCOMPARE(legacyReads.load(), 0); // Empty open buffer is not a disk fallback.
+}
+
+void TestCppParser::test_snapshot_source_includes_survive_provider_destruction()
+{
+    init_parser();
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString source = QDir::fromNativeSeparators(directory.filePath(QStringLiteral("source.cpp")));
+    const QString header = QDir::fromNativeSeparators(directory.filePath(QStringLiteral("open.h")));
+    QFile sourceDisk(source);
+    QVERIFY(sourceDisk.open(QIODevice::WriteOnly));
+    QVERIFY(sourceDisk.write("#include \"open.h\"\nint source_symbol;\n") > 0);
+    sourceDisk.close();
+    QFile headerDisk(header);
+    QVERIFY(headerDisk.open(QIODevice::WriteOnly));
+    QVERIFY(headerDisk.write("int stale_disk_header;\n") > 0);
+    headerDisk.close();
+    auto store = std::make_shared<DocumentStore>();
+    const auto textOwner = std::make_shared<QStringList>(QStringList{QStringLiteral("int unsaved_header;")});
+    const std::weak_ptr<QStringList> weakText = textOwner;
+    store->add(source, [](QStringList &lines) {
+        lines = {QStringLiteral("#include \"open.h\""), QStringLiteral("int source_symbol;")};
+        return true;
+    });
+    store->add(header, [weakText](QStringList &lines) {
+        const auto text = weakText.lock();
+        if (!text) return false;
+        lines = *text;
+        return true;
+    });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    const auto entered = std::make_shared<QSemaphore>();
+    const auto proceed = std::make_shared<QSemaphore>();
+    mParser->setSourceReadObserver([header, entered, proceed](const QString &path) {
+        if (AnalysisInputSnapshot::pathKey(path) == AnalysisInputSnapshot::pathKey(header)) {
+            entered->release();
+            proceed->tryAcquire(1, 10000);
+        }
+    });
+    QVERIFY(CppParser::parseFileNonBlocking(mParser, source, false, {}) == CppParser::RequestResult::Accepted);
+    QTRY_VERIFY_WITH_TIMEOUT(entered->available() > 0, 10000);
+    entered->acquire();
+    const std::weak_ptr<DocumentStore> weakStore = store;
+    mParser->setInputSnapshotProvider({});
+    store.reset();
+    QVERIFY(weakStore.expired());
+    *textOwner = {QStringLiteral("int changed_after_acceptance;")};
+    proceed->release();
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 10000);
+    ScopedParserFreeze snapshot(mParser);
+    QVERIFY(snapshot.acquire());
+    QVERIFY(mParser->findStatement(QStringLiteral("unsaved_header")));
+    QVERIFY(!mParser->findStatement(QStringLiteral("stale_disk_header")));
+    QVERIFY(!mParser->findStatement(QStringLiteral("changed_after_acceptance")));
+}
+
+void TestCppParser::test_snapshot_requests_coalesce_latest_revision()
+{
+    init_parser();
+    auto store = std::make_shared<DocumentStore>();
+    QStringList lines{QStringLiteral("int older_request;")};
+    const QString path = QStringLiteral("coalesced-snapshot.cpp");
+    const DocumentId id = store->add(path, [&](QStringList &out) { out = lines; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    ScopedParserFreeze frozen(mParser);
+    QVERIFY(frozen.acquire());
+    QVERIFY(CppParser::parseFileNonBlocking(mParser, path, false, {}) == CppParser::RequestResult::Accepted);
+    const auto older = mParser->mPendingParseFileCommands.first().inputs;
+    lines = {QStringLiteral("int latest_request;")};
+    QVERIFY(store->changed(id));
+    QVERIFY(CppParser::parseFileNonBlocking(mParser, path, false, {}) == CppParser::RequestResult::Accepted);
+    QCOMPARE(mParser->mPendingParseFileCommands.size(), 1);
+    QCOMPARE(mParser->mPendingParseFileCommands.first().inputs->document(path)->revision, DocumentRevision(2));
+    QCOMPARE(older->document(path)->lines.first(), QStringLiteral("int older_request;"));
+    frozen.releaseOne();
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 10000);
+    ScopedParserFreeze result(mParser);
+    QVERIFY(result.acquire());
+    QVERIFY(mParser->findStatement(QStringLiteral("latest_request")));
+    QVERIFY(!mParser->findStatement(QStringLiteral("older_request")));
+}
+
+void TestCppParser::test_snapshot_submission_owner_and_destroyed_parser()
+{
+    init_parser();
+    auto store = std::make_shared<DocumentStore>();
+    const QString path = QStringLiteral("owner-acceptance.cpp");
+    std::atomic<int> reads{0};
+    QThread *const owner = QThread::currentThread();
+    bool correctOwner = true;
+    QStringList text{QStringLiteral("int before_acceptance;")};
+    const DocumentId id = store->add(path, [&](QStringList &out) {
+        ++reads;
+        correctOwner &= QThread::currentThread() == owner;
+        out = text;
+        return true;
+    });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    CppParser::RequestResult request = CppParser::RequestResult::Disabled;
+    std::thread submit([&] { request = CppParser::parseFileNonBlocking(mParser, path, false, {}); });
+    submit.join();
+    QVERIFY(request == CppParser::RequestResult::QueuedForOwner);
+    QCOMPARE(reads.load(), 0);
+    text = {QStringLiteral("int captured_at_owner_acceptance;")};
+    QVERIFY(store->changed(id));
+    QTRY_VERIFY_WITH_TIMEOUT(mParser->fileScanned(path) && !mParser->hasPendingWork(), 10000);
+    QVERIFY(correctOwner);
+    QVERIFY(mParser->findStatement(QStringLiteral("captured_at_owner_acceptance")));
+    QCOMPARE(reads.load(), 1);
+    CppParser::ParseResult blocked = CppParser::ParseResult::Parsed;
+    std::thread wrongOwner([&] { blocked = CppParser::parseFileBlocking(mParser, path, false, {}); });
+    wrongOwner.join();
+    QVERIFY(blocked == CppParser::ParseResult::InputUnavailable);
+    QCOMPARE(reads.load(), 1);
+
+    auto shortLived = std::make_shared<CppParser>();
+    std::atomic<int> captures{0};
+    shortLived->setInputSnapshotProvider([&] { ++captures; return store->capture(); });
+    std::thread delayed([&] { CppParser::parseFileNonBlocking(shortLived, path, false, {}); });
+    delayed.join();
+    const std::weak_ptr<CppParser> weak = shortLived;
+    shortLived.reset();
+    QCoreApplication::processEvents();
+    QVERIFY(weak.expired());
+    QCOMPARE(captures.load(), 0);
+}
+
+void TestCppParser::test_snapshot_project_list_keeps_one_input_view()
+{
+    init_parser();
+    auto store = std::make_shared<DocumentStore>();
+    const QString first = QStringLiteral("snapshot-list-a.cpp");
+    const QString second = QStringLiteral("snapshot-list-b.cpp");
+    QStringList firstText{QStringLiteral("int accepted_first;")};
+    QStringList secondText{QStringLiteral("int accepted_second;")};
+    const DocumentId firstId = store->add(first, [&](QStringList &out) { out = firstText; return true; });
+    const DocumentId secondId = store->add(second, [&](QStringList &out) { out = secondText; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    mParser->addProjectFile(first, true);
+    mParser->addProjectFile(second, true);
+    ScopedParserFreeze frozen(mParser);
+    QVERIFY(frozen.acquire());
+    QVERIFY(CppParser::parseFileListNonBlocking(mParser) == CppParser::RequestResult::Accepted);
+    firstText = {QStringLiteral("int changed_first;")};
+    secondText = {QStringLiteral("int changed_second;")};
+    QVERIFY(store->changed(firstId));
+    QVERIFY(store->changed(secondId));
+    frozen.releaseOne();
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 10000);
+    ScopedParserFreeze result(mParser);
+    QVERIFY(result.acquire());
+    QVERIFY(mParser->findStatement(QStringLiteral("accepted_first")));
+    QVERIFY(mParser->findStatement(QStringLiteral("accepted_second")));
+    QVERIFY(!mParser->findStatement(QStringLiteral("changed_first")));
+    QVERIFY(!mParser->findStatement(QStringLiteral("changed_second")));
+}

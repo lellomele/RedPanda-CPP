@@ -99,15 +99,31 @@ string(JSON APP_VERSION_MINOR GET ${VERSION_JSON} minor)
 string(JSON APP_VERSION_PATCH GET ${VERSION_JSON} patch)
 string(JSON APP_VERSION_PRE_RELEASE GET ${VERSION_JSON} preRelease)
 
-# try git commit count for version sorting
-execute_process(
-    COMMAND git rev-list HEAD --count
-    OUTPUT_VARIABLE APP_VERSION_BUILD
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# A source archive has no .git; keep its release build number and avoid
+# accidentally using the commit count of an unrelated parent repository.
+string(JSON APP_VERSION_FALLBACK_BUILD ERROR_VARIABLE APP_VERSION_BUILD_ERROR
+    GET "${VERSION_JSON}" build)
+if(NOT APP_VERSION_BUILD_ERROR STREQUAL "NOTFOUND")
+    set(APP_VERSION_FALLBACK_BUILD "")
+endif()
+set(APP_VERSION_BUILD "")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND git rev-list HEAD --count
+        RESULT_VARIABLE APP_GIT_RESULT
+        OUTPUT_VARIABLE APP_VERSION_BUILD
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(NOT APP_GIT_RESULT STREQUAL "0" OR NOT APP_VERSION_BUILD MATCHES "^[0-9]+$")
+        set(APP_VERSION_BUILD "")
+    endif()
+endif()
+if(APP_VERSION_BUILD STREQUAL "" AND APP_VERSION_FALLBACK_BUILD MATCHES "^[0-9]+$")
+    set(APP_VERSION_BUILD "${APP_VERSION_FALLBACK_BUILD}")
+endif()
 
-if (APP_VERSION_BUILD)
+if (NOT APP_VERSION_BUILD STREQUAL "")
     set(REDPANDA_VERSION "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}.${APP_VERSION_PATCH}.${APP_VERSION_BUILD}")
 else()
     set(REDPANDA_VERSION "${APP_VERSION_MAJOR}.${APP_VERSION_MINOR}.${APP_VERSION_PATCH}")
@@ -416,5 +432,18 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stabilization_report.py)
         set_tests_properties(test-stabilization-report PROPERTIES
             TIMEOUT 15 LABELS "infrastructure")
+        add_test(NAME test-version-resolution
+            COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_version_resolution.py
+                --cmake ${CMAKE_COMMAND})
+        set_tests_properties(test-version-resolution PROPERTIES
+            TIMEOUT 90 LABELS "infrastructure")
+        if(WIN32 AND QT_VERSION_MAJOR GREATER_EQUAL 6)
+            add_test(NAME test-structure-session-restore
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_startup_structure_restore.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-structure-session-restore PROPERTIES
+                TIMEOUT 360 LABELS "ide;functional;parser" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_dependencies(all-test-targets RedPandaIDE)
+        endif()
     endif()
 endif()

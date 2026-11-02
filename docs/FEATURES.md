@@ -41,7 +41,7 @@ Press **Ctrl+F**, enter a page name or keyword, and select a matching page. Filt
 
 ## Structure, completion and debugging
 
-The **Structure** panel follows the active C/C++ file. While analysis is in progress, a flashing, translated message at the bottom of the panel indicates that the structure is being updated. If the parser is busy, the panel keeps the last valid same-file symbol tree and refreshes when analysis completes; the message then disappears. Pending analyses for different files are retained; repeated requests for one file are combined. Switching file clears symbols from the previous context. **Code > Reparse Code** requests an explicit fresh analysis when needed.
+The **Structure** panel follows the active C/C++ file. When a session is restored, the saved active tab is selected before the visible tabs are analysed as needed. While analysis is in progress, a flashing, translated message at the bottom of the panel indicates that the structure is being updated. If the parser is busy, the panel keeps the last valid same-file symbol tree and refreshes when analysis completes; the message then disappears. Pending analyses for different files are retained; repeated requests for one file are combined. Switching file clears symbols from the previous context. **Code > Reparse Code** requests an explicit fresh analysis when needed.
 
 Official 3.5 updates add reliable mouse selection and **Ctrl+A/C** in the read-only CPU disassembly view. Watch expressions containing spaces, quotes or backslashes are encoded correctly for GDB/MI. Compiler options distinguish GCC from Clang, and a hidden completion popup ignores pending keyboard input. These upstream updates are combined with the fork’s existing preferences, themes and document protections.
 

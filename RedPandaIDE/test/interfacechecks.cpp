@@ -104,6 +104,46 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
     QDir().mkpath(outputDirectory); QJsonArray checks; QJsonArray skipped; int failures = 0;
     auto check = [&](const QString &name, bool passed) { checks.append(QJsonObject{{"name", name}, {"passed", passed}}); if (!passed) ++failures; };
     auto skip = [&](const QString &name, const QString &reason) { skipped.append(QJsonObject{{"name", name}, {"reason", reason}}); };
+
+    // Runs before the normal GUI checks, with an isolated restored-session fixture.
+    // Unlike the ordinary UI suite, it leaves the restored editor unchanged.
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_RESTORED_FILE")) {
+        const QString expected = QDir::cleanPath(qEnvironmentVariable("REDPANDA_QA_RESTORED_FILE"));
+        auto *view = window.findChild<QTreeView *>("classBrowser");
+        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        auto *editor = window.editorManager()->getOpenedEditor(expected);
+        auto *editorPage = editor ? window.editorManager()->findPageControlForEditor(editor) : nullptr;
+        const auto containsConfig = [&] {
+            if (!model) return false;
+            for (int row=0; row<model->rowCount({}); ++row)
+                if (model->data(model->index(row, 0, {}), Qt::DisplayRole).toString().startsWith(QStringLiteral("Config")))
+                    return true;
+            return false;
+        };
+        for (int i=0; i<120; ++i) {
+            if (editor && editor->parser() && editor->parser()->fileScanned(expected) && containsConfig())
+                break;
+            waitForUi(100);
+        }
+        const bool selected = editor && editorPage && editorPage->currentWidget() == editor
+            && QDir::cleanPath(editor->filename()) == expected;
+        const bool modelAttached = selected && model && model->parser() == editor->parser()
+            && QDir::cleanPath(model->currentFile()) == expected;
+        const bool parsed = selected && editor->parser() && editor->parser()->fileScanned(expected);
+        const bool configVisible = containsConfig();
+        const QJsonObject report{
+            {"expectedFile", expected},
+            {"selectedFile", editor ? editor->filename() : QString()},
+            {"modelFile", model ? model->currentFile() : QString()},
+            {"selected", selected}, {"modelAttached", modelAttached}, {"parsed", parsed},
+            {"configVisible", configVisible}, {"rootRows", model ? model->rowCount({}) : -1},
+            {"parserBusy", editor && editor->parser() && editor->parser()->parsing()}
+        };
+        QFile output(QDir(outputDirectory).filePath("startup-restore-result.json"));
+        const QByteArray data = QJsonDocument(report).toJson();
+        if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()) return 2;
+        return selected && modelAttached && parsed && configVisible ? 0 : 1;
+    }
     const QString invalidTheme = QDir(outputDirectory).filePath("invalid-theme.json");
     for (const QByteArray &bytes : {QByteArray("[]"), QByteArray("{}"), QByteArray(R"({"palette":{"PaletteText":"bad color"}})")}) {
         QFile file(invalidTheme); if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) return 2; file.close(); bool rejected = false;
@@ -372,6 +412,59 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             model->setCurrentFile(originalFile);
             model->endUpdate();
         }
+    }
+    {
+        // Keep one parser busy on another file while asking a restored editor
+        // whether its already-scanned file needs a conservative reparse.
+        auto parser = std::make_shared<CppParser>();
+        parser->setEnabled(true);
+        auto entered = std::make_shared<QSemaphore>();
+        auto proceed = std::make_shared<QSemaphore>();
+        parser->setOnGetFileStream([entered, proceed](const QString &file, QStringList &lines) {
+            if (file.endsWith(QStringLiteral("readiness-target.cpp")))
+                lines = QStringList{QStringLiteral("int readiness_target = 1;")};
+            else if (file.endsWith(QStringLiteral("readiness-active.cpp"))) {
+                entered->release();
+                if (!proceed->tryAcquire(1, 10000)) return false;
+                lines = QStringList{QStringLiteral("int readiness_active = 2;")};
+            } else if (file.endsWith(QStringLiteral("readiness-pending.cpp")))
+                lines = QStringList{QStringLiteral("int readiness_pending = 3;")};
+            else return false;
+            return true;
+        });
+        const QString target = QStringLiteral("readiness-target.cpp");
+        CppParser::parseFileBlocking(parser, target, false, QString(), false, true);
+        Editor fixture(&window);
+        fixture.setFilename(target);
+        fixture.setCppParser(parser);
+        check("Editor knows an idle scanned file does not need reparse", !fixture.needReparse());
+        std::thread worker([parser] {
+            CppParser::parseFileBlocking(parser, QStringLiteral("readiness-active.cpp"), false, QString(), false, true);
+        });
+        const bool busy = entered->tryAcquire(1, 3000);
+        const bool conservative = busy && fixture.needReparse();
+        const bool hiddenWhileBusy = busy && !parser->fileScanned(target);
+        if (busy)
+            CppParser::parseFileNonBlocking(parser, QStringLiteral("readiness-pending.cpp"), false, QString());
+        // Always unblock and join before assertions or fixture teardown.
+        proceed->release();
+        worker.join();
+        check("Busy parser makes editor reparse check conservative", conservative);
+        check("Busy parser does not expose scanned-file state", hiddenWhileBusy);
+        QElapsedTimer deadline;
+        deadline.start();
+        while ((!parser->fileScanned(QStringLiteral("readiness-pending.cpp")) || parser->parsing())
+               && deadline.elapsed() < 5000)
+            waitForUi(20);
+        check("Overlapping request completes after conservative readiness check",
+              busy && parser->fileScanned(QStringLiteral("readiness-pending.cpp")));
+        check("Editor readiness returns to idle after analysis", !fixture.needReparse());
+    }
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_BUSY_ONLY")) {
+        QFile output(QDir(outputDirectory).filePath("parser-busy-result.json"));
+        const QByteArray data = QJsonDocument(QJsonObject{{"checks", checks}, {"failures", failures}}).toJson();
+        if (!output.open(QIODevice::WriteOnly) || output.write(data) != data.size()) return 2;
+        return failures == 0 ? 0 : 1;
     }
     const auto *aboutAction = window.findChild<QAction *>("actionAbout");
     check("About menu uses the current application artwork", aboutAction && aboutAction->icon().pixmap(32, 32).toImage() == QIcon(AppIdentity::iconResource()).pixmap(32, 32).toImage());

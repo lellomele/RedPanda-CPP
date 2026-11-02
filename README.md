@@ -12,15 +12,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-**[Stable release 3.5.3](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.3-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.3.3824](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.3.3824-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/RedPandaCPP-3.5.3-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 
@@ -56,7 +56,7 @@ Open a source or project, configure a compiler in **Tools > Options**, then comp
 - **Snippets:** manage and filter snippets, import/export collections and expand a prefix with **Ctrl+Alt+Space**. The shortcut is configurable; Tab moves between placeholders.
 - **GCC diagnostics:** with the Italian interface, the Issues panel and tooltips share the local translation while keeping the original message. Unrecognised messages remain unchanged.
 - **Clean Build Artifacts:** preview known outputs and select what to move to the Recycle Bin. Custom Makefiles have a separate `clean` command.
-- **Structure and debugging:** a flashing status message indicates when the symbol tree is being updated; the tree refreshes after queued analyses; CPU disassembly supports selection/copy, and watch expressions preserve quotes and backslashes.
+- **Structure and debugging:** the saved active tab is analysed when a session is restored; a flashing status message indicates when the symbol tree is being updated; the tree refreshes after queued analyses; CPU disassembly supports selection/copy, and watch expressions preserve quotes and backslashes.
 - **Recovery and resilience:** enable periodic recovery snapshots and open the recovery folder or diagnostic log.
 
 See [Features and workflows](docs/FEATURES.md) for theme names, snippet syntax, diagnostic coverage and cleanup behaviour.

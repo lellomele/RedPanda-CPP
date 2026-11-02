@@ -38,14 +38,29 @@ target("RedPandaIDE")
 
     on_load(function (target)
         import("core.base.json")
-        local version_json = io.readfile("version.json")
+        local version_json = io.readfile(path.join(os.projectdir(), "version.json"))
         local version = json.decode(version_json)
 
         local redpanda_version = format("%d.%d.%d", version.major, version.minor, version.patch)
-        try {function()
-            local outdata = os.iorunv("git", {"rev-list", "HEAD", "--count"})
-            redpanda_version = redpanda_version .. "." .. outdata:trim()
-        end}
+        local build_number
+        local git_metadata = path.join(os.projectdir(), ".git")
+        if os.isdir(git_metadata) or os.isfile(git_metadata) then
+            try {function()
+                local count = os.iorunv("git", {"-C", os.projectdir(), "rev-list", "HEAD", "--count"}):trim()
+                if count:match("^%d+$") then
+                    build_number = count
+                end
+            end}
+        end
+        if not build_number and type(version.build) == "number"
+                and version.build >= 0 and version.build == math.floor(version.build) then
+            build_number = string.format("%.0f", version.build)
+        elseif not build_number and type(version.build) == "string" and version.build:match("^%d+$") then
+            build_number = version.build
+        end
+        if build_number then
+            redpanda_version = redpanda_version .. "." .. build_number
+        end
 
         if version.preRelease ~= "" then
             redpanda_version = redpanda_version .. "-" .. version.preRelease

@@ -3685,21 +3685,26 @@ void MainWindow::loadLastOpens()
         mEditorManager->updateEditorBookmarks();
         mEditorManager->updateEditorBreakpoints();
     }
+    // Select the saved tab before choosing the visible editors to parse.
+    // Show events during session restore deliberately suppress reparsing.
+    if (!focusedEditor)
+        focusedEditor = mEditorManager->getEditor();
+    if (focusedEditor) {
+        mEditorManager->activeEditor(focusedEditor, true);
+        // The splash or another window may delay delivery of focusIn.
+        updateClassBrowserForEditor(focusedEditor);
+    }
     Editor *e = mEditorManager->getEditor(-1, mEditorManager->leftPageWidget());
     if (e)
         e->reparseIfNeeded();
     e = mEditorManager->getEditor(-1, mEditorManager->rightPageWidget());
     if (e)
         e->reparseIfNeeded();
-    if (!focusedEditor) {
-        focusedEditor = mEditorManager->getEditor();
-    }
     if (focusedEditor) {
-        updateEditorActions();
-        updateForEncodingInfo(mEditorManager->getEditor());
+        updateEditorActions(focusedEditor);
+        updateForEncodingInfo(focusedEditor);
         focusedEditor->checkSyntaxInBack();
         focusedEditor->reparseTodo();
-        mEditorManager->activeEditor(focusedEditor,true);
     }
 }
 

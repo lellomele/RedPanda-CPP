@@ -20,6 +20,8 @@ Original copyrights, attribution and GPL licensing are retained. The fork attrib
 
 A localized flashing message at the bottom of the Structure panel indicates that analysis is in progress. The message disappears when the activity ends.
 
+When restoring a session, the saved active tab is selected before requesting any needed analysis of the visible tabs in both editor panes. The Structure model is explicitly connected to the restored tab even when focus arrives late. The check for already-scanned files uses a synchronized, conservative lookup while the parser is busy.
+
 Pending analyses are retained when another analysis or a symbol reader occupies the parser. Requests for different files are preserved; repeated requests for the same file are combined without suppressing an explicit reparse. Project scans are also deferred until the parser becomes available. Dispatch uses one asynchronous worker per parser, with weak ownership for queued callbacks. Committed application shutdown cancels pending work; cancelling the close keeps the remaining parsers usable. Analysis completion during a save prompt cannot accept a nested close or hide the window before the user chooses what to do.
 
 The Structure panel keeps a detached snapshot of the last valid symbols for the same file while parsing is busy, then refreshes automatically. Changing file or parser clears obsolete symbols, and notifications from a previous parser are ignored. A coalesced, bounded retry also covers temporary parser maintenance. Snapshots keep display/navigation data independent of statements modified by the background parser.

@@ -4455,8 +4455,8 @@ bool Editor::needReparse() const
 {
     return mParser && ((isC_CPPHeaderFile(mFileType)
                         && !mContextFile.isEmpty()
-                        && !mParser->isFileParsed(mContextFile))
-                       || (!mParser->isFileParsed(mFilename)));
+                        && !mParser->fileScanned(mContextFile))
+                       || (!mParser->fileScanned(mFilename)));
 }
 
 PStatement Editor::constructorToClass(PStatement statement, const CharPos& p)

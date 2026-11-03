@@ -5589,7 +5589,7 @@ OperationResult MainWindow::prepareEditorClosePlan(EditorClosePlan &plan, bool p
         if (editor && (!projectOnly || editor->inProject()))
             editors.append(editor);
     }
-    const auto outcome = plan.prepare(editors, [this](Editor *editor, bool &discard) {
+    const auto outcome = plan.prepare(*mEditorManager, editors, [this](Editor *editor, bool &discard) {
         const QPointer<Editor> live(editor);
         const auto answer = mSystemTurnedOff ? QMessageBox::Yes : QMessageBox::question(
             editor, QObject::tr("Save"),
@@ -5667,7 +5667,7 @@ OperationResult MainWindow::closeProject(bool refreshEditor, const EditorClosePl
             for (const auto &editor : acceptedPlan->editors()) {
                 if (!editor || !editor->inProject())
                     continue;
-                const auto unchanged = acceptedPlan->validateEditor(editor.data());
+                const auto unchanged = acceptedPlan->validateEditor(*mEditorManager, editor.data());
                 if (!unchanged.succeeded())
                     return unchanged;
                 editor->setInProject(false, false);
@@ -6207,7 +6207,7 @@ OperationResult MainWindow::commitApplicationClose()
     const auto finishClosing = finally([this] { mClosingAll = false; });
     for (const auto &editor : mApplicationClosePlan->editors()) {
         if (!editor) continue;
-        const auto unchanged = mApplicationClosePlan->validateEditor(editor.data());
+        const auto unchanged = mApplicationClosePlan->validateEditor(*mEditorManager, editor.data());
         if (!unchanged.succeeded()) return unchanged;
         const auto decision = mApplicationClosePlan->discards(editor.data())
             ? EditorCloseDecision::DiscardConfirmed : EditorCloseDecision::Ask;
@@ -8818,21 +8818,18 @@ void MainWindow::on_actionAbout_triggered()
 
 void MainWindow::on_actionRename_Symbol_triggered()
 {
-    Editor * editor = mEditorManager->getEditor();
-    if (!editor)
-        return;
-    if (!editor->parser())
-        return;
-    editor->beginEditing();
-    QSynedit::CharPos oldCaret = editor->caretXY();
-    //    mClassBrowserModel->beginUpdate();
-    QCursor oldCursor = editor->cursor();
-    editor->setCursor(Qt::CursorShape::WaitCursor);
-    auto action = finally([oldCursor,editor]{
-        editor->endEditing();
-//        mClassBrowserModel->EndTreeUpdate;
-        editor->setCursor(oldCursor);
-    });
+    const QPointer<Editor> editor = mEditorManager->getEditor();
+    if (!editor || !editor->parser()) return;
+    const auto parser = editor->parser();
+    const auto project = mProject;
+    const DocumentId document = mEditorManager->documentId(editor);
+    const DocumentRevision revision = mEditorManager->documentRevision(editor);
+    const auto originalFile = editor->filename();
+    const auto oldCaret = editor->caretXY();
+    const auto unchanged = [&] {
+        return editor && mProject == project && editor->parser() == parser && editor->filename() == originalFile &&
+            mEditorManager->documentId(editor) == document && mEditorManager->documentRevision(editor) == revision;
+    };
 
     QStringList expression = editor->getExpressionAtPosition(oldCaret);
     if (expression.isEmpty() && oldCaret.ch>=0) {
@@ -8842,29 +8839,34 @@ void MainWindow::on_actionRename_Symbol_triggered()
     }
 
     const auto showParserBusy = [this, editor] {
-        QMessageBox::information(editor, tr("Rename Error"),
+        QMessageBox::information(editor ? static_cast<QWidget *>(editor.data()) : this, tr("Rename Error"),
                                  tr("Code analysis is busy. Please try again when it finishes."));
     };
-    const auto parseModifiedProjectEditors = [this, &showParserBusy]() {
-        for (int i = 0; i < mEditorManager->pageCount(); ++i) {
+    const auto parseModifiedProjectEditors = [this, &showParserBusy, &unchanged, project]() {
+        for (int i = 0; i < mEditorManager->pageCount() && unchanged(); ++i) {
             Editor *e = (*mEditorManager)[i];
-            if (e && e->modified() && e->inProject() && e->parser() == mProject->cppParser()) {
-                if (CppParser::parseFileBlocking(mProject->cppParser(), e->filename(), true,
+            if (e && e->modified() && e->inProject() && e->parser() == project->cppParser()) {
+                if (CppParser::parseFileBlocking(project->cppParser(), e->filename(), true,
                                                  e->contextFile(), false, false) != CppParser::ParseResult::Parsed) {
                     showParserBusy();
                     return false;
                 }
             }
         }
-        return true;
+        return unchanged();
     };
     bool snapshotReady = false;
-    const auto findStableStatement = [&]() -> PStatement {
-        snapshotReady = editor->parser()->freezeStable();
-        if (!snapshotReady)
-            return {};
-        auto release = finally([&] { editor->parser()->unFreeze(); });
-        return editor->parser()->findStatementOf(editor->filename(), expression, oldCaret.line);
+    struct RenameTarget {
+        QString command, fullName, fileName, definitionFileName;
+        int line;
+    };
+    const auto findStableStatement = [&]() -> std::optional<RenameTarget> {
+        snapshotReady = unchanged() && parser->freezeStable();
+        if (!snapshotReady) return {};
+        const auto release = finally([parser] { parser->unFreeze(); });
+        const auto target = parser->findStatementOf(originalFile, expression, oldCaret.line);
+        if (!target) return {};
+        return RenameTarget{target->command, target->fullName, target->fileName, target->definitionFileName, target->line};
     };
 
     if (editor->inProject() && mProject) {
@@ -8872,7 +8874,7 @@ void MainWindow::on_actionRename_Symbol_triggered()
             return;
 
         // Find it's definition
-        PStatement oldStatement = findStableStatement();
+        const auto oldStatement = findStableStatement();
         if (!snapshotReady) {
             showParserBusy();
             return;
@@ -8899,7 +8901,7 @@ void MainWindow::on_actionRename_Symbol_triggered()
     }
     QString word;
     //not in project
-    PStatement oldStatement = findStableStatement();
+    const auto oldStatement = findStableStatement();
     if (!snapshotReady) {
         showParserBusy();
         return;
@@ -8924,8 +8926,12 @@ void MainWindow::on_actionRename_Symbol_triggered()
                                             tr("Rename Symbol"),
                                             tr("New Name"),
                                             QLineEdit::Normal,word, &ok);
-    if (!ok)
+    if (!ok) return;
+    if (!unchanged()) {
+        QMessageBox::information(this, tr("Rename Error"),
+                                 tr("The symbol changed during code analysis. Please try again."));
         return;
+    }
 
     if (word == newWord)
         return;
@@ -8942,20 +8948,20 @@ void MainWindow::on_actionRename_Symbol_triggered()
     }
     CppRefacter refactor(this);
 
-    if (!editor->parser()->freezeStable()) {
+    if (!unchanged() || !parser->freezeStable()) {
         showParserBusy();
         return;
     }
     bool symbolChanged = false;
     {
-        auto release = finally([&] { editor->parser()->unFreeze(); });
+        const auto release = finally([parser] { parser->unFreeze(); });
         QStringList currentExpression = editor->getExpressionAtPosition(oldCaret);
         if (currentExpression.isEmpty() && oldCaret.ch >= 0) {
             QSynedit::CharPos coord = oldCaret;
             --coord.ch;
             currentExpression = editor->getExpressionAtPosition(coord);
         }
-        const PStatement currentStatement = editor->parser()->findStatementOf(
+        const PStatement currentStatement = parser->findStatementOf(
             editor->filename(), currentExpression, oldCaret.line);
         const bool sameSymbol = currentExpression == expression &&
             ((!oldStatement && !currentStatement) ||
@@ -8973,13 +8979,15 @@ void MainWindow::on_actionRename_Symbol_triggered()
         }
     }
     if (symbolChanged) {
-        QMessageBox::information(editor, tr("Rename Error"),
+        QMessageBox::information(editor ? static_cast<QWidget *>(editor.data()) : this, tr("Rename Error"),
                                  tr("The symbol changed during code analysis. Please try again."));
         return;
     }
-    editor->reparse();
-    editor->checkSyntaxInBack();
-    editor->reparseTodo();
+    if (editor) {
+        editor->reparse();
+        editor->checkSyntaxInBack();
+        editor->reparseTodo();
+    }
 }
 
 

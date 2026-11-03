@@ -221,6 +221,7 @@ public:
 
     QPixmap getPixmapForStatement(PStatement statement);
     QPixmap getPixmapForOutline(const Analysis::OutlineIconDescriptor &icon);
+    QPixmap getPixmapForOutline(const Analysis::OutlineIconDescriptor &icon, int size);
     QPixmap getPixmapForStatement(PStatement statement, int size);
 
     const QString iconSetsFolder() const;

@@ -20,6 +20,9 @@
 #include <QProgressDialog>
 #include <qsynedit/document.h>
 #include "cpprefacter.h"
+#include <QPointer>
+#include <QTimer>
+#include <QElapsedTimer>
 #include "mainwindow.h"
 #include "settings.h"
 #include "editor.h"
@@ -36,13 +39,9 @@ CppRefacter::CppRefacter(MainWindow * pMain, QObject *parent) : QObject(parent)
 
 bool CppRefacter::findOccurence(Editor *editor, const CharPos &pos)
 {
-    if (!editor->parser())
-        return false;
-    if (!editor->parser()->freeze())
-        return false;
-    auto action = finally([&editor]{
-        editor->parser()->unFreeze();
-    });
+    const auto parser = editor ? editor->parser() : PCppParser{};
+    if (!parser || !parser->freeze()) return false;
+    const auto action = finally([parser] { parser->unFreeze(); });
     // get full phrase (such as s.name instead of name)
     QStringList expression = editor->getExpressionAtPosition(pos);
     // Find it's definition
@@ -69,13 +68,9 @@ bool CppRefacter::findOccurence(Editor *editor, const CharPos &pos)
 
 bool CppRefacter::findOccurence(Editor * editor, const QString &keyword, const QString& scopeFullName, SearchFileScope scope)
 {
-    if (!editor->parser())
-        return false;
-    if (!editor->parser()->freeze())
-        return false;
-    auto action = finally([&editor]{
-        editor->parser()->unFreeze();
-    });
+    const auto parser = editor ? editor->parser() : PCppParser{};
+    if (!parser || !parser->freeze()) return false;
+    const auto action = finally([parser] { parser->unFreeze(); });
     PStatement statement;
     if (!scopeFullName.isEmpty()) {
         PStatement scopeStatement = editor->parser()->findStatement(scopeFullName);
@@ -110,13 +105,9 @@ static QString fullParentName(PStatement statement) {
 }
 void CppRefacter::renameSymbol(Editor *editor, const CharPos &pos, const QString &newWord)
 {
-    if (!editor || !editor->parser())
-        return;
-    if (!editor->parser()->freeze())
-        return;
-    auto action = finally([&editor]{
-        editor->parser()->unFreeze();
-    });
+    const auto parser = editor ? editor->parser() : PCppParser{};
+    if (!parser || !parser->freeze()) return;
+    const auto action = finally([parser] { parser->unFreeze(); });
     // get full phrase (such as s.name instead of name)
     QStringList expression;
     QChar s=editor->charAt(pos);
@@ -160,13 +151,9 @@ void CppRefacter::renameSymbol(Editor *editor, const CharPos &pos, const QString
 
 void CppRefacter::renameUndefinedLocalVariable(Editor *editor, const CharPos &pos, const QString &newWord)
 {
-    if (!editor || !editor->parser())
-        return;
-    if (!editor->parser()->freeze())
-        return;
-    auto action = finally([&editor]{
-        editor->parser()->unFreeze();
-    });
+    const auto parser = editor ? editor->parser() : PCppParser{};
+    if (!parser || !parser->freeze()) return;
+    const auto action = finally([parser] { parser->unFreeze(); });
     PStatement scope = editor->parser()->findScopeStatement(editor->filename(), pos.line);
     if (!scope)
         return;
@@ -204,9 +191,12 @@ void CppRefacter::renameUndefinedLocalVariable(Editor *editor, const CharPos &po
                 newExpression,
                 pos.line);
     QSynedit::PSyntaxer syntaxer = SyntaxerManager::getSyntaxer(QSynedit::ProgrammingLanguage::CPP);
+    if (newStatement) {
+        QMessageBox::critical(editor, tr("Rename Symbol Error"), tr("New symbol already exists!"));
+        return;
+    }
     int posY = scope->definitionLine;
-    editor->clearSelection();
-    editor->beginEditing();
+    QList<std::pair<int, QString>> replacements;
     while (posY < editor->lineCount()) {
         //check if still in the scope
         bool inScope = false;
@@ -245,12 +235,21 @@ void CppRefacter::renameUndefinedLocalVariable(Editor *editor, const CharPos &po
             newLine += token;
             syntaxer->next();
         }
-        if (newLine!=line)
-            editor->replaceLine(posY,newLine);
+        if (newLine != line)
+            replacements.append({posY, std::move(newLine)});
         posY++;
     }
-    editor->setCaretXY(editor->ensureCharPosValid(editor->caretXY()));
-    editor->endEditing();
+    if (replacements.isEmpty()) return;
+    const QPointer<Editor> live(editor);
+    editor->clearSelection();
+    if (!live) return;
+    editor->beginEditing();
+    const auto finish = finally([live] { if (live) live->endEditing(); });
+    for (const auto &[line, text] : std::as_const(replacements)) {
+        if (!live) return;
+        live->replaceLine(line, text);
+    }
+    if (live) live->setCaretXY(live->ensureCharPosValid(live->caretXY()));
 }
 void CppRefacter::doFindOccurenceInEditor(const PStatement &statement , Editor *editor, const PCppParser &parser){
     PStatement parentScope  = statement->parentScope.lock();
@@ -260,11 +259,11 @@ void CppRefacter::doFindOccurenceInEditor(const PStatement &statement , Editor *
                 scopeFullName,
                 SearchFileScope::currentFile
                 );
-    PSearchResultTreeItem item = findOccurenceInFile(
-                editor->filename(),
-                editor->editorEncoding(),
-                statement,
-                parser);
+    const auto captured = mMainWindow->editorManager()->inputSnapshotProvider()();
+    if (!captured.succeeded()) return;
+    const ReferenceTarget target{statement->command, statement->fileName, statement->line};
+    PSearchResultTreeItem item = findOccurenceInFile(editor->filename(), editor->editorEncoding(),
+        target, parser, captured.snapshot);
     if (item && !(item->results.isEmpty())) {
         mMainWindow->searchResultModel()->addResultToSearchResults(results,item);
     }
@@ -272,62 +271,106 @@ void CppRefacter::doFindOccurenceInEditor(const PStatement &statement , Editor *
 
 void CppRefacter::doFindOccurenceInProject(const PStatement &statement, std::shared_ptr<Project> project, const PCppParser &parser)
 {
-    PStatement parentScope  = statement->parentScope.lock();
-    QString scopeFullName = parentScope?parentScope->fullName:"";
-    PSearchResults results = mMainWindow->searchResultModel()->addSearchResults(
-                statement->command,
-                scopeFullName,
-                SearchFileScope::wholeProject
-                );
-    QProgressDialog progressDlg(
-                tr("Searching..."),
-                tr("Abort"),
-                0,
-                mMainWindow->project()->unitList().count(),
-                mMainWindow);
-    progressDlg.setWindowModality(Qt::WindowModal);
-    progressDlg.setMinimumDuration(500);
-    progressDlg.show();
-    int i=0;
-    foreach (const PProjectUnit& unit, project->unitList()) {
-        i++;
-        if (isCFile(unit->fileName()) || isHFile(unit->fileName())) {
-            progressDlg.setValue(i);
-            progressDlg.setLabelText(tr("Searching...")+"<br/>"+unit->fileName());
-            QCoreApplication::processEvents();
-            if (progressDlg.wasCanceled())
-                break;
-            PSearchResultTreeItem item = findOccurenceInFile(
-                        unit->fileName(),
-                        unit->encoding()==ENCODING_PROJECT?project->options().encoding:unit->encoding(),
-                        statement,
-                        parser);
-            if (item && !(item->results.isEmpty())) {
-                mMainWindow->searchResultModel()->addResultToSearchResults(results,item);
-            }
-        }
+    const auto captured = mMainWindow->editorManager()->inputSnapshotProvider()();
+    if (!captured.succeeded()) return;
+    const auto parent = statement->parentScope.lock();
+    const QString scopeName = parent ? parent->fullName : QString{};
+    const ReferenceTarget target{statement->command, statement->fileName, statement->line};
+    const auto serial = parser->serialId();
+    const auto ticket = parser->appliedConfigurationTicket();
+    QList<std::pair<QString, QByteArray>> units;
+    for (const auto &unit : project->unitList()) {
+        if (isCFile(unit->fileName()) || isHFile(unit->fileName()))
+            units.append({unit->fileName(), unit->encoding() == ENCODING_PROJECT ? project->options().encoding : unit->encoding()});
     }
+
+    const auto name = QStringLiteral("projectReferenceSearch");
+    if (auto *previous = mMainWindow->findChild<QProgressDialog *>(name, Qt::FindDirectChildrenOnly)) {
+        previous->cancel();
+        previous->deleteLater();
+    }
+    auto *progress = new QProgressDialog(tr("Searching..."), tr("Abort"), 0, int(units.size()), mMainWindow);
+    progress->setObjectName(name);
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(500);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    auto *timer = new QTimer(progress);
+    timer->setInterval(0);
+    QObject::connect(progress, &QProgressDialog::canceled, progress, [progress, timer] {
+        timer->stop();
+        progress->deleteLater();
+    });
+
+    const QPointer<MainWindow> window = mMainWindow;
+    const std::weak_ptr<Project> workspace = project;
+    const auto inputs = captured.snapshot;
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QObject::connect(timer, &QTimer::timeout, progress,
+        [window, workspace, parser, serial, ticket, target, scopeName, inputs, units = std::move(units),
+         results = QList<PSearchResultTreeItem>{}, elapsed, progress, timer, next = qsizetype(0)]() mutable {
+        const auto finish = [progress, timer] {
+            timer->stop();
+            progress->hide();
+            progress->deleteLater();
+        };
+        if (progress->wasCanceled() || !window || window->isQuitting()) {
+            finish();
+            return;
+        }
+        if (window->project() != workspace.lock() ||
+                window->editorManager()->documentInputGeneration() != inputs->generation() ||
+                parser->serialId() != serial || parser->appliedConfigurationTicket() != ticket) {
+            window->updateStatusbarMessage(tr("Reference search cancelled because the source changed."));
+            finish();
+            return;
+        }
+        if (elapsed.elapsed() > 60000) {
+            window->updateStatusbarMessage(tr("Reference search timed out."));
+            finish();
+            return;
+        }
+        if (next >= units.size()) {
+            window->searchResultModel()->addSearchResults(target.command, scopeName,
+                SearchFileScope::wholeProject, std::move(results));
+            finish();
+            return;
+        }
+        if (!parser->freeze(serial)) {
+            if (timer->interval() == 0) timer->setInterval(20);
+            return;
+        }
+        if (timer->interval() != 0) timer->setInterval(0);
+        const auto release = finally([parser] { parser->unFreeze(); });
+        const auto &[file, encoding] = units[next];
+        progress->setLabelText(tr("Searching...") + "<br/>" + file.toHtmlEscaped());
+        auto item = findOccurenceInFile(file, encoding, target, parser, inputs);
+        if (item && !item->results.isEmpty()) results.append(std::move(item));
+        progress->setValue(int(++next));
+    });
+    timer->start();
 }
 
 PSearchResultTreeItem CppRefacter::findOccurenceInFile(
         const QString &filename,
         const QByteArray& fileEncoding,
-        const PStatement &statement,
-        const PCppParser& parser)
+        const ReferenceTarget &target,
+        const PCppParser &parser,
+        const PAnalysisInputSnapshot &inputs)
 {
     PSearchResultTreeItem parentItem = std::make_shared<SearchResultTreeItem>();
     parentItem->filename = filename;
     parentItem->parent = nullptr;
-    QStringList buffer;
     Editor editor(nullptr);
     editor.setEditorSettings(&pSettings->editor());
     FileType fileType = getFileType(filename);
     if (!isC_CPPSourceFile(fileType))
         fileType = FileType::CCppHeader;
     editor.setFileType(fileType);
-    if (mMainWindow->editorManager()->getContentFromOpenedEditor(
-                filename,buffer)){
-        editor.setContent(buffer);
+    if (const auto input = inputs->document(filename)) {
+        editor.setContent(input->lines);
     } else if (!fileExists(filename)){
         return parentItem;
     } else {
@@ -355,7 +398,7 @@ PSearchResultTreeItem CppRefacter::findOccurenceInFile(
             QString token = pSyntaxer->getToken();
             QSynedit::PTokenAttribute attr = pSyntaxer->getTokenAttribute();
             if (attr && attr->tokenType()==QSynedit::TokenType::Identifier) {
-                if (token == statement->command) {
+                if (token == target.command) {
                     //same name symbol , test if the same statement;
                     CharPos p;
                     p.line = posY;
@@ -365,8 +408,8 @@ PSearchResultTreeItem CppRefacter::findOccurenceInFile(
                                 filename,
                                 expression, p.line);
                     if (tokenStatement
-                            && (tokenStatement->line == statement->line)
-                            && (tokenStatement->fileName == statement->fileName)) {
+                            && (tokenStatement->line == target.declarationLine)
+                            && (tokenStatement->fileName == target.declarationFile)) {
                         PSearchResultTreeItem item = std::make_shared<SearchResultTreeItem>();
                         item->filename = filename;
                         item->line = p.line;

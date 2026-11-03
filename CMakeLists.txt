@@ -448,6 +448,11 @@ if(BUILD_TESTING)
                     --ide $<TARGET_FILE:RedPandaIDE>)
             set_tests_properties(test-rename-workflow PROPERTIES
                 TIMEOUT 90 LABELS "ide;functional;refactoring" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-project-references
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_project_references.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-project-references PROPERTIES
+                TIMEOUT 90 LABELS "ide;functional;refactoring" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
             add_test(NAME test-document-close-plan
                 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_close_plan.py
                     --ide $<TARGET_FILE:RedPandaIDE>)

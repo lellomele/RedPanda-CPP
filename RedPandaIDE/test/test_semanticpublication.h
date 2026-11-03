@@ -9,6 +9,7 @@ private slots:
     void exact_ids_and_ambiguous_selection();
     void old_pins_and_retirement_stay_charged();
     void allocation_cap_precedes_payload_and_scratch_growth();
+    void repeated_location_paths_share_the_text_work_budget();
     void cycles_and_traversal_limits_are_explicit_partial_results();
     void native_adapter_preserves_outline_values();
     void native_adapter_exact_paths_preserve_distinct_unicode_files();

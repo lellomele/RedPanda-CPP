@@ -1400,7 +1400,15 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Abort</source>
             <translation>Interrompere</translation>
         </message>
-    </context>
+        <message>
+        <source>Reference search cancelled because the source changed.</source>
+        <translation>Ricerca dei riferimenti annullata perché il sorgente è cambiato.</translation>
+    </message>
+    <message>
+        <source>Reference search timed out.</source>
+        <translation>Tempo scaduto per la ricerca dei riferimenti.</translation>
+    </message>
+</context>
     <context>
         <name>CustomMakefileInfoDialog</name>
         <message>
@@ -7491,6 +7499,26 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
 
 
 
+    <message>
+        <source>The active project changed while closing.</source>
+        <translation>Il progetto attivo è cambiato durante la chiusura.</translation>
+    </message>
+    <message>
+        <source>Compilation and execution</source>
+        <translation>Compilazione ed esecuzione</translation>
+    </message>
+    <message>
+        <source>TODO analysis</source>
+        <translation>Analisi dei TODO</translation>
+    </message>
+    <message>
+        <source>Code analysis</source>
+        <translation>Analisi del codice</translation>
+    </message>
+    <message>
+        <source>Session recovery</source>
+        <translation>Recupero della sessione</translation>
+    </message>
 </context>
     <context>
         <name>MemoryModel</name>
@@ -8429,7 +8457,15 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>- Command: %1</source>
             <translation>- Comando: %1</translation>
         </message>
-    </context>
+        <message>
+        <source>Can't create build directory '%1'.</source>
+        <translation>Impossibile creare la cartella di compilazione «%1».</translation>
+    </message>
+    <message>
+        <source>Makefile '%1' does not exist.</source>
+        <translation>Il Makefile «%1» non esiste.</translation>
+    </message>
+</context>
     <context>
         <name>ProjectCompilerWidget</name>
         <message>
@@ -10980,7 +11016,15 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>- Command: %1</source>
             <translation>- Comando: %1</translation>
         </message>
-    </context>
+        <message>
+        <source>Can't create build directory '%1'.</source>
+        <translation>Impossibile creare la cartella di compilazione «%1».</translation>
+    </message>
+    <message>
+        <source>Makefile '%1' does not exist.</source>
+        <translation>Il Makefile «%1» non esiste.</translation>
+    </message>
+</context>
     <context>
         <name>SearchDialog</name>
         <message>
@@ -12785,5 +12829,28 @@ Le impostazioni di compilazione e codifica di questo file nel progetto saranno c
             <source>anonymous</source>
             <translation>senza nome</translation>
         </message>
+</context>
+<context>
+    <name>Lifecycle::ApplicationLifecycle</name>
+    <message>
+        <source>Background services are still stopping. Documents remain open.</source>
+        <translation>I servizi in background si stanno arrestando. I documenti restano aperti.</translation>
+    </message>
+    <message>
+        <source>A service could not stop.</source>
+        <translation>Impossibile arrestare un servizio.</translation>
+    </message>
+    <message>
+        <source>The close attempt could not finish.</source>
+        <translation>Impossibile completare la chiusura.</translation>
+    </message>
+    <message>
+        <source>The committed close still needs reconciliation.</source>
+        <translation>La chiusura già applicata richiede ancora una verifica.</translation>
+    </message>
+    <message>
+        <source>The committed close has follow-up work pending.</source>
+        <translation>Restano operazioni da completare dopo la chiusura.</translation>
+    </message>
 </context>
 </TS>

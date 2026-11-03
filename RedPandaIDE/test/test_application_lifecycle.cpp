@@ -117,6 +117,18 @@ void TestApplicationLifecycle::empty_registry_commits_on_next_turn_and_permit_is
     QCOMPARE(h.committed, 1);
 }
 
+void TestApplicationLifecycle::idle_native_close_can_take_the_permit_before_returning()
+{
+    Harness h;
+    QVERIFY(h.lifecycle->requestClose(true).succeeded());
+    QCOMPARE(h.lifecycle->state(), State::ReadyToClose);
+    QCOMPARE(h.committed, 1);
+    QVERIFY(h.lifecycle->takeClosePermit());
+    QCoreApplication::processEvents();
+    QCOMPARE(h.committed, 1);
+    QVERIFY(!h.lifecycle->takeClosePermit());
+}
+
 void TestApplicationLifecycle::immediate_acknowledgements_wait_for_complete_broadcast()
 {
     Harness h;

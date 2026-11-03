@@ -207,6 +207,37 @@ void TestSemanticPublication::allocation_cap_precedes_payload_and_scratch_growth
     QVERIFY(ticketLedger.usage().admitted() <= std::size_t(1024));
     emptyTickets.clear(); QCOMPARE(ticketLedger.usage().admitted(), std::size_t(0));
 }
+void TestSemanticPublication::repeated_location_paths_share_the_text_work_budget()
+{
+    Source source;
+    const QString filename = "C:/workspace/" + QString(240, 'd') + "/source.cpp";
+    for (SemanticSourceId id = 1; id <= 100; ++id) {
+        source.add(id, "symbol" + QString::number(id));
+        auto &value = source.values[id];
+        value.declaration = value.definition = filename;
+        value.key = value.qualifiedName;
+        source.files[filename].push_back(id);
+    }
+    auto build = request();
+    build.files = {filename};
+    build.primaryFile = filename;
+    build.maximumTextUnitsExamined = 5000;
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(4 * 1024 * 1024);
+    auto scheduler = std::make_shared<ManualReclaimer>();
+    auto result = SemanticPublicationBuilder::build(source, build, ids, ledger, scheduler);
+    QVERIFY(result.complete());
+    const auto &tree = *result.publication->outline();
+    QCOMPARE(tree.roots().size(), std::size_t(100));
+    const auto symbol = tree.nodes()[tree.roots().front()].symbol;
+    const auto *record = result.publication->symbol(symbol);
+    QVERIFY(record);
+    QCOMPARE(result.publication->text(symbol, record->declaration.filename), QStringView(filename));
+    QCOMPARE(result.publication->text(symbol, record->definition.filename), QStringView(filename));
+    result.publication.reset();
+    scheduler->drainOnWorker();
+}
+
 void TestSemanticPublication::cycles_and_traversal_limits_are_explicit_partial_results()
 {
     auto source = simpleSource(); source.values[2].children = {1};

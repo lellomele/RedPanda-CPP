@@ -22,22 +22,53 @@
 #include <QStyledItemDelegate>
 #include "../parser/cppparser.h"
 #include "codecompletionlistview.h"
+#include <optional>
 
 class SymbolUsageManager;
 class ColorSchemeItem;
 class IconsManager;
+struct CompletionInsertion {
+    QString command;
+    QString fullName;
+    QString args;
+    StatementKind kind = StatementKind::Unknown;
+};
+
+struct CompletionAliasQuery { QString type; QString file; QString parserSerial; };
+
+struct CompletionMatchRange { qsizetype start; qsizetype end; };
+
+struct CompletionEntry : CompletionInsertion {
+    QString value;
+    std::optional<CompletionAliasQuery> alias;
+    StatementKind iconKind = StatementKind::Unknown;
+    StatementScope scope = StatementScope::Global;
+    StatementAccessibility accessibility = StatementAccessibility::None;
+    bool inherited = false;
+    bool systemHeader = false;
+
+    bool inSystemHeader() const { return systemHeader; }
+
+    QList<CompletionMatchRange> matchPositions;
+    qsizetype matchPosSpan = 0;
+    qsizetype firstMatchLength = 0;
+    qint64 matchPosTotal = 0;
+    qsizetype caseMatched = 0;
+    int usageCount = 0;
+};
+
 class CodeCompletionListModel : public QAbstractListModel {
     Q_OBJECT
 public:
-    explicit CodeCompletionListModel(const StatementList* statements,IconsManager *iconsManager,QObject *parent = nullptr);
+    explicit CodeCompletionListModel(IconsManager *iconsManager, QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent) const override;
     QVariant data(const QModelIndex &index, int role) const override;
-    PStatement statement(const QModelIndex &index) const;
+    const CompletionEntry *statement(const QModelIndex &index) const;
     QPixmap statementIcon(const QModelIndex &index, int size) const;
-    void notifyUpdated();
+    void replaceRows(QList<CompletionEntry> rows);
 
 private:
-    const StatementList* mStatements;
+    QList<CompletionEntry> mRows;
     IconsManager *mIconsManager;
 };
 
@@ -109,7 +140,8 @@ public:
                        const QSet<QString>& customKeywords);
     bool search(const QString& memberPhrase, bool autoHideOnSingleResult, const QString& schemeName);
 
-    PStatement selectedStatement();
+    std::optional<CompletionEntry> selectedStatement() const;
+    CompletionInsertion insertionFor(const CompletionEntry &entry, bool appendFunc) const;
 
     const PCppParser &parser() const;
     void setParser(const PCppParser &newParser);
@@ -138,8 +170,6 @@ public:
     void setHideSymbolsStartWithTwoUnderline(bool newHideSymbolsStartWithTwoUnderline);
     void setLineHeightFactor(float factor);
 
-    const PStatement &currentScope() const;
-    void setCurrentScope(const PStatement &newCurrentStatement);
     const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > >& colors() const;
     void setColors(const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > &newColors);
     const QString &memberPhrase() const;
@@ -151,6 +181,7 @@ private:
     void addFunctionWithoutDefinitionChildren(const PStatement& scopeStatement, const QString& fileName,
                      int line);
     void addStatement(const PStatement& statement, const QString& fileName, int line);
+    void appendCandidate(const PStatement &statement);
     void filterList(const QString& member);
     void getKeywordCompletionFor(const QSet<QString>& customKeywords);
     void getMacroCompletionList(const QString &fileName, int line);
@@ -160,7 +191,7 @@ private:
             const QStringList& memberExpression,
             const QString& fileName,
             int line,
-            const QSet<QString>& customKeywords);
+            const QSet<QString>& customKeywords, bool reading);
 
     void getCompletionForFunctionWithoutDefinition(
             const QString& preWord,
@@ -187,15 +218,12 @@ private:
     CodeCompletionListView * mListView;
     CodeCompletionListModel* mModel;
     QList<PCodeSnippet> mCodeSnippets; //(Code template list)
-    //QList<PStatement> mCodeInsStatements; //temporary (user code template) statements created when show code suggestion
-    StatementList mFullCompletionStatementList;
-    StatementList mCompletionStatementList;
+    QList<CompletionEntry> mFullCompletionStatementList;
     QSet<QString> mIncludedFiles;
     QSet<QString> mUsings;
     QSet<QString> mAddedStatements;
     QString mMemberPhrase;
     QString mMemberOperator;
-    mutable QRecursiveMutex mMutex;
     std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > mColors;
     CodeCompletionListItemDelegate* mDelegate;
 

@@ -41,11 +41,17 @@ public:
 private:
     void doFindOccurenceInEditor(const PStatement &statement, Editor* editor, const PCppParser& parser);
     void doFindOccurenceInProject(const PStatement &statement, std::shared_ptr<Project> project, const PCppParser& parser);
-    PSearchResultTreeItem findOccurenceInFile(
-            const QString& filename,
-            const QByteArray& fileEncoding,
-            const PStatement& statement,
-            const PCppParser& parser);
+    struct ReferenceTarget {
+        QString command;
+        QString declarationFile;
+        int declarationLine;
+    };
+    static PSearchResultTreeItem findOccurenceInFile(
+            const QString &filename,
+            const QByteArray &fileEncoding,
+            const ReferenceTarget &target,
+            const PCppParser &parser,
+            const PAnalysisInputSnapshot &inputs);
     void renameSymbolInFile(
             const QString& filename,
             const PStatement& statement,

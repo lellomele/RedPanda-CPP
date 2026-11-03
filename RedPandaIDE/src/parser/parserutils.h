@@ -158,11 +158,6 @@ enum class EvalStatementKind {
     Function
 };
 
-struct StatementMatchPosition{
-    uint16_t start;
-    uint16_t end;
-};
-
 enum class StatementProperty {
     None =                0x0,
     Static =              0x0001,
@@ -181,8 +176,6 @@ enum class StatementProperty {
 Q_DECLARE_FLAGS(StatementProperties, StatementProperty)
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(StatementProperties)
-
-using PStatementMathPosition = std::shared_ptr<StatementMatchPosition>;
 
 struct Statement;
 using PStatement = std::shared_ptr<Statement>;
@@ -211,14 +204,6 @@ struct Statement {
     QString noNameArgs;// Args without name
     QSet<QString> lambdaCaptures;
     StatementProperties properties;
-
-    // fields for code completion
-    int usageCount; //Usage Count
-    uint16_t matchPosTotal; // total of matched positions
-    uint16_t matchPosSpan; // distance between the first match pos and the last match pos;
-    uint16_t firstMatchLength; // length of first match;
-    uint16_t caseMatched; // if match with case
-    QList<PStatementMathPosition> matchPositions;
 
     // definiton line/filename is valid
     bool hasDefinition() {

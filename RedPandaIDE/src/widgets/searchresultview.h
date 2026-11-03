@@ -148,7 +148,7 @@ public:
     PSearchResults addSearchResults(
             const QString& keyword,
             const QString& symbolScopeFullName,
-            SearchFileScope scope);
+            SearchFileScope scope, QList<PSearchResultTreeItem> items = {});
     PSearchResults results(int index);
     int currentIndex() const;
     int resultsCount() const;

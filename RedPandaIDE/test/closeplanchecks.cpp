@@ -33,13 +33,13 @@ int runClosePlanChecks(MainWindow &window, const QString &outputDirectory)
     const auto firstText = first->content(), secondText = second->content();
     EditorClosePlan plan;
     int choices = 0;
-    const auto cancelled = plan.prepare({first, second}, [&](Editor *, bool &discard) {
+    const auto cancelled = plan.prepare(*manager, {first, second}, [&](Editor *, bool &discard) {
         discard = true;
         return ++choices == 1 ? OperationResult::success() : OperationResult::cancelled();
     });
     check("Close plan stages discard without clearing a live document", cancelled.status == OperationStatus::Cancelled
           && first->modified() && second->modified() && first->content() == firstText && second->content() == secondText);
-    const auto prepared = plan.prepare({first, second}, [](Editor *, bool &discard) {
+    const auto prepared = plan.prepare(*manager, {first, second}, [](Editor *, bool &discard) {
         discard = true;
         return OperationResult::success();
     });
@@ -49,9 +49,12 @@ int runClosePlanChecks(MainWindow &window, const QString &outputDirectory)
     second->setContent("int changed_during_close = 3;\n"); second->setModified(true);
     check("Close plan rejects a changed revision before removal", plan.validate(*manager, EditorCloseScope::PlannedEditors).status == OperationStatus::Conflict);
     second->setContent(secondText); second->setModified(true);
+    check("A return to the same text still requires a new close decision",
+          second->content() == secondText &&
+          plan.validate(*manager, EditorCloseScope::PlannedEditors).status == OperationStatus::Conflict);
 
     first->setInProject(true, false);
-    const auto projectPrepared = plan.prepare({first}, [](Editor *, bool &discard) {
+    const auto projectPrepared = plan.prepare(*manager, {first}, [](Editor *, bool &discard) {
         discard = true;
         return OperationResult::success();
     });
@@ -98,7 +101,7 @@ int runClosePlanChecks(MainWindow &window, const QString &outputDirectory)
     auto *vanishing = manager->newEditor("close-vanishing.cpp", ENCODING_UTF8, FileType::CppSource, {}, false, true);
     if (!vanishing) return 4;
     vanishing->setContent("int live = 4;"); vanishing->setModified(true);
-    const auto vanished = plan.prepare({vanishing}, [&](Editor *editor, bool &discard) {
+    const auto vanished = plan.prepare(*manager, {vanishing}, [&](Editor *editor, bool &discard) {
         discard = true;
         manager->forceCloseEditor(editor);
         return OperationResult::success();

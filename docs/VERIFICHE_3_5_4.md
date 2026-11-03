@@ -264,3 +264,39 @@ L’integrazione iniziale ha superato 49 suite CTest su 49 in 145,70 secondi.
 Dopo la correzione del recupero in caso di errore del layout sono passate le
 quattro suite mirate e le prove native Windows. I controlli nativi sono
 stati 1.621 in inglese e 1.970 in italiano, senza prove saltate.
+
+## Editing, Struttura e ricerca dei riferimenti
+
+Le righe del completamento conservano punteggi e frequenze propri.
+Visualizzare o filtrare i suggerimenti lascia intatti i simboli del parser.
+La lista conserva valori utilizzabili anche dopo una nuova analisi. Se
+l’eventuale risoluzione di un alias riguarda una revisione diversa, si usa il
+testo acquisito nella riga di completamento.
+
+La ricerca dei riferimenti di progetto cede il controllo all’interfaccia tra
+un file e l’altro e pubblica insieme i risultati. Se cambiano revisione del
+documento, progetto o parser, scarta la richiesta precedente. Rinomina
+ricontrolla il documento dopo la richiesta del nuovo nome. Le decisioni di
+chiusura e scarto sono associate a identità e revisione, anche quando una
+modifica successiva riporta il testo al contenuto precedente.
+
+Struttura riutilizza i percorsi ripetuti di dichiarazioni e definizioni
+all’interno della proiezione con limiti di risorse. Il sorgente generato di
+100.000 righe, che prima produceva un risultato parziale, ha restituito
+16.668 nodi principali. Il benchmark riguarda l’IDE completo su Windows x64
+con Qt 6.11.2.
+
+| Righe | Apertura (ms) | Struttura pronta dall’apertura (ms) | Espansione (ms) | Completamento (ms) | 40 coppie di modifiche (ms) | Picco di memoria residente (MiB) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3.000 | 18,59 | 151,25 | 3,01 | 3,20 | 23,48 | 147,47 |
+| 30.000 | 88,50 | 674,21 | 2,79 | 7,42 | 70,43 | 219,50 |
+| 100.000 | 240,38 | 1.981,17 | 3,47 | 19,50 | 201,41 | 391,26 |
+
+Espansione, completamento e modifica sono mediane di cinque campioni per
+sorgente. Apertura e attesa di Struttura sono un campione per dimensione.
+L’intervallo massimo tra due risposte del ciclo degli eventi durante apertura
+e analisi del sorgente più grande è stato 242,86 ms. Il precedente episodio di
+consumo elevato ha ancora causa ignota. Questi sorgenti coprono un carico
+distinto.
+
+La build ha superato 50 suite CTest su 50 in 129,72 secondi e tutti i controlli nativi Windows in inglese (1.621) e italiano (1.970), senza prove saltate.

@@ -12,9 +12,12 @@ OperationResult changed() {
 }
 }
 
-OperationResult EditorClosePlan::prepare(const QList<Editor *> &editors, const Decide &decide)
+OperationResult EditorClosePlan::prepare(const EditorManager &manager, const QList<Editor *> &editors, const Decide &decide)
 {
     mEntries.clear();
+    mEntryForEditor.clear();
+    mEntries.reserve(editors.size());
+    mEntryForEditor.reserve(editors.size());
     // Capture weak identities before the first dialog can run a nested loop.
     QList<QPointer<Editor>> candidates;
     for (Editor *editor : editors)
@@ -22,12 +25,14 @@ OperationResult EditorClosePlan::prepare(const QList<Editor *> &editors, const D
     for (const auto &candidate : candidates) {
         if (!candidate)
             return changed();
-        Entry entry{candidate, candidate->filename(), candidate->content(), candidate->modified(), false};
+        Entry entry{candidate, manager.documentId(candidate), manager.documentRevision(candidate),
+            candidate->filename(), candidate->editorEncoding(), candidate->modified(), false};
+        if (!entry.document || !entry.revision) return changed();
         if (entry.modified) {
             const OperationResult outcome = decide(candidate.data(), entry.discard);
             if (!outcome.succeeded())
                 return outcome;
-            if (!candidate)
+            if (!candidate || manager.documentId(candidate) != entry.document)
                 return changed();
             if (!entry.discard) {
                 if (candidate->modified())
@@ -35,25 +40,27 @@ OperationResult EditorClosePlan::prepare(const QList<Editor *> &editors, const D
                 // A confirmed Save As may change path and encoding. It is an
                 // actual commit, not something a later cancellation rolls back.
                 entry.filename = candidate->filename();
-                entry.content = candidate->content();
+                entry.encoding = candidate->editorEncoding();
+                entry.revision = manager.documentRevision(candidate);
+                if (!entry.revision) return changed();
                 entry.modified = false;
             }
         }
+        mEntryForEditor.insert(candidate.data(), mEntries.size());
         mEntries.append(std::move(entry));
     }
     return OperationResult::success();
 }
 
-OperationResult EditorClosePlan::validateEditor(Editor *editor) const
+OperationResult EditorClosePlan::validateEditor(const EditorManager &manager, Editor *editor) const
 {
-    for (const Entry &entry : mEntries) {
-        if (entry.editor.data() == editor && editor) {
-            if (editor->filename() == entry.filename && editor->modified() == entry.modified
-                    && editor->content() == entry.content)
-                return OperationResult::success();
-            return changed();
-        }
-    }
+    const auto found = mEntryForEditor.constFind(editor);
+    if (!editor || found == mEntryForEditor.cend()) return changed();
+    const auto &entry = mEntries.at(*found);
+    if (entry.editor == editor && manager.documentId(editor) == entry.document &&
+            manager.documentRevision(editor) == entry.revision && editor->filename() == entry.filename &&
+            editor->editorEncoding() == entry.encoding && editor->modified() == entry.modified)
+        return OperationResult::success();
     return changed();
 }
 
@@ -79,7 +86,7 @@ OperationResult EditorClosePlan::validate(const EditorManager &manager, EditorCl
             return changed();
         if (!current.contains(entry.editor.data()))
             return changed();
-        const auto result = validateEditor(entry.editor.data());
+        const auto result = validateEditor(manager, entry.editor.data());
         if (!result.succeeded())
             return result;
     }
@@ -88,10 +95,9 @@ OperationResult EditorClosePlan::validate(const EditorManager &manager, EditorCl
 
 bool EditorClosePlan::discards(Editor *editor) const
 {
-    for (const Entry &entry : mEntries)
-        if (entry.editor.data() == editor)
-            return entry.discard;
-    return false;
+    const auto found = mEntryForEditor.constFind(editor);
+    return editor && found != mEntryForEditor.cend() && mEntries.at(*found).editor == editor &&
+        mEntries.at(*found).discard;
 }
 
 QList<QPointer<Editor>> EditorClosePlan::editors() const

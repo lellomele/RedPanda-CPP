@@ -73,3 +73,17 @@ The owned compiler-cancellation fixture allows up to 15 seconds for native start
 The parser suite deterministically freezes analysis while requests arrive, including nested readers, a real background worker, distinct files and updated contents. A semaphore-controlled active parse verifies that later requests are not lost; project scans and disabling/re-enabling a parser are covered too. GUI checks preserve a same-file Structure snapshot while busy, refresh it automatically, ignore queued completions from a previous parser and reject nested close events during save prompts.
 
 For the real debugger test, set `REDPANDA_TEST_CXX` and `REDPANDA_TEST_GDB` to absolute executable paths before CTest. Without both variables, the real-tool case is explicitly skipped; argument encoding remains tested. The official Windows CI supplies both paths. Release results are attached as `TEST_RESULTS.json`.
+
+## Native editor performance
+
+Use a Windows x64 build with Qt 6.11.2. Run the benchmark with an output
+directory that does not yet exist.
+
+```powershell
+python -B tools/tests/benchmark_editor.py --ide path/to/RedPandaIDE.exe --output path/to/new-report
+```
+
+The harness uses a fresh bounded profile for each size and checks real
+completion and Structure results before recording time and process memory.
+The [qualification record](QUALIFICATION_3_5_4.md) describes the workload and
+reported statistics.

@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "editor.h"
+#include <limits>
 #include <QSaveFile>
 #include "snippetsstorage.h"
 
@@ -3307,11 +3308,6 @@ void Editor::showCompletion(const QString& preWord,bool autoComplete, CodeComple
         return onCompletionKeyPressed(event);
     });
     mCompletionPopup->setParser(mParser);
-    if (mParser) {
-        mCompletionPopup->setCurrentScope(
-                    mParser->findScopeStatement(mFilename, caretY())
-                    );
-    }
     if (mFunctionTooltip) mFunctionTooltip->hide();
     //mCompletionPopup->show();
 
@@ -3531,14 +3527,15 @@ void Editor::completionInsert(bool appendFunc)
         mCompletionPopup->hide();
         return;
     }
-    PStatement statement = mCompletionPopup->selectedStatement();
-    if (!statement)
-        return;
+    const auto statement = mCompletionPopup->selectedStatement();
+    if (!statement) return;
+    const CompletionInsertion insertion = mCompletionPopup->insertionFor(*statement, appendFunc);
+    if (insertion.command.isEmpty() && statement->kind != StatementKind::UserCodeSnippet) return;
 
-    if (mCodeCompletionSettings->recordUsage()
-            && statement->kind != StatementKind::UserCodeSnippet) {
-        statement->usageCount+=1;
-        emit symbolChoosed(statement->fullName, statement->usageCount);
+    if (mCodeCompletionSettings->recordUsage() && statement->kind != StatementKind::UserCodeSnippet) {
+        const int count = statement->usageCount < std::numeric_limits<int>::max()
+            ? statement->usageCount + 1 : statement->usageCount;
+        emit symbolChoosed(statement->fullName, count);
     }
 
     QString funcAddOn = "";
@@ -3566,28 +3563,20 @@ void Editor::completionInsert(bool appendFunc)
 
     // if we are inserting a function,
     if (appendFunc) {
-        if (statement->kind == StatementKind::Alias) {
-            PStatement newStatement = mParser->findAliasedStatement(statement);
-            while (newStatement && newStatement->kind==StatementKind::Alias) {
-                newStatement = mParser->findAliasedStatement(newStatement);
-            }
-            if (newStatement)
-                statement = newStatement;
-        }
-        if ( (statement->kind == StatementKind::Function
-               && !IOManipulators.contains(statement->fullName))
-                || statement->kind == StatementKind::Constructor
-                || statement->kind == StatementKind::Destructor
+        if ( (insertion.kind == StatementKind::Function
+               && !IOManipulators.contains(insertion.fullName))
+                || insertion.kind == StatementKind::Constructor
+                || insertion.kind == StatementKind::Destructor
                 ||
-                (statement->kind == StatementKind::Preprocessor
-                  && !statement->args.isEmpty())) {
+                (insertion.kind == StatementKind::Preprocessor
+                  && !insertion.args.isEmpty())) {
             CharPos pos = nextNonSpaceChar(pEnd);
             QChar nextCh;
             if (pos.line == pEnd.line)
                 nextCh = charAt(nextNonSpaceChar(pEnd));
             if (nextCh=='(') {
                 funcAddOn = "";
-            } else if (statement->args != "()" &&(isIdentChar(nextCh) || nextCh == '"'
+            } else if (insertion.args != "()" &&(isIdentChar(nextCh) || nextCh == '"'
                        || nextCh == '\'')) {
                 funcAddOn = '(';
             } else {
@@ -3597,25 +3586,25 @@ void Editor::completionInsert(bool appendFunc)
     }
 
     // ... by replacing the selection
-    if (statement->kind == StatementKind::UserCodeSnippet) { // it's a user code template
+    if (insertion.kind == StatementKind::UserCodeSnippet) { // it's a user code template
         // insertUserCodeIn(Statement->value);
         //first move caret to the begin of the word to be replaced
         insertCodeSnippet(statement->value);
     } else {
-        if (statement->kind == StatementKind::Keyword
-                && !isIdentStartChar(statement->command[0])
-                && statement->command[0] != charAt(pStart)) {
-            setSelText(statement->command.mid(1));
+        if (insertion.kind == StatementKind::Keyword
+                && !isIdentStartChar(insertion.command[0])
+                && insertion.command[0] != charAt(pStart)) {
+            setSelText(insertion.command.mid(1));
         } else
-            setSelText(statement->command + funcAddOn);
+            setSelText(insertion.command + funcAddOn);
 
 //        if (!funcAddOn.isEmpty())
 //            mLastIdCharPressed = 0;
 
         // Move caret inside the ()'s, only when the user has something to do there...
         if (!funcAddOn.isEmpty()
-                && (statement->args != "()")
-                && (statement->args != "(void)")) {
+                && (insertion.args != "()")
+                && (insertion.args != "(void)")) {
             setCaretX(caretX() - funcAddOn.length()+1);
         } else {
             setCaretX(caretX());

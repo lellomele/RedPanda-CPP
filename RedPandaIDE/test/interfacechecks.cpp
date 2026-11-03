@@ -12,6 +12,9 @@
 #include <QFileSystemWatcher>
 #include <qsynedit/syntaxer/cpp.h>
 #include "interfacechecks.h"
+#include "editorperformancechecks.h"
+#include "src/widgets/searchresultview.h"
+#include <QProgressDialog>
 #include "compilerworkflowchecks.h"
 #include "closeplanchecks.h"
 #include "documentstorechecks.h"
@@ -129,6 +132,91 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         if (!report.open(QIODevice::WriteOnly) || report.write(bytes) != bytes.size()) return 2;
         return compilerFailures || compilerChecks.isEmpty() ? 1 : 0;
     }
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_PROJECT_REFERENCES")) {
+        const QDir directory(outputDirectory);
+        QJsonArray checks;
+        int failures = 0;
+        const auto check = [&](const QString &name, bool passed) {
+            checks.append(QJsonObject{{"name", name}, {"passed", passed}});
+            if (!passed) ++failures;
+        };
+        const auto finish = [&] {
+            QFile report(directory.filePath("project-reference-result.json"));
+            const auto bytes = QJsonDocument(QJsonObject{{"checks", checks}, {"failures", failures}}).toJson();
+            if (!report.open(QIODevice::WriteOnly) || report.write(bytes) != bytes.size()) return 2;
+            return failures ? 1 : 0;
+        };
+        const auto write = [&](const QString &name, const QByteArray &bytes) {
+            QFile file(directory.filePath(name));
+            return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+        };
+        const QString source = directory.filePath("main.cpp");
+        const QString sourceLine = "int main() { return searchTarget(); }";
+        const QString descriptor = directory.filePath("reference-qa.dev");
+        const QString cppPath = QStandardPaths::findExecutable("g++");
+        const auto fixtureIndex = int(pSettings->compilerSets().size());
+        const auto fixtureSet = pSettings->compilerSets().addSet();
+        fixtureSet->setName("Reference QA GCC");
+        fixtureSet->setCompilerType(CompilerType::GCC);
+        fixtureSet->setCppCompiler(cppPath);
+        fixtureSet->setCCompiler(QFileInfo(cppPath).dir().filePath("gcc.exe"));
+        fixtureSet->binDirs() = {QFileInfo(cppPath).absolutePath()};
+        fixtureSet->setTarget("x86_64");
+        pSettings->compilerSets().setDefaultIndex(fixtureIndex);
+        const bool filesReady = write("main.cpp", "#include \"helper.h\"\n" + sourceLine.toUtf8() + "\n") &&
+            write("helper.cpp", "#include \"helper.h\"\nint searchTarget() { return 3; }\n") &&
+            write("helper.h", "#pragma once\nint searchTarget();\n") &&
+            write("reference-qa.dev", QByteArray("[Project]\nVer=3\nName=reference-qa\nType=1\nIsCpp=1\nModelType=1\nUnitCount=3\nCompilerSet=") +
+                  QByteArray::number(fixtureIndex) + "\n"
+                  "[Unit1]\nFileName=main.cpp\nCompile=1\nCompileCpp=1\nLink=1\n"
+                  "[Unit2]\nFileName=helper.cpp\nCompile=1\nCompileCpp=1\nLink=1\n"
+                  "[Unit3]\nFileName=helper.h\nCompile=0\nCompileCpp=1\nLink=0\n");
+        check("project reference fixture files are available", filesReady);
+        if (!filesReady) return finish();
+        window.openProject(descriptor, false);
+        const QPointer<Editor> editor = window.openFile(source);
+        auto *findReferences = window.findChild<QAction *>("actionFind_references");
+        if (!editor || !editor->parser() || !window.project() || !findReferences) {
+            check("project editor and reference action are available", false);
+            return finish();
+        }
+        const auto parser = editor->parser();
+        const auto waitFor = [&](const std::function<bool()> &ready, int timeout) {
+            QElapsedTimer clock;
+            clock.start();
+            while (!ready() && clock.elapsed() < timeout) waitForUi(10);
+            return ready();
+        };
+        const auto idle = [&] { return !parser->hasPendingWork() && parser->fileScanned(source); };
+        const bool parsed = waitFor(idle, 15000);
+        check("project parser reached the reference fixture", parsed);
+        if (!parsed) return finish();
+        const auto position = QSynedit::CharPos{int(sourceLine.indexOf("searchTarget") + 2), 1};
+        const auto dialog = [&] { return window.findChild<QProgressDialog *>("projectReferenceSearch", Qt::FindDirectChildrenOnly); };
+        const auto resultCount = [&] { return window.searchResultModel()->resultsCount(); };
+        const int before = resultCount();
+        editor->setCaretXY(position);
+        findReferences->trigger();
+        const bool queued = bool(dialog());
+        editor->setContent(QStringList{"#include \"helper.h\"", sourceLine + " // changed"});
+        const bool invalidated = waitFor([&] { return !dialog(); }, 3000);
+        check("a project reference request discarded after an editor revision change publishes no results",
+            queued && invalidated && resultCount() == before);
+        editor->setContent(QStringList{"#include \"helper.h\"", sourceLine});
+        editor->setModified(false);
+        editor->reparse();
+        const bool recovered = waitFor(idle, 15000);
+        editor->setCaretXY(position);
+        findReferences->trigger();
+        const bool published = waitFor([&] { return !dialog() && resultCount() > before; }, 12000);
+        const auto results = window.searchResultModel()->currentResults();
+        check("a fresh reference request publishes results from more than one project file",
+            recovered && published && results && results->scope() == SearchFileScope::wholeProject &&
+            results->keyword() == "searchTarget" && results->results().size() >= 2);
+        return finish();
+    }
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_EDITOR_BENCHMARK"))
+        return runEditorPerformanceChecks(window, outputDirectory);
     if (qEnvironmentVariableIsSet("REDPANDA_QA_COMPILER_REQUESTS"))
         return runCompilerRequestChecks(window, outputDirectory);
     if (qEnvironmentVariableIsSet("REDPANDA_QA_DOCUMENT_FILES"))

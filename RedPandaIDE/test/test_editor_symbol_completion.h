@@ -81,6 +81,8 @@ private slots:
     void test_completion_popup_without_parser_data();
     void test_completion_popup_without_parser();
     void test_completion_popup_keywords_after_cancel();
+    void test_completion_values_survive_parser_publication_change();
+    void test_completion_match_range_handles_long_identifiers();
     void test_completion_list_optional_callbacks();
     void test_hidden_completion_list_ignores_pending_keys_data();
     void test_hidden_completion_list_ignores_pending_keys();

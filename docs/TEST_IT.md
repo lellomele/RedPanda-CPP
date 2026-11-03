@@ -73,3 +73,17 @@ La fixture isolata per l’arresto del compilatore concede fino a 15 secondi all
 La suite del parser congela deterministicamente l’analisi mentre arrivano richieste, coprendo lettori annidati, un worker reale in background, file distinti e contenuti aggiornati. Un’analisi attiva controllata da semaforo verifica che le richieste successive non vengano perse; sono coperti anche scansioni di progetto e disabilitazione/riabilitazione del parser. I controlli grafici conservano la copia di Struttura dello stesso file durante l’attesa, la aggiornano automaticamente, ignorano notifiche di parser precedenti e respingono chiusure rientranti durante domande di salvataggio.
 
 Per il test reale del debugger, imposta `REDPANDA_TEST_CXX` e `REDPANDA_TEST_GDB` con percorsi assoluti prima di CTest. Senza entrambe le variabili, il caso con strumenti reali viene indicato come saltato; la codifica degli argomenti resta verificata. La CI Windows ufficiale fornisce entrambi i percorsi. I risultati del rilascio sono allegati come `TEST_RESULTS.json`.
+
+## Prestazioni native dell’editor
+
+Usare una build Windows x64 con Qt 6.11.2 e indicare una cartella di output
+che deve ancora essere creata.
+
+```powershell
+python -B tools/tests/benchmark_editor.py --ide percorso/RedPandaIDE.exe --output percorso/nuovo-report
+```
+
+La prova usa un profilo isolato con limiti per ogni dimensione e verifica i
+risultati di completamento e Struttura prima di registrare tempi e memoria
+del processo. Il [registro delle verifiche](VERIFICHE_3_5_4.md) descrive
+sorgenti e statistiche.

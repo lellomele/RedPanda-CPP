@@ -179,3 +179,19 @@ Windows can delay native process creation inside QProcess before the worker can 
 About and Help > Website now use the fork GitHub repository in every interface language. About separately identifies the inherited Red Panda C++/QSynEdit code and the fork enhancements, with the updated 2026 author/contact line. Original source notices and third-party copyrights remain preserved.
 
 Maintenance release 3.5.1 publishes the fork website and clarified ownership descriptions, updated copyright/contact, bilingual documentation and regenerated Windows distributions.
+
+## 3.5.4 editor and project stability
+
+Structure keeps a usable tree for the current file while it refreshes and
+clears the previous file’s tree when switching. The completion list carries
+its own suggestion data. Project reference searches publish results after the
+scan and discard obsolete requests when their inputs change.
+
+Save, Save As and encoding conversion commit the accepted document revision.
+Project builds capture unit paths and compiler options. Generated Makefiles
+replace their previous version after a complete write. On exit, the window
+waits for the background services to acknowledge stopping. A project layout
+write failure keeps the workspace open for a new attempt.
+
+The [3.5.4 qualification record](QUALIFICATION_3_5_4.md) includes the Windows
+regression checks and the IDE benchmark at 3,000, 30,000 and 100,000 lines.

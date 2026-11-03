@@ -121,3 +121,13 @@ che l’ha prodotta. La vista di progetto richiede la copertura di tutti i file
 previsti e le copie ritirate vengono liberate in background. Restano da migrare
 gli altri lettori semantici e i percorsi di arresto dei servizi. Gli esiti
 Windows sono nel registro delle verifiche.
+
+## Lettori dell’editor e decisioni di chiusura
+
+Il completamento possiede i valori mostrati e li ordina fuori dal grafo del
+parser. L’accesso protetto al grafo riguarda la scelta dei candidati e
+l’eventuale risoluzione di alias nella stessa revisione. La ricerca dei
+riferimenti acquisisce progetto, documenti e revisione del parser e cede il
+controllo tra i file. Il piano di chiusura usa identità, revisione, nome e
+codifica senza copiare il testo. L’applicazione mantiene aperto lo spazio di
+lavoro fino alla conferma dei servizi e alla nuova verifica del piano.

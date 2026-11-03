@@ -15,6 +15,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "codecompletionpopup.h"
+#include <QVarLengthArray>
+#include "../analysis/semanticpublication.h"
 #include "../utils.h"
 #include "../mainwindow.h"
 #include "../editor.h"
@@ -32,13 +34,12 @@
 CodeCompletionPopup::CodeCompletionPopup(ColorManager *colorManager,IconsManager *iconsManager,QWidget *parent) :
     QWidget(parent),
     mListView(nullptr),
-    mMutex(),
     mSymbolUsageManager(nullptr)
 {
     setWindowFlags(Qt::Popup);
     mColorManager = colorManager;
     mListView = new CodeCompletionListView(this);
-    mModel=new CodeCompletionListModel(&mCompletionStatementList,iconsManager);
+    mModel=new CodeCompletionListModel(iconsManager);
     mDelegate = new CodeCompletionListItemDelegate(mModel,this);
     QItemSelectionModel *m=mListView->selectionModel();
     mListView->setModel(mModel);
@@ -88,13 +89,12 @@ void CodeCompletionPopup::prepareSearch(
         CodeCompletionType type,
         const QSet<QString>& customKeywords)
 {
-    QMutexLocker locker(&mMutex);
+    Q_ASSERT(QThread::currentThread() == thread());
     mFullCompletionStatementList.clear();
-    mCompletionStatementList.clear();
+    mModel->replaceRows({});
     mIncludedFiles.clear();
     mUsings.clear();
     mAddedStatements.clear();
-    mModel->notifyUpdated();
     if (!isEnabled())
         return;
     // hideEvent releases the parser; queued search requests may arrive afterwards.
@@ -102,6 +102,19 @@ void CodeCompletionPopup::prepareSearch(
             || type == CodeCompletionType::ComplexKeyword;
     if (!mParser && !parserOptional)
         return;
+    const auto parser = mParser;
+    const bool reading = !parserOptional && parser && parser->freeze();
+    const auto finishRead = finally([this, parser, reading] {
+        mCurrentScope.reset();
+        if (reading) parser->unFreeze();
+    });
+    if (reading) {
+        mIncludedFiles = mParser->getIncludedFiles(filename);
+        mCurrentScope = mParser->findScopeStatement(filename, line);
+    } else if (!parserOptional && type != CodeCompletionType::Normal) {
+        return;
+    }
+
     QCursor oldCursor = cursor();
     setCursor(Qt::CursorShape::WaitCursor);
 
@@ -115,15 +128,12 @@ void CodeCompletionPopup::prepareSearch(
         getCompletionListForLabels(filename,line);
         break;
     case CodeCompletionType::Types:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
         getCompletionListForTypes(preWord,filename,line);
         break;
     case CodeCompletionType::FunctionWithoutDefinition:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
         getCompletionForFunctionWithoutDefinition(preWord, ownerExpression,memberOperator,memberExpression, filename,line);
         break;
     case CodeCompletionType::Namespaces:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
         getCompletionListForNamespaces(preWord,filename,line);
         break;
     case CodeCompletionType::KeywordsOnly:
@@ -131,23 +141,20 @@ void CodeCompletionPopup::prepareSearch(
         getKeywordCompletionFor(customKeywords);
         break;
     case CodeCompletionType::Macros:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
         getMacroCompletionList(filename, line);
         break;
     case CodeCompletionType::LiteralOperators:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
         getCompletionListForLiteralOperators(filename,line);
         break;
     default:
-        mIncludedFiles = mParser->getIncludedFiles(filename);
-        getCompletionFor(ownerExpression,memberOperator,memberExpression, filename,line, customKeywords);
+        getCompletionFor(ownerExpression,memberOperator,memberExpression, filename,line, customKeywords, reading);
     }
     setCursor(oldCursor);
 }
 
 bool CodeCompletionPopup::search(const QString &memberPhrase, bool autoHideOnSingleResult, const QString& schemeName)
 {
-    QMutexLocker locker(&mMutex);
+    Q_ASSERT(QThread::currentThread() == thread());
 
     mMemberPhrase = memberPhrase;
 
@@ -159,19 +166,10 @@ bool CodeCompletionPopup::search(const QString &memberPhrase, bool autoHideOnSin
     QCursor oldCursor = cursor();
     setCursor(Qt::CursorShape::WaitCursor);
 
-    // filter fFullCompletionStatementList to fCompletionStatementList
     filterList(memberPhrase);
-
-    //if can't find a destructor, maybe '~' is only an operator
-//    if (mCompletionStatementList.isEmpty() && phrase.startsWith('~')) {
-//        symbol = phrase.mid(1);
-//        filterList(symbol);
-//    }
-
-    mModel->notifyUpdated();
     setCursor(oldCursor);
 
-    if (!mCompletionStatementList.isEmpty()) {
+    if (mModel->rowCount({}) != 0) {
         Q_ASSERT(!schemeName.isEmpty());
         PColorSchemeItem item = mColorManager->getItem(schemeName, COLOR_SCHEME_ACTIVE_LINE);
         if (item && item->background().isValid())
@@ -192,9 +190,9 @@ bool CodeCompletionPopup::search(const QString &memberPhrase, bool autoHideOnSin
         show();
         // if only one suggestion, and is exactly the symbol to search, hide the frame (the search is over)
         // if only one suggestion and auto hide , don't show the frame
-        if(mCompletionStatementList.count() == 1)
+        if (mModel->rowCount({}) == 1)
             if (autoHideOnSingleResult
-                    || (memberPhrase == mCompletionStatementList.front()->command)) {
+                    || (memberPhrase == mModel->statement(mModel->index(0, 0))->command)) {
             return true;
         }
     } else {
@@ -203,21 +201,28 @@ bool CodeCompletionPopup::search(const QString &memberPhrase, bool autoHideOnSin
     return false;
 }
 
-PStatement CodeCompletionPopup::selectedStatement()
+std::optional<CompletionEntry> CodeCompletionPopup::selectedStatement() const
 {
-    if (isEnabled()) {
-        int index = mListView->currentIndex().row();
-        if (mListView->currentIndex().isValid()
-                && (index<mCompletionStatementList.count()) ) {
-            return mCompletionStatementList[index];
-        } else {
-            if (!mCompletionStatementList.isEmpty())
-                return mCompletionStatementList.front();
-            else
-                return PStatement();
-        }
-    } else
-        return PStatement();
+    if (!isEnabled()) return {};
+    const auto current = mListView->currentIndex();
+    const auto *entry = mModel->statement(current.isValid() ? current : mModel->index(0, 0));
+    return entry ? std::optional<CompletionEntry>{*entry} : std::nullopt;
+}
+
+CompletionInsertion CodeCompletionPopup::insertionFor(const CompletionEntry &entry, bool appendFunc) const
+{
+    const auto parser = mParser;
+    if (!appendFunc || !entry.alias || !parser || !parser->freeze(entry.alias->parserSerial)) return entry;
+    const auto release = finally([&] { parser->unFreeze(); });
+    // Reconstruct only the alias lookup parameters, while the certificate
+    // still refers to the graph that produced this row.
+    auto query = std::make_shared<Statement>();
+    query->kind = StatementKind::Alias;
+    query->type = entry.alias->type;
+    query->fileName = entry.alias->file;
+    if (const auto resolved = parser->findAliasedStatement(query))
+        return {resolved->command, resolved->fullName, resolved->args, resolved->kind};
+    return entry;
 }
 
 void CodeCompletionPopup::addChildren(const PStatement& scopeStatement,
@@ -334,161 +339,182 @@ void CodeCompletionPopup::addStatement(const PStatement& statement, const QStrin
         return;
     mAddedStatements.insert(statement->command);
     if (statement->kind == StatementKind::UserCodeSnippet || !statement->command.contains("<"))
-        mFullCompletionStatementList.append(statement);
+        appendCandidate(statement);
 }
 
-static bool nameComparator(PStatement statement1,PStatement statement2) {
-    return statement1->command < statement2->command;
+void CodeCompletionPopup::appendCandidate(const PStatement &statement)
+{
+    CompletionEntry entry;
+    entry.command = statement->command;
+    entry.fullName = statement->fullName;
+    entry.args = statement->args;
+    entry.kind = statement->kind;
+    entry.iconKind = getKindOfStatement(statement);
+    entry.scope = statement->scope;
+    entry.accessibility = statement->accessibility;
+    entry.inherited = statement->isInherited();
+    entry.systemHeader = statement->inSystemHeader();
+    if (mRecordUsage && mSymbolUsageManager) {
+        if (const auto usage = mSymbolUsageManager->findUsage(entry.fullName))
+            entry.usageCount = usage->count;
+    }
+    if (entry.kind == StatementKind::Alias)
+        entry.alias = CompletionAliasQuery{statement->type, statement->fileName, mParser->serialId()};
+    mFullCompletionStatementList.append(std::move(entry));
 }
 
-static bool defaultComparator(PStatement statement1,PStatement statement2) {
-    if (statement1->matchPosSpan!=statement2->matchPosSpan)
-        return statement1->matchPosSpan < statement2->matchPosSpan;
-    if (statement1->firstMatchLength != statement2->firstMatchLength)
-        return statement1->firstMatchLength > statement2->firstMatchLength;
-    if (statement1->matchPosTotal != statement2->matchPosTotal)
-        return statement1->matchPosTotal < statement2->matchPosTotal;
-    if (statement1->caseMatched != statement2->caseMatched)
-        return statement1->caseMatched > statement2->caseMatched;
+static bool nameComparator(const CompletionEntry &statement1, const CompletionEntry &statement2) {
+    return statement1.command < statement2.command;
+}
+
+static bool defaultComparator(const CompletionEntry &statement1, const CompletionEntry &statement2) {
+    if (statement1.matchPosSpan!=statement2.matchPosSpan)
+        return statement1.matchPosSpan < statement2.matchPosSpan;
+    if (statement1.firstMatchLength != statement2.firstMatchLength)
+        return statement1.firstMatchLength > statement2.firstMatchLength;
+    if (statement1.matchPosTotal != statement2.matchPosTotal)
+        return statement1.matchPosTotal < statement2.matchPosTotal;
+    if (statement1.caseMatched != statement2.caseMatched)
+        return statement1.caseMatched > statement2.caseMatched;
     // Show user template first
-    if (statement1->kind == StatementKind::UserCodeSnippet) {
-        if (statement2->kind != StatementKind::UserCodeSnippet)
+    if (statement1.kind == StatementKind::UserCodeSnippet) {
+        if (statement2.kind != StatementKind::UserCodeSnippet)
             return true;
         else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::UserCodeSnippet) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::UserCodeSnippet) {
         return false;
         // show keywords first
-    } else if ((statement1->kind == StatementKind::Keyword)
-               && (statement2->kind != StatementKind::Keyword)) {
+    } else if ((statement1.kind == StatementKind::Keyword)
+               && (statement2.kind != StatementKind::Keyword)) {
         return true;
-    } else if ((statement1->kind != StatementKind::Keyword)
-               && (statement2->kind == StatementKind::Keyword)) {
+    } else if ((statement1.kind != StatementKind::Keyword)
+               && (statement2.kind == StatementKind::Keyword)) {
         return false;
     } else
         return nameComparator(statement1,statement2);
 }
 
-static bool sortByScopeComparator(PStatement statement1,PStatement statement2){
-    if (statement1->matchPosSpan!=statement2->matchPosSpan)
-        return statement1->matchPosSpan < statement2->matchPosSpan;
-    if (statement1->firstMatchLength != statement2->firstMatchLength)
-        return statement1->firstMatchLength > statement2->firstMatchLength;
-    if (statement1->matchPosTotal != statement2->matchPosTotal)
-        return statement1->matchPosTotal < statement2->matchPosTotal;
-    if (statement1->caseMatched != statement2->caseMatched)
-        return statement1->caseMatched > statement2->caseMatched;
+static bool sortByScopeComparator(const CompletionEntry &statement1, const CompletionEntry &statement2){
+    if (statement1.matchPosSpan!=statement2.matchPosSpan)
+        return statement1.matchPosSpan < statement2.matchPosSpan;
+    if (statement1.firstMatchLength != statement2.firstMatchLength)
+        return statement1.firstMatchLength > statement2.firstMatchLength;
+    if (statement1.matchPosTotal != statement2.matchPosTotal)
+        return statement1.matchPosTotal < statement2.matchPosTotal;
+    if (statement1.caseMatched != statement2.caseMatched)
+        return statement1.caseMatched > statement2.caseMatched;
     // Show user template first
-    if (statement1->kind == StatementKind::UserCodeSnippet) {
-        if (statement2->kind != StatementKind::UserCodeSnippet)
+    if (statement1.kind == StatementKind::UserCodeSnippet) {
+        if (statement2.kind != StatementKind::UserCodeSnippet)
             return true;
         else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::UserCodeSnippet) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::UserCodeSnippet) {
         return false;
         // show non-system defines before keyword
-    } else if (statement1->kind == StatementKind::Keyword) {
-        if (statement2->kind != StatementKind::Keyword) {
+    } else if (statement1.kind == StatementKind::Keyword) {
+        if (statement2.kind != StatementKind::Keyword) {
             //s1 keyword / s2 system defines, s1 < s2, should return true
             //s1 keyword / s2 not system defines, s2 < s1, should return false;
-            return  statement2->inSystemHeader();
+            return  statement2.inSystemHeader();
         } else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::Keyword) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::Keyword) {
         //s1 system defines / s2 keyword, s2 < s1, should return false;
         //s1 not system defines / s2 keyword, s1 < s2, should return true;
-        return  (!statement1->inSystemHeader());
+        return  (!statement1.inSystemHeader());
     }
     // Show stuff from local headers first
-    if (statement1->inSystemHeader() != statement2->inSystemHeader())
-        return !(statement1->inSystemHeader());
+    if (statement1.inSystemHeader() != statement2.inSystemHeader())
+        return !(statement1.inSystemHeader());
         // Show local statements first
-    if (statement1->scope != StatementScope::Global
-               && statement2->scope == StatementScope::Global ) {
+    if (statement1.scope != StatementScope::Global
+               && statement2.scope == StatementScope::Global ) {
         return true;
-    } else if (statement1->scope == StatementScope::Global
-               && statement2->scope != StatementScope::Global ) {
+    } else if (statement1.scope == StatementScope::Global
+               && statement2.scope != StatementScope::Global ) {
         return false;
     } else
         return nameComparator(statement1,statement2);
 }
 
-static bool sortWithUsageComparator(PStatement statement1,PStatement statement2) {
-    if (statement1->matchPosSpan!=statement2->matchPosSpan)
-        return statement1->matchPosSpan < statement2->matchPosSpan;
-    if (statement1->firstMatchLength != statement2->firstMatchLength)
-        return statement1->firstMatchLength > statement2->firstMatchLength;
-    if (statement1->matchPosTotal != statement2->matchPosTotal)
-        return statement1->matchPosTotal < statement2->matchPosTotal;
-    if (statement1->caseMatched != statement2->caseMatched)
-        return statement1->caseMatched > statement2->caseMatched;
+static bool sortWithUsageComparator(const CompletionEntry &statement1, const CompletionEntry &statement2) {
+    if (statement1.matchPosSpan!=statement2.matchPosSpan)
+        return statement1.matchPosSpan < statement2.matchPosSpan;
+    if (statement1.firstMatchLength != statement2.firstMatchLength)
+        return statement1.firstMatchLength > statement2.firstMatchLength;
+    if (statement1.matchPosTotal != statement2.matchPosTotal)
+        return statement1.matchPosTotal < statement2.matchPosTotal;
+    if (statement1.caseMatched != statement2.caseMatched)
+        return statement1.caseMatched > statement2.caseMatched;
     // Show user template first
-    if (statement1->kind == StatementKind::UserCodeSnippet) {
-        if (statement2->kind != StatementKind::UserCodeSnippet)
+    if (statement1.kind == StatementKind::UserCodeSnippet) {
+        if (statement2.kind != StatementKind::UserCodeSnippet)
             return true;
         else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::UserCodeSnippet) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::UserCodeSnippet) {
         return false;
         //show most freq first
     }
-    if (statement1->usageCount != statement2->usageCount)
-        return statement1->usageCount > statement2->usageCount;
+    if (statement1.usageCount != statement2.usageCount)
+        return statement1.usageCount > statement2.usageCount;
 
-    if ((statement1->kind != StatementKind::Keyword)
-               && (statement2->kind == StatementKind::Keyword)) {
+    if ((statement1.kind != StatementKind::Keyword)
+               && (statement2.kind == StatementKind::Keyword)) {
         return true;
-    } else if ((statement1->kind == StatementKind::Keyword)
-               && (statement2->kind != StatementKind::Keyword)) {
+    } else if ((statement1.kind == StatementKind::Keyword)
+               && (statement2.kind != StatementKind::Keyword)) {
         return false;
     } else
         return nameComparator(statement1,statement2);
 }
 
-static bool sortByScopeWithUsageComparator(PStatement statement1,PStatement statement2){
-    if (statement1->matchPosSpan!=statement2->matchPosSpan)
-        return statement1->matchPosSpan < statement2->matchPosSpan;
-    if (statement1->firstMatchLength != statement2->firstMatchLength)
-        return statement1->firstMatchLength > statement2->firstMatchLength;
-    if (statement1->matchPosTotal != statement2->matchPosTotal)
-        return statement1->matchPosTotal < statement2->matchPosTotal;
-    if (statement1->caseMatched != statement2->caseMatched)
-        return statement1->caseMatched > statement2->caseMatched;
+static bool sortByScopeWithUsageComparator(const CompletionEntry &statement1, const CompletionEntry &statement2){
+    if (statement1.matchPosSpan!=statement2.matchPosSpan)
+        return statement1.matchPosSpan < statement2.matchPosSpan;
+    if (statement1.firstMatchLength != statement2.firstMatchLength)
+        return statement1.firstMatchLength > statement2.firstMatchLength;
+    if (statement1.matchPosTotal != statement2.matchPosTotal)
+        return statement1.matchPosTotal < statement2.matchPosTotal;
+    if (statement1.caseMatched != statement2.caseMatched)
+        return statement1.caseMatched > statement2.caseMatched;
     // Show user template first
-    if (statement1->kind == StatementKind::UserCodeSnippet) {
-        if (statement2->kind != StatementKind::UserCodeSnippet)
+    if (statement1.kind == StatementKind::UserCodeSnippet) {
+        if (statement2.kind != StatementKind::UserCodeSnippet)
             return true;
         else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::UserCodeSnippet) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::UserCodeSnippet) {
         return false;
         //show most freq first
     }
-    if (statement1->usageCount != statement2->usageCount)
-        return statement1->usageCount > statement2->usageCount;
+    if (statement1.usageCount != statement2.usageCount)
+        return statement1.usageCount > statement2.usageCount;
 
         // show non-system defines before keyword
-    if (statement1->kind == StatementKind::Keyword) {
-        if (statement2->kind != StatementKind::Keyword) {
+    if (statement1.kind == StatementKind::Keyword) {
+        if (statement2.kind != StatementKind::Keyword) {
             //s1 keyword / s2 system defines, s1 < s2, should return true
             //s1 keyword / s2 not system defines, s2 < s1, should return false;
-            return  statement2->inSystemHeader();
+            return  statement2.inSystemHeader();
         } else
-            return statement1->command < statement2->command;
-    } else if (statement2->kind == StatementKind::Keyword) {
+            return statement1.command < statement2.command;
+    } else if (statement2.kind == StatementKind::Keyword) {
         //s1 system defines / s2 keyword, s2 < s1, should return false;
         //s1 not system defines / s2 keyword, s1 < s2, should return true;
-        return  (!statement1->inSystemHeader());
+        return  (!statement1.inSystemHeader());
     }
     // Show stuff from local headers first
-    if (statement1->inSystemHeader() != statement2->inSystemHeader())
-        return !(statement1->inSystemHeader());
+    if (statement1.inSystemHeader() != statement2.inSystemHeader())
+        return !(statement1.inSystemHeader());
         // Show local statements first
-    if (statement1->scope != StatementScope::Global
-               && statement2->scope == StatementScope::Global ) {
+    if (statement1.scope != StatementScope::Global
+               && statement2.scope == StatementScope::Global ) {
         return true;
-    } else if (statement1->scope == StatementScope::Global
-               && statement2->scope != StatementScope::Global ) {
+    } else if (statement1.scope == StatementScope::Global
+               && statement2.scope != StatementScope::Global ) {
         return false;
     } else
         return nameComparator(statement1,statement2);
@@ -496,117 +522,52 @@ static bool sortByScopeWithUsageComparator(PStatement statement1,PStatement stat
 
 void CodeCompletionPopup::filterList(const QString &member)
 {
-    QMutexLocker locker(&mMutex);
-    mCompletionStatementList.clear();
-//    if (!mParser)
-//        return;
-//    if (!mParser->enabled())
-//        return;
-    //we don't need to freeze here since we use smart pointers
-    //  and data have been retrieved from the parser
+    const bool hideDouble = mHideSymbolsStartWithTwoUnderline && !member.startsWith("__");
+    const bool hideSingle = mHideSymbolsStartWithUnderline && !member.startsWith('_');
+    const auto sensitivity = mIgnoreCase ? Qt::CaseInsensitive : Qt::CaseSensitive;
+    QList<CompletionEntry> rows;
+    rows.reserve(member.isEmpty() ? mFullCompletionStatementList.size()
+                                  : std::min(mFullCompletionStatementList.size(), qsizetype(256)));
+    for (const auto &candidate : std::as_const(mFullCompletionStatementList)) {
+        const auto &command = candidate.command;
+        if ((hideDouble && command.startsWith("__")) || (hideSingle && command.startsWith('_'))) continue;
+        if (command.size() < member.size()) continue;
 
-    mCompletionStatementList.clear();
-    mCompletionStatementList.reserve(mFullCompletionStatementList.size());
-    bool hideSymbolsTwoUnderline = mHideSymbolsStartWithTwoUnderline && !member.startsWith("__") ;
-    bool hideSymbolsUnderline = mHideSymbolsStartWithUnderline && !member.startsWith("_") ;
-    int len = member.length();
-    foreach (const PStatement& statement, mFullCompletionStatementList) {
-
-        int matched = 0;
-        int caseMatched = 0;
-        QString command = statement->command;
-        int pos = 0;
-        int lastPos = -10;
-        int totalPos = 0;
-        statement->matchPositions.clear();
-        if (hideSymbolsTwoUnderline && statement->command.startsWith("__")) {
-            continue;
-        } else if (hideSymbolsUnderline && statement->command.startsWith("_")) {
-            continue;
-        } else {
-            foreach (const QChar& ch, member) {
-                if (mIgnoreCase)
-                    pos = command.indexOf(ch,pos,Qt::CaseInsensitive);
-                else
-                    pos = command.indexOf(ch,pos,Qt::CaseSensitive);
-                if (pos<0) {
-                    break;
-                }
-                if (pos == lastPos+1) {
-                    statement->matchPositions.last()->end++;
-                } else {
-                    PStatementMathPosition matchPosition=std::make_shared<StatementMatchPosition>();
-                    matchPosition->start = pos;
-                    matchPosition->end = pos+1;
-                    statement->matchPositions.append(matchPosition);
-                }
-                if (ch==command[pos])
-                    caseMatched++;
-                matched++;
-                totalPos += pos;
-                lastPos = pos;
-                pos+=1;
+        QVarLengthArray<CompletionMatchRange, 8> matches;
+        qsizetype caseMatched = 0;
+        qint64 totalPosition = 0;
+        qsizetype searchFrom = 0;
+        bool found = true;
+        for (const QChar ch : member) {
+            const qsizetype position = command.indexOf(ch, searchFrom, sensitivity);
+            if (position < 0) {
+                found = false;
+                break;
             }
+            if (!matches.isEmpty() && matches.back().end == position)
+                ++matches.back().end;
+            else
+                matches.append({position, position + 1});
+            if (ch == command[position]) ++caseMatched;
+            totalPosition += position;
+            searchFrom = position + 1;
         }
-
-        if (mIgnoreCase && matched== len) {
-            statement->caseMatched = caseMatched;
-            statement->matchPosTotal = totalPos;
-            if (member.length()>0) {
-                statement->firstMatchLength = statement->matchPositions.front()->end - statement->matchPositions.front()->start;
-                statement->matchPosSpan = statement->matchPositions.last()->end - statement->matchPositions.front()->start;
-            } else
-                statement->firstMatchLength = 0;
-            mCompletionStatementList.append(statement);
-        } else if (caseMatched == len) {
-            statement->caseMatched = caseMatched;
-            statement->matchPosTotal = totalPos;
-            if (member.length()>0) {
-                statement->firstMatchLength = statement->matchPositions.front()->end - statement->matchPositions.front()->start;
-                statement->matchPosSpan = statement->matchPositions.last()->end - statement->matchPositions.front()->start;
-            } else
-                statement->firstMatchLength = 0;
-            mCompletionStatementList.append(statement);
-        } else {
-            statement->matchPositions.clear();
-            statement->caseMatched = 0;
-            statement->matchPosTotal = 0;
-            statement->firstMatchLength = 0;
-            statement->matchPosSpan = 0;
+        if (!found) continue;
+        auto row = candidate;
+        row.caseMatched = caseMatched;
+        row.matchPosTotal = totalPosition;
+        if (!matches.isEmpty()) {
+            row.firstMatchLength = matches.front().end - matches.front().start;
+            row.matchPosSpan = matches.back().end - matches.front().start;
+            row.matchPositions = QList<CompletionMatchRange>(matches.cbegin(), matches.cend());
         }
+        rows.append(std::move(row));
     }
-    if (mRecordUsage) {
-        int usageCount;
-        foreach (const PStatement& statement,mCompletionStatementList) {
-            if (statement->usageCount == -1 && mSymbolUsageManager) {
-                PSymbolUsage usage = mSymbolUsageManager->findUsage(statement->fullName);
-                if (usage) {
-                    usageCount = usage->count;
-                } else {
-                    usageCount = 0;
-                }
-                statement->usageCount = usageCount;
-            }
-        }
-        if (mSortByScope) {
-            std::sort(mCompletionStatementList.begin(),
-                      mCompletionStatementList.end(),
-                      sortByScopeWithUsageComparator);
-        } else {
-            std::sort(mCompletionStatementList.begin(),
-                      mCompletionStatementList.end(),
-                      sortWithUsageComparator);
-        }
-    } else if (mSortByScope) {
-        std::sort(mCompletionStatementList.begin(),
-                  mCompletionStatementList.end(),
-                  sortByScopeComparator);
-    } else {
-        std::sort(mCompletionStatementList.begin(),
-                  mCompletionStatementList.end(),
-                  defaultComparator);
-    }
-    //    }
+    const auto comparator = mRecordUsage
+        ? (mSortByScope ? sortByScopeWithUsageComparator : sortWithUsageComparator)
+        : (mSortByScope ? sortByScopeComparator : defaultComparator);
+    std::sort(rows.begin(), rows.end(), comparator);
+    mModel->replaceRows(std::move(rows));
 }
 
 void CodeCompletionPopup::getKeywordCompletionFor(const QSet<QString> &customKeywords)
@@ -634,7 +595,7 @@ void CodeCompletionPopup::getCompletionFor(
         const QStringList& memberExpression,
         const QString &fileName,
         int line,
-        const QSet<QString>& customKeywords)
+        const QSet<QString>& customKeywords, bool reading)
 {
 
     if (memberOperator.isEmpty() && ownerExpression.isEmpty() && memberExpression.isEmpty())
@@ -671,13 +632,12 @@ void CodeCompletionPopup::getCompletionFor(
             //add custom code templates
             foreach (const PCodeSnippet& codeIn,mCodeSnippets) {
                 if (!codeIn->code.isEmpty()) {
-                    PStatement statement = std::make_shared<Statement>();
-                    statement->command = codeIn->prefix;
-                    statement->value = codeIn->code;
-                    statement->kind = StatementKind::UserCodeSnippet;
-                    statement->fullName = codeIn->prefix;
-                    statement->usageCount = 0;
-                    mFullCompletionStatementList.append(statement);
+                    CompletionEntry entry;
+                    entry.command = codeIn->prefix;
+                    entry.value = codeIn->code;
+                    entry.kind = entry.iconKind = StatementKind::UserCodeSnippet;
+                    entry.fullName = codeIn->prefix;
+                    mFullCompletionStatementList.append(std::move(entry));
                 }
             }
         }
@@ -696,15 +656,8 @@ void CodeCompletionPopup::getCompletionFor(
             }
     }
 
-    if (!mParser || !mParser->enabled())
-        return;
-
-    if (!mParser->freeze())
-        return;
+    if (!reading) return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
 
         if (memberOperator.isEmpty() || isLambdaReturnType) {
             PStatement scopeStatement = mCurrentScope;
@@ -958,12 +911,7 @@ void CodeCompletionPopup::getCompletionForFunctionWithoutDefinition(const QStrin
     if (memberOperator.isEmpty() && ownerExpression.isEmpty() && memberExpression.isEmpty())
         return;
 
-    if (!mParser->freeze())
-        return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
 
         if (memberOperator.isEmpty()) {
             getCompletionListForComplexKeyword(preWord);
@@ -1039,12 +987,7 @@ void CodeCompletionPopup::getCompletionListForLabels(const QString &fileName, in
     if (!mParser->enabled())
         return;
 
-    if (!mParser->freeze())
-        return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
         PStatement scopeStatement = mParser->findScopeStatement(fileName,line);
         if (scopeStatement && (scopeStatement->kind == StatementKind::Function
                 || scopeStatement->kind == StatementKind::Constructor
@@ -1053,7 +996,7 @@ void CodeCompletionPopup::getCompletionListForLabels(const QString &fileName, in
                 ) {
             foreach(const PStatement &child, scopeStatement->children) {
                 if (child->kind == StatementKind::Label) {
-                    mFullCompletionStatementList.append(child);
+                    appendCandidate(child);
                 }
             }
         }
@@ -1091,12 +1034,7 @@ void CodeCompletionPopup::getCompletionListForNamespaces(const QString &/*preWor
     if (!mParser->enabled())
         return;
 
-    if (!mParser->freeze())
-        return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
         QList<QString> namespaceNames = mParser->namespaces();
         foreach (const QString& name, namespaceNames) {
             PStatementList namespaces = mParser->findNamespace(name);
@@ -1129,12 +1067,7 @@ void CodeCompletionPopup::getCompletionListForTypes(const QString &preWord, cons
     if (!mParser->enabled())
         return;
 
-    if (!mParser->freeze())
-        return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
         QList<PStatement> statements = mParser->listTypeStatements(fileName,line);
         foreach(const PStatement& statement, statements) {
             if (isIncluded(statement->fileName)
@@ -1150,12 +1083,7 @@ void CodeCompletionPopup::getCompletionListForLiteralOperators(const QString &fi
     if (!mParser->enabled())
         return;
 
-    if (!mParser->freeze())
-        return;
     {
-        auto action = finally([this]{
-            mParser->unFreeze();
-        });
         QList<PStatement> statements = mParser->listLiteralOperators(fileName,line);
         foreach(const PStatement& statement, statements) {
             if (isIncluded(statement->fileName)
@@ -1168,12 +1096,10 @@ void CodeCompletionPopup::getCompletionListForLiteralOperators(const QString &fi
 
 void CodeCompletionPopup::addKeyword(const QString &keyword)
 {
-    PStatement statement = std::make_shared<Statement>();
-    statement->command = keyword;
-    statement->kind = StatementKind::Keyword;
-    statement->fullName = keyword;
-    statement->usageCount = 0;
-    mFullCompletionStatementList.append(statement);
+    CompletionEntry entry;
+    entry.command = entry.fullName = keyword;
+    entry.kind = entry.iconKind = StatementKind::Keyword;
+    mFullCompletionStatementList.append(std::move(entry));
 }
 
 bool CodeCompletionPopup::isIncluded(const QString &fileName)
@@ -1239,16 +1165,6 @@ void CodeCompletionPopup::setColors(const std::shared_ptr<QHash<StatementKind, s
 const QString &CodeCompletionPopup::memberPhrase() const
 {
     return mMemberPhrase;
-}
-
-const PStatement &CodeCompletionPopup::currentScope() const
-{
-    return mCurrentScope;
-}
-
-void CodeCompletionPopup::setCurrentScope(const PStatement &newCurrentStatement)
-{
-    mCurrentScope = newCurrentStatement;
 }
 
 const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > >& CodeCompletionPopup::colors() const
@@ -1328,12 +1244,9 @@ void CodeCompletionPopup::setParser(const PCppParser &newParser)
 
 void CodeCompletionPopup::hideEvent(QHideEvent *event)
 {
-    QMutexLocker locker(&mMutex);
+    Q_ASSERT(QThread::currentThread() == thread());
     mListView->setKeypressedCallback(nullptr);
-    mCompletionStatementList.clear();
-//    foreach (PStatement statement, mFullCompletionStatementList) {
-//        statement->matchPositions.clear();
-//    }
+    mModel->replaceRows({});
     mFullCompletionStatementList.clear();
     mIncludedFiles.clear();
     mUsings.clear();
@@ -1355,63 +1268,47 @@ bool CodeCompletionPopup::event(QEvent *event)
     return result;
 }
 
-CodeCompletionListModel::CodeCompletionListModel(const StatementList *statements, IconsManager *iconsManager,QObject *parent):
-    QAbstractListModel(parent),
-    mStatements(statements)
+CodeCompletionListModel::CodeCompletionListModel(IconsManager *iconsManager, QObject *parent)
+    : QAbstractListModel(parent), mIconsManager(iconsManager)
 {
-    mIconsManager = iconsManager;
 }
 
-int CodeCompletionListModel::rowCount(const QModelIndex &) const
+int CodeCompletionListModel::rowCount(const QModelIndex &parent) const
 {
-    return mStatements->count();
+    return parent.isValid() ? 0 : int(mRows.size());
 }
 
 QVariant CodeCompletionListModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid())
-        return QVariant();
-    if (index.row()>=mStatements->count())
-        return QVariant();
-
-    switch(role) {
-    case Qt::DisplayRole: {
-        PStatement statement = mStatements->at(index.row());
-        return statement->command;
-        }
-    }
-    return QVariant();
+    const auto *entry = statement(index);
+    return entry && role == Qt::DisplayRole ? QVariant(entry->command) : QVariant{};
 }
 
-PStatement CodeCompletionListModel::statement(const QModelIndex &index) const
+const CompletionEntry *CodeCompletionListModel::statement(const QModelIndex &index) const
 {
-    if (!index.isValid())
-        return PStatement();
-    if (index.row()>=mStatements->count())
-        return PStatement();
-    return mStatements->at(index.row());
+    if (!index.isValid() || index.model() != this || index.row() < 0 || index.row() >= mRows.size())
+        return nullptr;
+    return &mRows.at(index.row());
 }
 
 QPixmap CodeCompletionListModel::statementIcon(const QModelIndex &index, int size) const
 {
-    if (!mIconsManager || !index.isValid())
-        return QPixmap();
-    if (index.row()>=mStatements->count())
-        return QPixmap();
-    PStatement statement = mStatements->at(index.row());
-    return mIconsManager->getPixmapForStatement(statement, size);
+    const auto *entry = statement(index);
+    if (!mIconsManager || !entry) return {};
+    return mIconsManager->getPixmapForOutline({entry->iconKind, entry->scope, entry->accessibility, entry->inherited}, size);
 }
 
-void CodeCompletionListModel::notifyUpdated()
+void CodeCompletionListModel::replaceRows(QList<CompletionEntry> rows)
 {
     beginResetModel();
+    mRows = std::move(rows);
     endResetModel();
 }
 
 void CodeCompletionListItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
-    PStatement statement;
-    if (mModel && (statement = mModel->statement(index)) ) {
+    const auto *statement = mModel ? mModel->statement(index) : nullptr;
+    if (statement) {
         QFont normalFont{font()};
         QFont matchedFont{font()};
         normalFont.setBold(false);
@@ -1438,20 +1335,20 @@ void CodeCompletionListItemDelegate::paint(QPainter *painter, const QStyleOption
         int pos=0;
         int padding = (option.rect.height()-painter->fontMetrics().height())/2;
         int y=option.rect.bottom()-painter->fontMetrics().descent()-padding;
-        foreach (const PStatementMathPosition& matchPosition, statement->matchPositions) {
-            if (pos<matchPosition->start) {
-                QString t = text.mid(pos,matchPosition->start-pos);
+        for (const auto &matchPosition : statement->matchPositions) {
+            if (pos<matchPosition.start) {
+                QString t = text.mid(pos,matchPosition.start-pos);
                 painter->setPen(normalColor);
                 painter->setFont(normalFont);
                 painter->drawText(x,y,t);
                 x+=painter->fontMetrics().horizontalAdvance(t);
             }
-            QString t = text.mid(matchPosition->start, matchPosition->end-matchPosition->start);
+            QString t = text.mid(matchPosition.start, matchPosition.end-matchPosition.start);
             painter->setPen(matchedColor);
             painter->setFont(matchedFont);
             painter->drawText(x,y,t);
             x+=painter->fontMetrics().horizontalAdvance(t);
-            pos=matchPosition->end;
+            pos=matchPosition.end;
         }
         if (pos<text.length()) {
             QString t = text.mid(pos,text.length()-pos);

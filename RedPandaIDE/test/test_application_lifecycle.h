@@ -7,6 +7,7 @@ class TestApplicationLifecycle : public QObject {
     Q_OBJECT
 private slots:
     void empty_registry_commits_on_next_turn_and_permit_is_single_use();
+    void idle_native_close_can_take_the_permit_before_returning();
     void immediate_acknowledgements_wait_for_complete_broadcast();
     void acknowledgements_are_idempotent_and_attempt_scoped();
     void cancellation_retires_queued_commit_and_resumes_services();

@@ -290,8 +290,15 @@ QPixmap IconsManager::getPixmapForStatement(PStatement statement)
 
 QPixmap IconsManager::getPixmapForStatement(PStatement statement, int size)
 {
+    if (!statement) return {};
+    return getPixmapForOutline({getKindOfStatement(statement), statement->scope, statement->accessibility,
+        statement->isInherited()}, size);
+}
+
+QPixmap IconsManager::getPixmapForOutline(const Analysis::OutlineIconDescriptor &icon, int size)
+{
     if (size == mParserIconSize)
-        return getPixmapForStatement(statement);
+        return getPixmapForOutline(icon);
     if (mParserIconSet != mCachedParserIconSet
         || size != mCachedParserIconSize) {
         mCachedParserIconSet.clear();
@@ -299,7 +306,7 @@ QPixmap IconsManager::getPixmapForStatement(PStatement statement, int size)
         mCachedParserIconSize = size;
         updateParserIcons(mCachedParserIconPixmaps,mParserIconSet,size);
     }
-    return getPixmapForStatement(mCachedParserIconPixmaps, statement);
+    return getPixmapForOutline(mCachedParserIconPixmaps, icon);
 }
 
 IconsManager::PPixmap IconsManager::getPixmap(const QMap<IconName, PPixmap> &iconPixmaps, IconName iconName) const

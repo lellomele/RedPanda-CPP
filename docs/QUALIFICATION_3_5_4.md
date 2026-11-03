@@ -247,3 +247,35 @@ The initial integration passed 49 of 49 CTest groups in 145.70 seconds.
 Following the layout-error recovery correction, all four targeted groups and
 the native Windows runs passed. The native build passed 1,621 checks in
 English and 1,970 in Italian, with no skips.
+
+## Editing, Structure and reference search
+
+Completion rows carry their own matching and usage data. Showing or filtering
+suggestions no longer changes parser symbols. The popup retains valid values
+across a parser publication. If a later alias lookup refers to a different
+parser revision, insertion uses the captured candidate spelling.
+
+A project reference search yields to the interface between files and publishes
+its results together. If the document revision, project or parser changes, the
+old request is discarded. Rename validates the document again after the naming
+dialog. Close and discard decisions use document identity and revision, even
+when a later edit returns the buffer to identical text.
+
+Structure reuses repeated declaration and definition paths in its bounded
+projection. A generated 100,000-line fixture that previously stopped at a
+partial result now produced 16,668 roots. This benchmark covers the whole IDE
+on Windows x64 with Qt 6.11.2.
+
+| Lines | Open (ms) | Structure ready from open (ms) | Expand (ms) | Completion (ms) | 40 edit pairs (ms) | Peak working set (MiB) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3,000 | 18.59 | 151.25 | 3.01 | 3.20 | 23.48 | 147.47 |
+| 30,000 | 88.50 | 674.21 | 2.79 | 7.42 | 70.43 | 219.50 |
+| 100,000 | 240.38 | 1,981.17 | 3.47 | 19.50 | 201.41 | 391.26 |
+
+Expansion, completion and edit timings are medians of five samples per
+fixture. Open and time to Structure ready are one sample per size. The
+maximum event-loop heartbeat gap during opening and analysis of the largest
+fixture was 242.86 ms. The earlier high-memory incident has no established
+cause, and these generated fixtures cover a separate workload.
+
+The candidate passed 50 of 50 CTest groups in 129.72 seconds and all native Windows checks in English (1,621) and Italian (1,970), with no skips.

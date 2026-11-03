@@ -16,6 +16,8 @@
 #include "src/colorscheme.h"
 #include "src/editor.h"
 #include "test_editor_symbol_completion.h"
+#include "src/documentstore.h"
+#include <QTemporaryDir>
 #include <qsynedit/syntaxer/cpp.h>
 
 using QSynedit::CharPos;
@@ -2647,6 +2649,67 @@ void TestEditorSymbolCompletion::test_completion_popup_keywords_after_cancel()
     QVERIFY(!popup.selectedStatement());
     QVERIFY(popup.search("keywordBeta", true, mEditorSettings->colorScheme()));
     QCOMPARE(popup.selectedStatement()->command, QString("keywordBeta"));
+    popup.hide();
+}
+
+void TestEditorSymbolCompletion::test_completion_values_survive_parser_publication_change()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString file = directory.filePath("completion.cpp");
+    const auto parser = std::make_shared<CppParser>();
+    const auto documents = std::make_shared<DocumentStore>();
+    const auto buffer = std::make_shared<QStringList>(QStringList{"int capturedAlpha;"});
+    const auto id = documents->add(file, [buffer](QStringList &output) {
+        output = *buffer;
+        return true;
+    });
+    QVERIFY(id);
+    parser->setInputSnapshotProvider([documents] { return documents->capture(); });
+    Analysis::ParserConfigurationValues config;
+    config.enabled = true;
+    QVERIFY(parser->submitConfiguration(Analysis::ParserConfiguration::create(std::move(config))));
+    QTRY_VERIFY_WITH_TIMEOUT(parser->configurationState() == CppParser::ConfigurationState::Ready, 5000);
+    const auto parse = [&] { return CppParser::parseFileNonBlocking(parser, file, false, {}); };
+    QVERIFY(parse() == CppParser::RequestResult::Accepted);
+    QTRY_VERIFY_WITH_TIMEOUT(!parser->hasPendingWork(), 5000);
+
+    CodeCompletionPopup popup(mColorManager.get(), nullptr);
+    popup.setShowEditorCaretFunc([] {});
+    popup.setParser(parser);
+    popup.prepareSearch({}, {}, {}, {"captured"}, file, 2, CodeCompletionType::Normal, {});
+    QVERIFY(popup.search("capturedA", true, mEditorSettings->colorScheme()));
+    const auto prior = popup.selectedStatement();
+    QVERIFY(prior && prior->command == "capturedAlpha");
+    documents->beginChange(id);
+    *buffer = {"int capturedBeta;"};
+    documents->commitChange(id);
+    QVERIFY(parse() == CppParser::RequestResult::Accepted);
+    QTRY_VERIFY_WITH_TIMEOUT(!parser->hasPendingWork(), 5000);
+    QCOMPARE(prior->command, QString("capturedAlpha"));
+    QVERIFY(popup.selectedStatement() && popup.selectedStatement()->command == "capturedAlpha");
+
+    popup.hide();
+    popup.setParser(parser);
+    popup.prepareSearch({}, {}, {}, {"captured"}, file, 2, CodeCompletionType::Normal, {});
+    QVERIFY(popup.search("capturedB", true, mEditorSettings->colorScheme()));
+    QVERIFY(popup.selectedStatement() && popup.selectedStatement()->command == "capturedBeta");
+    popup.hide();
+    parser->stopScheduling();
+    QTRY_VERIFY_WITH_TIMEOUT(parser->analysisQuiesced(), 5000);
+}
+
+void TestEditorSymbolCompletion::test_completion_match_range_handles_long_identifiers()
+{
+    CodeCompletionPopup popup(mColorManager.get(), nullptr);
+    popup.setShowEditorCaretFunc([] {});
+    const QString keyword = QString(70000, 'x') + "needle";
+    popup.prepareSearch({}, {}, {}, {}, "unsaved.cpp", 0, CodeCompletionType::KeywordsOnly, {keyword});
+    QVERIFY(popup.search("needle", true, mEditorSettings->colorScheme()));
+    const auto selection = popup.selectedStatement();
+    QVERIFY(selection && selection->matchPositions.size() == 1);
+    QCOMPARE(selection->matchPositions.front().start, qsizetype(70000));
+    QCOMPARE(selection->matchPositions.front().end, qsizetype(70006));
     popup.hide();
 }
 

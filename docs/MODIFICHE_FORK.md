@@ -182,3 +182,21 @@ Windows può ritardare la creazione nativa del processo dentro QProcess, prima c
 Informazioni e Aiuto > Sito web ora puntano al repository GitHub del fork in ogni lingua. Informazioni distingue il codice Red Panda C++/QSynEdit ereditato dalle modifiche del fork e mostra la dicitura aggiornata 2026 con autore e contatto. Gli avvisi originali dei sorgenti e i copyright di terze parti sono conservati.
 
 La release correttiva 3.5.1 pubblica i link al fork e i crediti distinti, il copyright con contatto aggiornato, la documentazione bilingue e le distribuzioni Windows rigenerate.
+
+## Stabilità di editing e progetti nella 3.5.4
+
+Struttura mantiene utilizzabile l’albero del file corrente durante un
+aggiornamento e svuota l’albero precedente quando si cambia file. La lista di
+completamento conserva i propri dati. La ricerca dei riferimenti di progetto
+pubblica i risultati al termine e scarta le richieste superate da nuove
+modifiche.
+
+Salva, Salva con nome e la conversione di codifica registrano la revisione
+accettata del documento. La compilazione di progetto acquisisce i percorsi e
+le opzioni del compilatore. I Makefile generati sostituiscono la versione
+precedente a scrittura completata. In chiusura la finestra attende la conferma
+dei servizi in background. Un errore nel salvataggio del layout mantiene
+aperto lo spazio di lavoro per riprovare.
+
+Il [registro delle verifiche 3.5.4](VERIFICHE_3_5_4.md) comprende le regressioni
+Windows e le misure dell’IDE a 3.000, 30.000 e 100.000 righe.

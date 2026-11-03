@@ -674,9 +674,17 @@ QList<PStatement> CppParser::listLiteralOperators(const QString &fileName, int l
     return doListStatements(fileName,line, kinds);
 }
 
-PStatement CppParser::doFindAliasedStatement(const PStatement &statement) const {
-    QSet<Statement *> foundSet;
-    return doFindAliasedStatement(statement,foundSet);
+PStatement CppParser::doFindAliasedStatement(const PStatement &statement) const
+{
+    QSet<Statement *> visited;
+    auto alias = statement;
+    while (alias && !visited.contains(alias.get())) {
+        visited.insert(alias.get());
+        auto target = findAliasTarget(alias);
+        if (!target || target->kind != StatementKind::Alias) return target;
+        alias = std::move(target);
+    }
+    return {};
 }
 
 PStatement CppParser::doFindNoTemplateSpecializationClass(const PStatement &statement) const
@@ -696,7 +704,7 @@ PStatement CppParser::doFindNoTemplateSpecializationClass(const PStatement &stat
     return statement;
 }
 
-PStatement CppParser::doFindAliasedStatement(const PStatement &statement, QSet<Statement *> foundSet) const
+PStatement CppParser::findAliasTarget(const PStatement &statement) const
 {
     if (!statement)
         return PStatement();
@@ -708,7 +716,6 @@ PStatement CppParser::doFindAliasedStatement(const PStatement &statement, QSet<S
     PParsedFileInfo fileInfo = mPreprocessor.findFileInfo(statement->fileName);
     if (!fileInfo)
         return PStatement();
-    foundSet.insert(statement.get());
     PStatement result;
     if (nsName.isEmpty()) {
         QList<PStatement> resultList = findMembersOfStatement(name,PStatement());
@@ -735,12 +742,6 @@ PStatement CppParser::doFindAliasedStatement(const PStatement &statement, QSet<S
                 break;
         }
     }
-    if (!result)
-        return PStatement();
-    if (foundSet.contains(result.get()))
-        return PStatement();
-    if (result->kind == StatementKind::Alias)
-        result = doFindAliasedStatement(result, foundSet);
     return result;
 }
 
@@ -1751,7 +1752,6 @@ PStatement CppParser::addStatement(const PStatement& parent,
         result->fullName =  newCommand;
     else
         result->fullName =  getFullStatementName(newCommand + templateSpecializationParams, parent);
-    result->usageCount = -1;
 
     result->args.squeeze();
     result->noNameArgs.squeeze();

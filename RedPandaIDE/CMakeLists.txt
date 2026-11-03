@@ -31,6 +31,7 @@ target_qt_plain_cpp(RedPandaIDE
     test/recoverychecks
     test/projectoperationchecks
     test/interfacechecks
+    test/editorperformancechecks
     test/compilerworkflowchecks
     src/colorscheme
     src/customfileiconprovider
@@ -335,11 +336,13 @@ if (QT_FEATURE_static)
         INCLUDE Qt::QOffscreenIntegrationPlugin)
 endif()
 
-add_custom_command(
-    TARGET test-editor POST_BUILD
+add_custom_target(copy-ide-test-resources
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "$<TARGET_PROPERTY:test-editor,SOURCE_DIR>/test/resources"
-        "$<TARGET_PROPERTY:test-editor,BINARY_DIR>/resources")
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/resources"
+        "${CMAKE_CURRENT_BINARY_DIR}/resources"
+    COMMENT "Copying shared IDE test resources"
+    VERBATIM)
+add_dependencies(test-editor copy-ide-test-resources)
 
 target_compile_definitions(test-editor PRIVATE
     ${GLOBAL_COMPILE_DEFINITIONS}
@@ -407,11 +410,7 @@ if (QT_FEATURE_static)
         INCLUDE Qt::QOffscreenIntegrationPlugin)
 endif()
 
-add_custom_command(
-    TARGET test-cppparser POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "$<TARGET_PROPERTY:test-cppparser,SOURCE_DIR>/test/resources"
-        "$<TARGET_PROPERTY:test-cppparser,BINARY_DIR>/resources")
+add_dependencies(test-cppparser copy-ide-test-resources)
 
 target_compile_definitions(test-cppparser PRIVATE
     ${GLOBAL_COMPILE_DEFINITIONS}

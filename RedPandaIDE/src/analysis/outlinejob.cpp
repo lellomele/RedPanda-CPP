@@ -46,9 +46,13 @@ OutlineJobResult buildOutline(const SemanticGraphSource &graph, const OutlineCer
         result.status = OutlineJobStatus::Ready;
         result.publication = output.publication;
         break;
-    case SemanticBuildStatus::Partial:
-        result.status = OutlineJobStatus::Partial;
+    case SemanticBuildStatus::Partial: {
+        const auto &graph = output.diagnostics.graph;
+        const bool limited = output.diagnostics.textLimitReached || graph.parentDepthLimited ||
+            graph.nodeLimitReached || graph.sourceLimitReached || graph.workLimitReached || graph.pendingLimitReached;
+        result.status = limited ? OutlineJobStatus::ResourceLimit : OutlineJobStatus::Partial;
         break;
+    }
     case SemanticBuildStatus::AllocationFailure:
     case SemanticBuildStatus::BudgetExceeded:
         result.status = OutlineJobStatus::ResourceLimit;

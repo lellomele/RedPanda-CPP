@@ -759,23 +759,23 @@ bool EditorManager::closeEditor(Editor* editor, bool transferFocus, bool force, 
             return false;
     } else if (editor->modified() && decision == EditorCloseDecision::Ask) {
         const QString filename = editor->filename();
-        const QStringList questionedContent = editor->content();
+        const QByteArray encoding = editor->editorEncoding();
+        const auto id = documentId(editor);
+        const auto revision = documentRevision(editor);
+        if (!id || !revision) return false;
         // ask user if he wants to save
         QMessageBox::StandardButton reply;
         reply = QMessageBox::question(editor,QObject::tr("Save"),
                                       QString(QObject::tr("Save changes to %1?")).arg(editor->filename()),
                                       QMessageBox::Yes|QMessageBox::No|QMessageBox::Cancel);
-        if (!target || !findPageControlForEditor(target) || target->filename() != filename)
+        if (!target || !findPageControlForEditor(target) || target->filename() != filename ||
+                target->editorEncoding() != encoding || documentId(target) != id || documentRevision(target) != revision)
             return false;
         if (reply == QMessageBox::Yes) {
             if (!target->save(false,false) || !target || target->modified())
                 return false;
         } else if (reply != QMessageBox::No) {
             // Only an explicit discard choice may close an unsaved buffer.
-            return false;
-        } else if (target->content() != questionedContent) {
-            // The answer did not authorize discarding a different revision
-            // introduced by a reentrant completion or external-file event.
             return false;
         }
     }

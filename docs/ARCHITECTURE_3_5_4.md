@@ -140,3 +140,13 @@ and current document identity. A complete project view requires every requested
 project root. Retained snapshots stay charged until background reclamation.
 Completion, refactoring and the remaining service shutdown paths are separate
 migration steps. The qualification record contains the Windows results.
+
+## Editor consumers and close decisions
+
+Completion owns its displayed values and ranks them independently of the
+parser. The engine lease covers candidate discovery and any revision-matched
+alias lookup. Project references capture the workspace, documents and parser
+revision and yield between files before one publication. A close plan records
+document identity, revision, filename and encoding without copying the text.
+The application lifecycle keeps the workspace until its registered services
+acknowledge stop and the plan is revalidated.

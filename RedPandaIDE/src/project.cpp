@@ -609,7 +609,7 @@ OperationResult Project::removeUnit(PProjectUnit &unit, bool doClose, bool remov
     if (editor && doClose) {
         // Temporary legacy controller adapter: collect the decision without
         // closing/detaching a buffer. The plan owns the accepted revision.
-        const auto prepared = closePlan.prepare({editor.data()}, [](Editor *candidate, bool &discard) {
+        const auto prepared = closePlan.prepare(*mEditorManager, {editor.data()}, [](Editor *candidate, bool &discard) {
             const QPointer<Editor> live(candidate);
             const auto answer = QMessageBox::question(candidate, QObject::tr("Save"),
                 QObject::tr("Save changes to %1?").arg(candidate->filename()),

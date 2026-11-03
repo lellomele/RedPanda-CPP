@@ -205,6 +205,14 @@ SemanticPublicationBuild SemanticPublicationBuilder::build(const SemanticGraphSo
             for (const QChar character : value) copy.push_back(character.unicode());
             return copy;
         };
+        SemanticTextRef lastLocationFile;
+        const auto locationFile = [&](QStringView filename) {
+            if (filename.isEmpty()) return SemanticTextRef{};
+            // Location paths tend to repeat for every declaration and
+            // definition in a unit. Retain the arena offset across growth.
+            if (shard->text(lastLocationFile) != filename) lastLocationFile = text(filename);
+            return lastLocationFile;
+        };
         const auto valueRecord = [&](const SemanticSourceSymbol &value) {
             SemanticRecord record;
             record.name = text(value.name); record.qualifiedName = text(value.qualifiedName);
@@ -212,8 +220,8 @@ SemanticPublicationBuild SemanticPublicationBuilder::build(const SemanticGraphSo
             record.value = text(value.value); record.templateArguments = text(value.templateArguments);
             record.kind = value.kind; record.scope = value.scope; record.accessibility = value.accessibility;
             record.properties = value.properties;
-            record.declaration = {text(value.declaration.filename), value.declaration.line, value.declaration.column};
-            record.definition = {text(value.definition.filename), value.definition.line, value.definition.column};
+            record.declaration = {locationFile(value.declaration.filename), value.declaration.line, value.declaration.column};
+            record.definition = {locationFile(value.definition.filename), value.definition.line, value.definition.column};
             if (!value.selectionKey.isEmpty()) record.selectionKey = text(value.selectionKey);
             else {
                 auto key = string(value.declaration.filename);

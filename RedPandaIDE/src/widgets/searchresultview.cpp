@@ -52,10 +52,12 @@ PSearchResults SearchResultModel::addSearchResults(
 }
 
 PSearchResults SearchResultModel::addSearchResults(
-        const QString &keyword, const QString &symbolScopeFullName, SearchFileScope scope)
+        const QString &keyword, const QString &symbolScopeFullName, SearchFileScope scope,
+        QList<PSearchResultTreeItem> items)
 {
     const auto added = std::make_shared<SearchResults>(keyword, symbolScopeFullName,
             "", SearchType::FindOccurences, scope);
+    added->mResults = std::move(items);
     {
         QScopedValueRollback<bool> updating(mUpdating, true);
         mTreeModel->beginResetModel();
@@ -649,4 +651,3 @@ void SearchResults::setSymbolScopeFullName(const QString &newSymbolScopeFullName
 {
     mSymbolScopeFullName = newSymbolScopeFullName;
 }
-

@@ -26,6 +26,8 @@
 #include "projectoptions.h"
 #include "utils.h"
 #include "operationresult.h"
+#include "documentstore.h"
+#include "unitlocationplan.h"
 
 class Project;
 class Editor;
@@ -116,10 +118,14 @@ public:
     const QByteArray &realEncoding() const;
     void setRealEncoding(const QByteArray &newRealEncoding);
     const Relocation &relocation() const { return mRelocation; }
+    DocumentId documentId() const { return mDocumentId; }
 
 private:
     friend class Project;
     Relocation mRelocation;
+    // The authoritative runtime binding. Paths are lookup keys for files;
+    // this identity survives Save As/rename and is never persisted across runs.
+    DocumentId mDocumentId = 0;
     Project* mParent;
     QString mFileName;
     QString mFolder;
@@ -137,6 +143,12 @@ private:
 };
 
 using PProjectUnit = std::shared_ptr<ProjectUnit>;
+enum class ProjectPathStatus { Found, NotInProject, Conflict };
+struct ProjectPathResult {
+    ProjectPathStatus status = ProjectPathStatus::NotInProject;
+    PProjectUnit unit;
+    QString error;
+};
 
 class GitRepository;
 class ProjectModel : public QAbstractItemModel {
@@ -267,17 +279,24 @@ public:
     OperationResult resolveUnitRelocation(PProjectUnit &unit, const QString &verifiedFileName,
                                            Editor *acceptedEditor = nullptr);
     OperationResult validateBuildInputs() const;
+    OperationResult prepareUnitLocation(const PProjectUnit &unit, UnitLocationCommand command,
+                                        const QString &target, Editor *acceptedEditor,
+                                        UnitLocationPlan::Pointer &prepared) const;
+    OperationResult validateUnitLocation(const UnitLocationPlan &plan) const;
+    UnitLocationCommitResult commitUnitLocation(const UnitLocationPlan &plan);
+    OperationResult deferUnitLocation(const UnitLocationPlan &plan, const QString &diagnostic);
     OperationResult renameUnitFile(PProjectUnit &unit, const QString &newFileName, bool replaceExisting = false);
     OperationResult saveMetadata();
     bool saveUnits();
 
     PProjectUnit findUnit(const QString& filename) const;
+    ProjectPathResult resolveUnitPath(const QString &filename) const;
     PProjectUnit findUnit(const Editor* editor) const;
     bool inProject(const QString& filename) const;
     bool inProject(const Editor* editor) const;
 
-    void associateEditor(Editor* editor);
-    void associateEditorToUnit(Editor* editor, PProjectUnit unit);
+    OperationResult associateEditor(Editor* editor);
+    OperationResult associateEditorToUnit(Editor* editor, PProjectUnit unit);
     bool setCompileOption(const QString &key, const QString &value);
     QString getCompileOption(const QString &key) const;
 
@@ -339,7 +358,7 @@ private:
                 PProjectModelNode parentNode);
 
     bool assignTemplate(const std::shared_ptr<ProjectTemplate> aTemplate, bool useCpp);
-    void checkProjectFileForUpdate(SimpleIni& ini);
+    bool checkProjectFileForUpdate(SimpleIni& ini);
     void createFolderNodes();
     void createFileSystemFolderNodes();
     void createFileSystemFolderNode(ProjectModelNodeType folderType, const QString& folderName, PProjectModelNode parent, const QSet<QString>& validFolders);
@@ -347,7 +366,8 @@ private:
     PProjectModelNode findFileSystemFolderNode(const QString& folderPath, ProjectModelNodeType nodeType);
     PProjectModelNode getCustomeFolderNodeFromName(const QString& name);
     void loadOptions(SimpleIni& ini);
-    void populateUnits(SimpleIni &ini);
+    void populateUnits(SimpleIni &ini, const UnitLocationPlan *location = nullptr);
+    static UnitLocationPlan::Settings locationSettings(const PProjectUnit &unit);
     void populateOptions(SimpleIni &ini);
     //PProjectUnit
     QHash<QString, PProjectEditorLayout> loadLayout();
@@ -368,7 +388,7 @@ private:
     void updateCompilerSetting();
 
 private:
-    QHash<QString,PProjectUnit> mUnits;
+    QMap<NativePathKey,PProjectUnit> mUnits;
     ProjectOptions mOptions;
     QString mFilename;
     QString mName;

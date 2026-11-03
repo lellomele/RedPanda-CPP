@@ -25,6 +25,9 @@
 #include "../utils.h"
 #include "../utils/file.h"
 #include "../common.h"
+#include "filecompilerequest.h"
+#include "../operationresult.h"
+#include "../documentstore.h"
 
 class MainWindow;
 class Runner;
@@ -54,11 +57,19 @@ public:
     // A finished thread may still own objects until its queued disposal runs.
     int trackedWorkerCount() const;
 
-    void compile(const QString& filename, FileType fileType, const QByteArray& encoding, bool rebuild, CppCompileType compileType);
+    void compile(const QString& filename, FileType fileType, const QByteArray& encoding, bool rebuild, CppCompileType compileType,
+                 Compilation::CompileIdentity identity = {});
     void compileProject(std::shared_ptr<Project> project, bool rebuild);
     void cleanProject(std::shared_ptr<Project> project);
     void buildProjectMakefile(std::shared_ptr<Project> project);
-    void checkSyntax(const QString&filename, const QByteArray& encoding, const QString& content, std::shared_ptr<Project> project);
+    void checkSyntax(const QString&filename, const QByteArray& encoding, const QString& content, std::shared_ptr<Project> project,
+                     Compilation::CompileIdentity identity = {});
+    OperationResult lastCompileOutcome() const { return mLastCompileOutcome; }
+    OperationResult lastSyntaxCheckOutcome() const { return mLastSyntaxCheckOutcome; }
+    CompilerType lastSyntaxCompilerType() const { return mLastSyntaxCompilerType; }
+    bool canContinueLastCompile() const { return mCanContinueLastCompile; }
+    Compilation::ProcessOwnershipLevel lastCompileOwnership() const { return mLastCompileOwnership; }
+    Compilation::ProcessOwnershipLevel lastSyntaxCheckOwnership() const { return mLastSyntaxCheckOwnership; }
     void run(
             const QString& filename,
             const QString& arguments,
@@ -105,9 +116,15 @@ private slots:
     void onSyntaxCheckFinished(const QString& filename);
     void onSyntaxCheckIssue(PCompileIssue issue);
 private:
+    friend class CompilerRequestChecks;
     void trackWorker(QThread *worker);
     ProjectCompiler* createProjectCompiler(std::shared_ptr<Project> project);
     PCppParser getParserForFile(const QString& filename);
+    Compilation::FileCompileRequest::Pointer captureFileRequest(const QString &filename, FileType fileType,
+        const QByteArray &encoding, CppCompileType compileType, bool syntaxOnly, bool rebuild,
+        const QString &content, Project *project, Compilation::CompileIdentity identity, PAnalysisInputSnapshot &inputs);
+    void connectCapturedCompiler(Compiler *compiler, bool syntaxOnly);
+    bool diagnosticsAreCurrent(const Compilation::FileCompileRequest::Pointer &request) const;
 private:
     MainWindow *mMainWindow;
     Compiler* mCompiler;
@@ -121,6 +138,14 @@ private:
     // Mutated only on this QObject's GUI thread. Removal uses QThread::finished,
     // not an earlier task-specific completion signal.
     QSet<QThread *> mWorkers;
+    quint64 mNextCompileJobId = 0;
+    QHash<QString, Compilation::CapabilityFacts> mCapabilityCache;
+    OperationResult mLastCompileOutcome = OperationResult::cancelled();
+    OperationResult mLastSyntaxCheckOutcome = OperationResult::cancelled();
+    CompilerType mLastSyntaxCompilerType = CompilerType::Unknown;
+    bool mCanContinueLastCompile = false;
+    Compilation::ProcessOwnershipLevel mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+    Compilation::ProcessOwnershipLevel mLastSyntaxCheckOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
     mutable QRecursiveMutex mCompileMutex;
     mutable QRecursiveMutex mBackgroundSyntaxCheckMutex;
     mutable QRecursiveMutex mRunnerMutex;

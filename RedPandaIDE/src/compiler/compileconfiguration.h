@@ -3,6 +3,7 @@
 #define COMPILECONFIGURATION_H
 
 #include "compilerinfo.h"
+#include "../pathidentity.h"
 #include <QMap>
 #include <QSet>
 #include <QStringList>
@@ -14,6 +15,8 @@
 // Plain values only. This boundary deliberately has no Project, Editor,
 // CompilerSet, parser, settings, callback or QObject ownership.
 namespace Compilation {
+
+enum class ProcessOwnershipLevel { NoProcessStarted, DriverOnlyUnverifiedTree, WindowsTreeQuiescent };
 
 enum class PreparationStatus { Ready, Pending, Conflict, Failed, Cancelled };
 struct PreparationResult {
@@ -53,6 +56,11 @@ struct PreferencesValues {
     QString nasmPath;
     QByteArray systemEncoding, consoleEncoding;
 };
+struct CapabilityFacts {
+    bool supportNLS = false;
+    bool supportConvertingCharset = false;
+    bool compilerUsingUTF8 = true;
+};
 
 // This is the subset used by single-file/stdin argument planning. Project build
 // unit and dependency snapshots are a separate migration, not a fake Project.
@@ -74,20 +82,32 @@ struct AutolinkResolution {
     QString error;
     QStringList linkOptions; // Keep rule order; parsing/expansion is a later step.
     bool forceExecUTF8 = false;
+    qsizetype ruleSuffixCodeUnitsExamined = 0;
 };
 
 struct AutolinkValues {
+    enum class Freshness { UnknownEngineCache, VerifiedReadManifest };
     bool enabled = false;
     bool complete = true;
     QString analysisIdentity;
+    Freshness freshness = Freshness::UnknownEngineCache;
     QMap<QString, AutolinkRuleValues> rules;
     QMap<QString, QStringList> directIncludes;
     qsizetype nodeBudget = 100000;
     qsizetype edgeBudget = 1000000;
+    qsizetype ruleMatchBudget = 1000000;
+    // Cumulative conservative code-unit work in fallback suffix comparisons.
+    // Map/node operations remain governed by the separate graph budgets.
+    qsizetype ruleSuffixCodeUnitBudget = 8 * 1024 * 1024;
 
     AutolinkResolution resolve(const QString &root) const {
         AutolinkResolution result;
         if (!enabled) return result;
+        if (nodeBudget < 0 || edgeBudget < 0 || ruleMatchBudget < 0 || ruleSuffixCodeUnitBudget < 0) {
+            result.complete = false;
+            result.error = QStringLiteral("Invalid autolink preparation budget.");
+            return result;
+        }
         if (!complete) {
             result.complete = false;
             result.error = QStringLiteral("Dependency analysis is not ready.");
@@ -96,6 +116,7 @@ struct AutolinkValues {
         QSet<QString> visited;
         QStringList pending{root};
         qsizetype edges = 0;
+        qsizetype ruleMatches = 0;
         while (!pending.isEmpty()) {
             const QString file = pending.takeLast();
             if (visited.contains(file)) continue;
@@ -109,17 +130,41 @@ struct AutolinkValues {
             if (rule == rules.cend()) {
                 // Match the existing manager's exact-path, then suffix-key order.
                 for (auto it = rules.cbegin(); it != rules.cend(); ++it) {
-#ifdef Q_OS_WIN
-                    constexpr auto sensitivity = Qt::CaseInsensitive;
-#else
-                    constexpr auto sensitivity = Qt::CaseSensitive;
-#endif
-                    if (file.endsWith(QLatin1Char('/') + it.key(), sensitivity)) {
+                    if (ruleMatches >= ruleMatchBudget) {
+                        result.complete = false;
+                        result.error = QStringLiteral("Autolink rule matching limit exceeded.");
+                        break;
+                    }
+                    ++ruleMatches;
+                    const auto &key = it.key();
+                    // Preserve the legacy slash segment boundary. In
+                    // particular, "dir/file.h" must not match "notdir/file.h".
+                    if (file.size() <= key.size()) continue;
+                    if (result.ruleSuffixCodeUnitsExamined >= ruleSuffixCodeUnitBudget) {
+                        result.complete = false;
+                        result.error = QStringLiteral("Autolink suffix text-work limit exceeded.");
+                        break;
+                    }
+                    ++result.ruleSuffixCodeUnitsExamined;
+                    const qsizetype boundary = file.size() - key.size() - 1;
+                    if (file.at(boundary) != QLatin1Char('/')) continue;
+                    // Cover the equality/UTF-16/NUL-validation/native compare
+                    // passes plus a possible exact fallback before invoking it.
+                    // Division before multiplication avoids signed overflow.
+                    constexpr qsizetype comparisonPasses = 10;
+                    if (key.size() > (ruleSuffixCodeUnitBudget - result.ruleSuffixCodeUnitsExamined) / comparisonPasses) {
+                        result.complete = false;
+                        result.error = QStringLiteral("Autolink suffix text-work limit exceeded.");
+                        break;
+                    }
+                    result.ruleSuffixCodeUnitsExamined += key.size() * comparisonPasses;
+                    if (compareNativePathSpelling(QStringView{file}.right(key.size()), QStringView{key}) == 0) {
                         rule = it;
                         break;
                     }
                 }
             }
+            if (!result.complete) break;
             if (rule != rules.cend()) {
                 if (!rule->linkOption.isEmpty()) result.linkOptions.append(rule->linkOption);
                 result.forceExecUTF8 = result.forceExecUTF8 || rule->execUseUTF8;

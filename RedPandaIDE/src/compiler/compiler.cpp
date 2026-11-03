@@ -15,7 +15,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "compiler.h"
+#include "../analysis/parsertoolchainprobe.h"
+#include "../parser/cpppreprocessor.h"
+#include "frozencompilearguments.h"
+#include "toolchaincapabilities.h"
 #include "processcancellation.h"
+#include "processtreecompletion.h"
 #include <exception>
 #include "compilerinfo.h"
 #include "../utils.h"
@@ -29,6 +34,9 @@
 #include <QFileInfo>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QSaveFile>
+#include <QDir>
+#include <QStringDecoder>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMutex>
@@ -43,10 +51,15 @@
 #include "../autolinkmanager.h"
 #include "qt_utils/charsetinfo.h"
 #include "../project.h"
+#include "../pathidentity.h"
 
 #define COMPILE_PROCESS_END "---//END//----"
 
-Compiler::Compiler(const QString &filename, bool onlyCheckSyntax):
+Compiler::Compiler(const QString &filename, bool onlyCheckSyntax): Compiler(filename, onlyCheckSyntax, true)
+{
+}
+
+Compiler::Compiler(const QString &filename, bool onlyCheckSyntax, bool captureLegacyMacros):
     QThread{},
     mOnlyCheckSyntax{onlyCheckSyntax},
     mFilename{filename},
@@ -55,9 +68,10 @@ Compiler::Compiler(const QString &filename, bool onlyCheckSyntax):
     mForceEnglishOutput{false}
 {
     mParserForFile = nullptr;
+    if (!filename.isEmpty()) mProtectedInputPaths.append(filename);
     // CompilerManager constructs each task on the GUI thread, before start().
     // Worker argument expansion must not read editor widgets or window lifetime.
-    if (pMainWindow && QThread::currentThread() == pMainWindow->thread())
+    if (captureLegacyMacros && pMainWindow && QThread::currentThread() == pMainWindow->thread())
         mMacroVariables = pMainWindow->macroVariables();
     // Snapshot QA opt-in on the GUI thread. A delayed worker must not depend
     // on a test helper restoring the environment or on GUI lifetime.
@@ -73,6 +87,72 @@ Compiler::Compiler(const QString &filename, bool onlyCheckSyntax):
     }
 }
 
+Compiler::Compiler(Compilation::FileCompileRequest::Pointer request):
+    Compiler(request ? request->values().filename : QString{}, request && request->values().syntaxOnly, false)
+{
+    if (!request || !request->values().configuration)
+        throw CompileError(tr("Compilation requires a captured immutable request."));
+    if (request->values().maximumDiagnosticBytes < 0 || request->values().maximumConvertedOutputBytes < 0)
+        throw CompileError(tr("Compilation output budgets are invalid."));
+    mFileRequest = std::move(request);
+    if (mFileRequest) {
+        mProtectedInputPaths = {mFileRequest->values().sourcePath};
+        mRebuild = mFileRequest->values().rebuild;
+        if (mFileRequest->values().configuration)
+            mMacroVariables = mFileRequest->values().configuration->values().macros;
+    }
+}
+
+void Compiler::setPreparationMailbox(std::shared_ptr<Compilation::PreparationMailbox> mailbox)
+{
+    Q_ASSERT(QThread::currentThread() == thread() && !isRunning());
+    mPreparationMailbox = std::move(mailbox);
+}
+
+const Compilation::ConfigurationValues &Compiler::configuration() const
+{
+    if (!mResolvedConfiguration)
+        throw CompileError(tr("Compilation has no prepared immutable configuration."));
+    return mResolvedConfiguration->values();
+}
+
+void Compiler::validateGeneratedOutputPath(const QString &path) const
+{
+    const auto spelling = [](const QString &value) {
+        const QFileInfo file(value);
+        return exactPathSpelling(file.absoluteFilePath());
+    };
+    const QString target = spelling(path);
+    if (!NativePathKey(target).valid())
+        throw CompileError(tr("The generated output path is invalid: '%1'.").arg(path));
+    const auto wouldReplace = [&](const QString &source) {
+        if (source.isEmpty()) return false;
+        const QString input = spelling(source);
+        if (input == target || sameExistingFile(input, target) == ExistingFileMatch::Same) return true;
+        // Canonical spelling also protects an existing symbolic alias when a
+        // filesystem does not expose native IDs. It does not fold Unicode or
+        // mistake a distinct case-sensitive Windows file for the input.
+        const QString sourceCanonical = QFileInfo(input).canonicalFilePath();
+        const QString targetCanonical = QFileInfo(target).canonicalFilePath();
+        if (!sourceCanonical.isEmpty() && !targetCanonical.isEmpty()
+                && exactPathSpelling(sourceCanonical) == exactPathSpelling(targetCanonical)) return true;
+        return false;
+    };
+    for (const auto &source : mProtectedInputPaths)
+        if (wouldReplace(source))
+            throw CompileError(tr("The generated output would replace an input file: '%1'.").arg(path));
+    if (mResolvedConfiguration) {
+        const auto &toolchain = configuration().toolchain;
+        for (const auto &program : {toolchain.cCompiler, toolchain.cppCompiler, toolchain.make,
+                                   toolchain.resourceCompiler, configuration().preferences.nasmPath})
+            if (wouldReplace(program))
+                throw CompileError(tr("The generated output would replace a compiler program: '%1'.").arg(path));
+        for (const auto &program : toolchain.additionalPrograms)
+            if (wouldReplace(program))
+                throw CompileError(tr("The generated output would replace a compiler program: '%1'.").arg(path));
+    }
+}
+
 void Compiler::writeQaProcessTrace(const char *stage, const QProcess *process, int started) const
 {
     if (mQaProcessTracePath.isEmpty())
@@ -84,7 +164,7 @@ void Compiler::writeQaProcessTrace(const char *stage, const QProcess *process, i
                       {"job", QString::number(reinterpret_cast<quintptr>(this), 16)},
                       {"monotonicMilliseconds", double(reference)},
                       {"elapsedMilliseconds", double(reference - mQaTraceReference)},
-                      {"stopRequested", mStop.load(std::memory_order_acquire)},
+                      {"stopRequested", mStop->load(std::memory_order_acquire)},
                       {"stopMonotonicMilliseconds", double(mQaStopReference.load(std::memory_order_acquire))}};
     if (process) {
         event.insert("program", QFileInfo(process->program()).fileName());
@@ -108,15 +188,131 @@ void Compiler::run()
     writeQaProcessTrace("task-enter");
     emit compileStarted();
     auto action = finally([this]{
+        if (mResolvedConfiguration) error(COMPILE_PROCESS_END);
+        if (mStop->load(std::memory_order_acquire))
+            mTaskOutcome = OperationResult::cancelled();
+        else if (mErrorCount > 0 && mTaskOutcome.succeeded())
+            mTaskOutcome = OperationResult::failure(tr("Compilation reported errors."));
         writeQaProcessTrace("task-exit");
         emit compileFinished(mFilename);
     });
+    if (!mFileRequest)
+        mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::DriverOnlyUnverifiedTree;
     try {
-        if (mStop.load(std::memory_order_acquire))
+        if (mStop->load(std::memory_order_acquire))
             return;
+        if (mFileRequest) {
+            if (!mFileRequest->values().unavailableToolchainMacros.isEmpty())
+                throw CompileError(tr("Toolchain directory macros are not available: %1. Open Compiler Options and configure the toolchain directories before using these macros.")
+                    .arg(mFileRequest->values().unavailableToolchainMacros.join(QStringLiteral(", "))));
+            auto prepared = mFileRequest->values().configuration;
+            if (mPreparationMailbox) {
+                log(tr("Waiting for code analysis..."));
+                const auto delivery = mPreparationMailbox->wait(5000, *mStop);
+                if (!delivery.preparation.ready()) {
+                    if (delivery.preparation.status == Compilation::PreparationStatus::Cancelled) return;
+                    mTaskOutcome = delivery.preparation.status == Compilation::PreparationStatus::Conflict
+                        ? OperationResult::conflict(delivery.preparation.reason)
+                        : OperationResult::failure(delivery.preparation.reason);
+                    emit compileErrorOccured(delivery.preparation.reason);
+                    return;
+                }
+                prepared = delivery.configuration;
+            }
+            if (!prepared)
+                throw CompileError(tr("Compilation has no captured configuration."));
+            if (prepared->values().autolink.enabled && !prepared->values().autolink.complete) {
+                const auto &request = mFileRequest->values();
+                const bool cpp = request.fileType == FileType::CppSource || request.fileType == FileType::CCppHeader;
+                const auto &toolchain = prepared->values().toolchain;
+                const QString program = cpp ? toolchain.cppCompiler : toolchain.cCompiler;
+                if (!QFileInfo(program).isFile() || !QFileInfo(program).isExecutable())
+                    throw CompileError(tr("The compiler executable is unavailable: '%1'.").arg(program));
+                if (!request.dependencyProbe)
+                    throw CompileError(request.dependencyPreparationError.isEmpty()
+                        ? tr("The source dependencies could not be prepared.") : request.dependencyPreparationError);
+                const QFileInfo disk(request.sourcePath);
+                if (!disk.isFile() || disk.size() != request.diskSize
+                        || disk.lastModified().toMSecsSinceEpoch() != request.diskModifiedMilliseconds) {
+                    const QString reason = tr("The saved source changed before dependency analysis. Build it again.");
+                    mTaskOutcome = OperationResult::conflict(reason);
+                    emit compileErrorOccured(reason);
+                    return;
+                }
+                log(tr("Reading the saved source dependencies..."));
+                const auto discovered = Analysis::discoverParserToolchain(*request.dependencyProbe, *mStop);
+                if (discovered.ownership != Compilation::ProcessOwnershipLevel::NoProcessStarted)
+                    mProcessOwnershipLevel = discovered.ownership;
+                if (discovered.preparation.status == Compilation::PreparationStatus::Cancelled) return;
+                if (!discovered.preparation.ready() || !discovered.configuration)
+                    throw CompileError(discovered.preparation.reason.isEmpty()
+                        ? tr("The source dependencies could not be prepared.") : discovered.preparation.reason);
+                CppPreprocessor::DependencyRequest dependency;
+                dependency.root = exactPathSpelling(request.sourcePath);
+                dependency.includePaths = discovered.configuration->includePaths;
+                dependency.projectIncludePaths = discovered.configuration->projectIncludePaths;
+                dependency.hardDefines = discovered.configuration->hardDefineLines;
+                dependency.readPolicy.workingDirectory = request.workingDirectory;
+                dependency.readPolicy.encodings = request.dependencyEncodings;
+                dependency.cancelled = mStop;
+                const auto observed = CppPreprocessor::scanDependencies(dependency);
+                if (observed.status == CppPreprocessor::DependencyStatus::Cancelled) return;
+                auto values = prepared->values();
+                if (observed.status == CppPreprocessor::DependencyStatus::UnresolvedInclude) {
+                    // An unresolved directive can be an ordinary source error
+                    // or use include semantics only the real compiler knows.
+                    // Let GCC diagnose the source, without a partial link graph.
+                    log(tr("Autolink was skipped for this build: %1").arg(observed.error));
+                    values.autolink = {};
+                } else {
+                    if (!observed.complete()) throw CompileError(observed.error);
+                    const auto root = observed.reads.constFind(dependency.root);
+                    if (root == observed.reads.cend() || root->stamp.size != request.diskSize
+                            || root->stamp.modifiedMilliseconds != request.diskModifiedMilliseconds) {
+                        const QString reason = tr("The saved source changed during dependency analysis. Build it again.");
+                        mTaskOutcome = OperationResult::conflict(reason);
+                        emit compileErrorOccured(reason);
+                        return;
+                    }
+                    values.autolink.directIncludes = observed.directIncludes;
+                    values.autolink.complete = true;
+                    values.autolink.freshness = Compilation::AutolinkValues::Freshness::VerifiedReadManifest;
+                    values.autolink.analysisIdentity = QStringLiteral("saved-disk:%1:%2")
+                        .arg(QString::fromLatin1(discovered.configuration->compilerPreparationIdentity.toHex()),
+                             QString::fromLatin1(root->rawSha256.toHex()));
+                    values.autolink.nodeBudget = 8192;
+                    values.autolink.edgeBudget = 65536;
+                }
+                prepared = Compilation::FrozenConfiguration::capture(values);
+            }
+            if (!mFileRequest->values().capabilitiesKnown) {
+                log(tr("Preparing the compiler toolchain..."));
+                const auto probe = Compilation::probeToolchainCapabilities(prepared->values(), *mStop);
+                if (probe.ownership != Compilation::ProcessOwnershipLevel::NoProcessStarted)
+                    mProcessOwnershipLevel = probe.ownership;
+                if (!probe.preparation.ready()) {
+                    if (probe.preparation.status == Compilation::PreparationStatus::Cancelled) return;
+                    throw CompileError(probe.preparation.reason);
+                }
+                auto values = prepared->values();
+                values.toolchain.supportNLS = probe.facts.supportNLS;
+                values.toolchain.supportConvertingCharset = probe.facts.supportConvertingCharset;
+                values.toolchain.compilerUsingUTF8 = probe.facts.compilerUsingUTF8;
+                prepared = Compilation::FrozenConfiguration::capture(values);
+                emit toolchainCapabilitiesAvailable(values.toolchain.identity, probe.facts.supportNLS,
+                    probe.facts.supportConvertingCharset, probe.facts.compilerUsingUTF8);
+            }
+            mResolvedConfiguration = std::move(prepared);
+            mResolvedAutolink = configuration().autolink.resolve(exactPathSpelling(mFileRequest->values().sourcePath));
+            if (!mResolvedAutolink.complete)
+                throw CompileError(mResolvedAutolink.error);
+        }
+        mTaskOutcome = OperationResult::success();
         if (!prepareForCompile()){
+            mTaskOutcome = OperationResult::failure(tr("Compilation preparation could not be completed."));
             return;
         }
+        if (mStop->load(std::memory_order_acquire)) return;
         if (mRebuild && !prepareForRebuild()) {
             throw CompileError(tr("Clean before rebuild failed."));
         }
@@ -126,10 +322,13 @@ void Compiler::run()
         timer.start();
         runCommand(mCompiler, mArguments, mDirectory, pipedText());
         for(int i=0;i<mExtraArgumentsList.count();i++) {
-            if (mStop.load(std::memory_order_acquire))
+            if (mStop->load(std::memory_order_acquire) || !mTaskOutcome.succeeded())
                 break;
-            if (!beforeRunExtraCommand(i))
+            if (!beforeRunExtraCommand(i)) {
+                mTaskOutcome = OperationResult::failure(tr("A required intermediate compilation artifact was not produced."));
+                log(mTaskOutcome.error);
                 break;
+            }
             QString command = escapeCommandForLog(mExtraCompilersList[i], mExtraArgumentsList[i]);
             if (mExtraOutputFilesList[i].isEmpty()) {
                 log(tr(" - Command: %1").arg(command));
@@ -150,9 +349,11 @@ void Compiler::run()
         }
         log(tr("- Compilation Time: %1 secs").arg(timer.elapsed() / 1000.0));
     } catch (const BaseError &e) {
+        mTaskOutcome = OperationResult::failure(e.reason());
         ++mErrorCount;
         emit compileErrorOccured(e.reason());
     } catch (const std::exception &e) {
+        mTaskOutcome = OperationResult::failure(QString::fromUtf8(e.what()));
         ++mErrorCount;
         emit compileErrorOccured(tr("Compilation task was cancelled: %1").arg(QString::fromUtf8(e.what())));
     }
@@ -284,6 +485,8 @@ CompileIssueType Compiler::getIssueTypeFromOutputLine(QString &line)
 
 PCompilerSet Compiler::compilerSet()
 {
+    if (mFileRequest)
+        throw CompileError(tr("A captured compilation must not read live compiler settings."));
     if (mProject) {
         int index = mProject->options().compilerSet;
         PCompilerSet set = pSettings->compilerSets().getSet(index);
@@ -329,8 +532,12 @@ void Compiler::processOutput(QString &line)
     PCompileIssue issue = std::make_shared<CompileIssue>();
     issue->type = CompileIssueType::Other;
     issue->endColumn = -1;
-    const auto diagnosticCompiler = compilerSet();
-    issue->gccDiagnostic = diagnosticCompiler && diagnosticCompiler->compilerType() == CompilerType::GCC;
+    if (mResolvedConfiguration)
+        issue->gccDiagnostic = configuration().toolchain.compilerType == CompilerType::GCC;
+    else {
+        const auto diagnosticCompiler = compilerSet();
+        issue->gccDiagnostic = diagnosticCompiler && diagnosticCompiler->compilerType() == CompilerType::GCC;
+    }
     if (line.startsWith(inFilePrefix)) {
         line.remove(0,inFilePrefix.length());
         issue->filename = getFileNameFromOutputLine(line);
@@ -421,11 +628,15 @@ void Compiler::stopCompile()
         qint64 unset = -1;
         mQaStopReference.compare_exchange_strong(unset, now.msecsSinceReference(), std::memory_order_release);
     }
-    mStop.store(true, std::memory_order_release);
+    mStop->store(true, std::memory_order_release);
+    if (mPreparationMailbox) mPreparationMailbox->cancel();
 }
 
 QStringList Compiler::getCharsetArgument(const QByteArray& encoding,FileType fileType, bool checkSyntax)
 {
+    if (mResolvedConfiguration)
+        return Compilation::charsetArguments(configuration(), encoding, checkSyntax,
+            (fileType == FileType::CSource || fileType == FileType::CppSource) && mResolvedAutolink.forceExecUTF8);
     QStringList result;
     bool forceExecUTF8=false;
     // test if force utf8 from autolink infos
@@ -491,6 +702,14 @@ QStringList Compiler::getCharsetArgument(const QByteArray& encoding,FileType fil
 
 QStringList Compiler::getCppGccImportStdSources(bool checkSyntax)
 {
+    if (mResolvedConfiguration) {
+        const auto &options = configuration().toolchain.compileOptions;
+        const QString standard = options.value(CC_CMD_OPT_STD);
+        if (!checkSyntax && options.value(CC_CMD_OPT_ENABLE_GCC_IMPORT_STD) == COMPILER_OPTION_ON
+            && (standard.startsWith("c++2") || standard.startsWith("gnu++2")))
+            return {"-fsearch-include-path", "bits/std.cc", "bits/std.compat.cc"};
+        return {};
+    }
     QStringList result;
     if (!checkSyntax && compilerSet()->getCompileOptionValue(CC_CMD_OPT_ENABLE_GCC_IMPORT_STD) == COMPILER_OPTION_ON) {
         // libstdc++ extends `import std` to C++20
@@ -505,6 +724,8 @@ QStringList Compiler::getCppGccImportStdSources(bool checkSyntax)
 
 QStringList Compiler::getCCompileArguments(bool checkSyntax)
 {
+    if (mResolvedConfiguration)
+        return Compilation::optionArguments(configuration(), Compilation::ArgumentUse::C, checkSyntax, mSuppressDebugInfo);
     QStringList result;
     if (checkSyntax) {
         result << "-fsyntax-only";
@@ -557,6 +778,8 @@ QStringList Compiler::getCCompileArguments(bool checkSyntax)
 
 QStringList Compiler::getCppCompileArguments(bool checkSyntax)
 {
+    if (mResolvedConfiguration)
+        return Compilation::optionArguments(configuration(), Compilation::ArgumentUse::Cpp, checkSyntax, mSuppressDebugInfo);
     QStringList result;
     if (checkSyntax) {
         result << "-fsyntax-only";
@@ -607,6 +830,7 @@ QStringList Compiler::getCppCompileArguments(bool checkSyntax)
 
 QStringList Compiler::getCIncludeArguments()
 {
+    if (mResolvedConfiguration) return Compilation::includeArguments(configuration().toolchain.cIncludeDirs);
     QStringList result;
     foreach (const QString& folder,compilerSet()->CIncludeDirs()) {
         result << "-I" + folder;
@@ -616,6 +840,8 @@ QStringList Compiler::getCIncludeArguments()
 
 QStringList Compiler::getProjectIncludeArguments()
 {
+    if (mResolvedConfiguration)
+        return configuration().project ? Compilation::includeArguments(configuration().project->includeDirs) : QStringList{};
     QStringList result;
     if (mProject) {
         foreach (const QString& folder,mProject->options().includeDirs) {
@@ -628,6 +854,7 @@ QStringList Compiler::getProjectIncludeArguments()
 
 QStringList Compiler::getCppIncludeArguments()
 {
+    if (mResolvedConfiguration) return Compilation::includeArguments(configuration().toolchain.cppIncludeDirs);
     QStringList result;
     foreach (const QString& folder,compilerSet()->CppIncludeDirs()) {
         result << "-I" + folder;
@@ -637,6 +864,12 @@ QStringList Compiler::getCppIncludeArguments()
 
 QStringList Compiler::getLibraryArguments(FileType fileType)
 {
+    if (mResolvedConfiguration) {
+        const auto plan = Compilation::libraryArguments(configuration(), mResolvedAutolink,
+            fileType == FileType::CSource || fileType == FileType::CppSource, mSuppressDebugInfo);
+        if (!plan.preparation.ready()) throw CompileError(plan.preparation.reason);
+        return plan.arguments;
+    }
     QStringList result;
 
     //Add libraries
@@ -795,16 +1028,21 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
     // Declared before QProcess: this records return after its destructor, which
     // can distinguish native startup/cleanup delays from polling cancellation.
     auto commandExit = finally([this] { writeQaProcessTrace("command-exit"); });
-    if (mStop.load(std::memory_order_acquire))
+    if (mStop->load(std::memory_order_acquire))
         return;
     QProcess process;
     auto processExit = finally([this, &process] { writeQaProcessTrace("before-process-destruction", &process); });
     bool errorOccurred = false;
     process.setProgram(cmd);
     QString cmdDir = extractFileDir(cmd);
-    bool compilerErrorUTF8=compilerSet()->isCompilerUsingUTF8();
-    bool outputUTF8=compilerSet()->isCompilerUsingUTF8();
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    const bool compilerErrorUTF8 = mResolvedConfiguration ? configuration().toolchain.compilerUsingUTF8
+                                                          : compilerSet()->isCompilerUsingUTF8();
+    const bool outputUTF8 = compilerErrorUTF8;
+    QProcessEnvironment env;
+    if (mResolvedConfiguration) {
+        env = Compilation::processEnvironment(configuration(), cmdDir, QDir::listSeparator());
+    } else {
+    env = QProcessEnvironment::systemEnvironment();
     QString path = env.value("PATH");
 #ifdef Q_OS_WIN
     QStringList binDirs=compilerSet()->binDirs();
@@ -831,6 +1069,7 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
         env.insert("LANGUAGE", "");
         env.insert("LC_ALL", "C"); // https://pubs.opengroup.org/onlinepubs/009695399/basedefs/xbd_chap07.html#tag_07_02
     }
+    }
     //env.insert("LDFLAGS","-Wl,--stack,12582912");
     env.insert("LDFLAGS","");
     env.insert("CFLAGS","");
@@ -838,45 +1077,112 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
     process.setProcessEnvironment(env);
     process.setArguments(arguments);
     process.setWorkingDirectory(workingDir);
-    QFile output;
+    QSaveFile output;
+    output.setDirectWriteFallback(false);
+    bool outputWriteFailed = false;
+    bool outputLimitReached = false;
+    qint64 convertedOutputBytes = 0;
+    const auto acceptDiagnostic = [this, &process, &outputLimitReached](qsizetype size) {
+        if (mFileRequest && size > mFileRequest->values().maximumDiagnosticBytes - mCapturedDiagnosticBytes) {
+            outputLimitReached = true; process.kill(); return false;
+        }
+        mCapturedDiagnosticBytes += size;
+        return true;
+    };
     if (!outputFile.isEmpty()) {
+        validateGeneratedOutputPath(outputFile);
         output.setFileName(outputFile);
-        if (!output.open(QFile::WriteOnly | QFile::Truncate)) {
-            this->error(tr("Can't open file \"%1\" for write!"));
-            return;
-        };
+        if (!output.open(QIODevice::WriteOnly))
+            throw CompileError(tr("Cannot stage output '%1': %2").arg(outputFile, output.errorString()));
     }
     process.connect(&process, &QProcess::errorOccurred,
                     [&](){
                         errorOccurred= true;
                     });
-    process.connect(&process, &QProcess::readyReadStandardError,[&process,this,compilerErrorUTF8](){
-        if (compilerErrorUTF8)
-            this->error(QString::fromUtf8(process.readAllStandardError()));
+    const QByteArray codec = mResolvedConfiguration ? (compilerErrorUTF8 ? QByteArray(ENCODING_UTF8)
+                                            : configuration().preferences.systemEncoding) : QByteArray(ENCODING_UTF8);
+    const auto errorDecoder = std::make_shared<QStringDecoder>(codec.constData());
+    const auto outputDecoder = std::make_shared<QStringDecoder>(codec.constData());
+    if (mResolvedConfiguration && (!errorDecoder->isValid() || !outputDecoder->isValid()))
+        throw CompileError(tr("The captured compiler output encoding is not available."));
+    process.connect(&process, &QProcess::readyReadStandardError,[&process,this,compilerErrorUTF8,errorDecoder,acceptDiagnostic](){
+        const auto bytes = process.readAllStandardError();
+        if (!acceptDiagnostic(bytes.size())) return;
+        if (mResolvedConfiguration)
+            this->error((*errorDecoder)(bytes));
+        else if (compilerErrorUTF8)
+            this->error(QString::fromUtf8(bytes));
         else
-            this->error(QString::fromLocal8Bit( process.readAllStandardError()));
+            this->error(QString::fromLocal8Bit(bytes));
     });
-    process.connect(&process, &QProcess::readyReadStandardOutput,[&process,this,outputUTF8,&outputFile,&output](){
+    process.connect(&process, &QProcess::readyReadStandardOutput,[&process,this,outputUTF8,&outputFile,&output,&outputWriteFailed,
+        &outputLimitReached,&convertedOutputBytes,outputDecoder,acceptDiagnostic](){
+        const auto bytes = process.readAllStandardOutput();
         if (!outputFile.isEmpty()) {
-            output.write(process.readAllStandardOutput());
+            if (mFileRequest && bytes.size() > mFileRequest->values().maximumConvertedOutputBytes - convertedOutputBytes) {
+                outputLimitReached = true; process.kill(); return;
+            }
+            convertedOutputBytes += bytes.size();
+            if (!outputWriteFailed && output.write(bytes) != bytes.size()) {
+                outputWriteFailed = true;
+                process.kill();
+            }
         } else {
-            if (outputUTF8)
-                this->log(QString::fromUtf8(process.readAllStandardOutput()));
+            if (!acceptDiagnostic(bytes.size())) return;
+            if (mResolvedConfiguration)
+                this->log((*outputDecoder)(bytes));
+            else if (outputUTF8)
+                this->log(QString::fromUtf8(bytes));
             else
-                this->log(QString::fromLocal8Bit( process.readAllStandardOutput()));
+                this->log(QString::fromLocal8Bit(bytes));
         }
     });
     process.connect(&process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),[this](){
         this->error(COMPILE_PROCESS_END);
     });
+    const auto disconnectBeforeOutputDestruction = finally([&process] { process.disconnect(); });
+#ifdef Q_OS_WIN
+    Compilation::ContainedProcess processTree;
+    const auto containment = processTree.prepare(process);
+    if (!containment.success) throw CompileError(containment.error);
+    bool treeCompleted = false;
+    QString treeFailure;
+    const auto finishTree = [&](bool force) {
+        if (treeCompleted) return;
+        const auto completed = Compilation::completeContainedProcess(process, processTree, *mStop, force, {},
+            [this](const QString &reason) { log(reason); });
+        treeCompleted = true;
+        treeFailure = completed.error;
+        if (mFileRequest) mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::WindowsTreeQuiescent;
+    };
+    // This guard runs before callbacks/output are destroyed, including when an
+    // exception interrupts startup, input transfer or output conversion.
+    const auto acknowledgeTreeBeforeExit = finally([&] { finishTree(true); });
+#endif
     writeQaProcessTrace("before-start", &process);
+#ifndef Q_OS_WIN
+    mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::DriverOnlyUnverifiedTree;
+#endif
     process.start();
     writeQaProcessTrace("after-start", &process);
     const bool started = process.waitForStarted(5000);
     writeQaProcessTrace("after-wait-for-started", &process, started ? 1 : 0);
+    if (!started) {
+        ProcessCancellation::stop(process);
+        if (mStop->load(std::memory_order_acquire)) return;
+#ifdef Q_OS_WIN
+        const auto creation = processTree.creationResult();
+        if (!creation.success) throw CompileError(creation.error);
+#endif
+        throw CompileError(tr("The compiler process for '%1' could not start: %2").arg(mFilename, process.errorString()));
+    }
+#ifdef Q_OS_WIN
+    const auto creation = processTree.creationResult();
+    if (!creation.success) throw CompileError(creation.error);
+#endif
     if (!inputText.isEmpty()) {
-        process.write(inputText);
-        process.waitForFinished(0);
+        if (process.write(inputText) != inputText.size())
+            throw CompileError(tr("Could not send the captured source text to the compiler."));
     }
     bool writeChannelClosed = false;
     while (true) {
@@ -888,8 +1194,11 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
         if (process.state()!=QProcess::Running) {
             break;
         }
-        if (mStop.load(std::memory_order_acquire)) {
+        if (mStop->load(std::memory_order_acquire)) {
             writeQaProcessTrace("before-cancellation", &process);
+#ifdef Q_OS_WIN
+            processTree.terminate();
+#endif
             if (!ProcessCancellation::stop(process))
                 emit compileErrorOccured(tr("The compiler process could not be stopped within the timeout."));
             writeQaProcessTrace("after-cancellation", &process);
@@ -898,13 +1207,21 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
         if (errorOccurred)
             break;
     }
+#ifdef Q_OS_WIN
+    finishTree(errorOccurred || outputWriteFailed || outputLimitReached || mStop->load(std::memory_order_acquire)
+        || process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0);
+#endif
     if (errorOccurred) {
+        if (outputLimitReached)
+            throw CompileError(tr("Compiler output exceeded the captured output budget."));
+        if (outputWriteFailed)
+            throw CompileError(tr("Cannot write output '%1': %2").arg(outputFile, output.errorString()));
         switch (process.error()) {
         case QProcess::FailedToStart:
             throw CompileError(tr("The compiler process for '%1' failed to start.").arg(mFilename));
             break;
         case QProcess::Crashed:
-            if (!mStop.load(std::memory_order_acquire))
+            if (!mStop->load(std::memory_order_acquire))
                 throw CompileError(tr("The compiler process crashed after starting successfully."));
             break;
         case QProcess::Timedout:
@@ -920,8 +1237,24 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
             throw CompileError(tr("An unknown error occurred."));
         }
     }
-    if (!outputFile.isEmpty())
-        output.close();
+    if (mStop->load(std::memory_order_acquire)) {
+        mTaskOutcome = OperationResult::cancelled();
+        return;
+    }
+    if (outputWriteFailed)
+        throw CompileError(tr("Cannot write output '%1': %2").arg(outputFile, output.errorString()));
+    if (outputLimitReached)
+        throw CompileError(tr("Compiler output exceeded the captured output budget."));
+#ifdef Q_OS_WIN
+    if (!treeFailure.isEmpty()) throw CompileError(treeFailure);
+#endif
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        mTaskOutcome = OperationResult::failure(tr("Compiler process exited with code %1.").arg(process.exitCode()));
+        log(mTaskOutcome.error);
+        return;
+    }
+    if (!outputFile.isEmpty() && !output.commit())
+        throw CompileError(tr("Cannot commit output '%1': %2").arg(outputFile, output.errorString()));
 }
 
 QString Compiler::escapeCommandForLog(const QString &cmd, const QStringList &arguments)
@@ -946,7 +1279,34 @@ const std::shared_ptr<Project> &Compiler::project() const
 
 void Compiler::setProject(const std::shared_ptr<Project> &newProject)
 {
+    if (mFileRequest)
+        throw CompileError(tr("A captured file compilation must not retain a live project."));
+    if (QThread::currentThread() != thread() || isRunning())
+        throw CompileError(tr("Project compilation inputs must be captured on their owner thread."));
     mProject = newProject;
+    mProjectSourceEncodings.clear();
+    mProtectedInputPaths.clear();
+    mProjectSystemEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
+    mProjectConsoleEncoding = pCharsetInfoManager->getDefaultConsoleEncoding();
+    if (mProject) {
+        mProtectedInputPaths.append(mProject->filename());
+        for (const auto &unit : mProject->unitList()) {
+            mProtectedInputPaths.append(unit->fileName());
+            const Editor *editor = mProject->unitEditor(unit);
+            QByteArray source = editor ? editor->fileEncoding() : unit->realEncoding();
+            if (source.isEmpty()) {
+                source = unit->encoding();
+                if (source == ENCODING_PROJECT) source = mProject->options().encoding;
+                if (source == ENCODING_AUTO_DETECT) source.clear();
+            }
+            if (source == ENCODING_SYSTEM_DEFAULT) source = mProjectSystemEncoding;
+            else if (source == ENCODING_OEM_DEFAULT) source = mProjectConsoleEncoding;
+            else if (source == ENCODING_UTF8_BOM) source = ENCODING_UTF8;
+            else if (source == ENCODING_UTF16_BOM) source = ENCODING_UTF16;
+            else if (source == ENCODING_UTF32_BOM) source = ENCODING_UTF32;
+            mProjectSourceEncodings.insert(reinterpret_cast<quintptr>(unit.get()), source);
+        }
+    }
 }
 
 bool Compiler::isRebuild() const
@@ -968,6 +1328,31 @@ void Compiler::error(const QString &msg)
 {
     if (msg != COMPILE_PROCESS_END)
         emit compileOutput(msg);
+    if (mResolvedConfiguration) {
+        // QProcess chunks do not end on a diagnostic line boundary. Preserve
+        // the exact decoded message until a newline or explicit EOF arrives.
+        if (msg == COMPILE_PROCESS_END) {
+            if (!mDiagnosticLineBuffer.isEmpty()) {
+                QString final = std::move(mDiagnosticLineBuffer);
+                mDiagnosticLineBuffer.clear();
+                processOutput(final);
+            }
+            QString marker = msg;
+            processOutput(marker);
+        } else {
+            mDiagnosticLineBuffer.append(msg);
+            qsizetype begin = 0;
+            while (true) {
+                const qsizetype newline = mDiagnosticLineBuffer.indexOf('\n', begin);
+                if (newline < 0) break;
+                QString line = mDiagnosticLineBuffer.mid(begin, newline - begin);
+                if (!line.isEmpty()) processOutput(line);
+                begin = newline + 1;
+            }
+            if (begin) mDiagnosticLineBuffer.remove(0, begin);
+        }
+        return;
+    }
     for (QString& s:msg.split("\n")) {
         if (!s.isEmpty())
             processOutput(s);

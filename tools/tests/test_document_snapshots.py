@@ -16,6 +16,7 @@ REQUIRED = {
     'Rename registers the new path before language/status side effects',
     'Save As registers its committed path before status and parser work',
     'Both panes recognize Windows case-insensitive paths',
+    'A missing virtual path alias is an explicit conflict and cannot select another document',
     'Closing removes the live source while accepted snapshots remain valid',
     'Reopening the same path receives a new document identity',
 }

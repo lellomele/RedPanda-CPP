@@ -26,6 +26,8 @@ private slots:
     void test_evaluate_constant_expression_1();
     void test_evaluate_constant_expression_2();
     void test_compare_cpp_version();
+    void test_dependency_scan_uses_active_directives();
+    void test_dependency_scan_rejects_incomplete_results();
 private:
     static QStringList filterIncludes(const QStringList& text);
 };

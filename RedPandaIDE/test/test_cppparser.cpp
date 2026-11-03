@@ -1532,3 +1532,127 @@ void TestCppParser::test_snapshot_project_list_keeps_one_input_view()
     QVERIFY(!mParser->findStatement(QStringLiteral("changed_first")));
     QVERIFY(!mParser->findStatement(QStringLiteral("changed_second")));
 }
+
+void TestCppParser::test_source_manifest_revalidates_unsaved_included_header()
+{
+    init_parser();
+    QTemporaryDir fixture; QVERIFY(fixture.isValid());
+    const QString source = fixture.filePath("source.cpp"), header = fixture.filePath("header.h");
+    auto store = std::make_shared<DocumentStore>();
+    store->add(source, [](QStringList &out) { out = {"#include \"header.h\"", "int primary;"}; return true; });
+    QStringList headerText{"int old_header;"};
+    const auto headerId = store->add(header, [&](QStringList &out) { out = headerText; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->findStatement("old_header"));
+    const auto first = mParser->sourceJobReport(); QVERIFY(first && first->complete());
+    headerText = {"int new_header;"}; QVERIFY(store->changed(headerId));
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}, true), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->findStatement("new_header")); QVERIFY(!mParser->findStatement("old_header"));
+    const auto second = mParser->sourceJobReport(); QVERIFY(second && second->complete());
+    QCOMPARE(second->reads.value(header).documentId, headerId);
+    QCOMPARE(second->reads.value(header).revision, DocumentRevision(2));
+    QCOMPARE(first->reads.value(header).revision, DocumentRevision(1));
+}
+
+void TestCppParser::test_source_manifest_revalidates_closed_and_previously_missing_headers()
+{
+    init_parser(); QTemporaryDir fixture; QVERIFY(fixture.isValid());
+    const QString source = fixture.filePath("source.cpp"), header = fixture.filePath("late.h");
+    auto store = std::make_shared<DocumentStore>();
+    store->add(source, [](QStringList &out) { out = {"#include \"late.h\"", "int primary;"}; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::Parsed);
+    const auto before = mParser->sourceJobReport(); QVERIFY(before && before->complete());
+    QCOMPARE(before->probes.value(header), AnalysisInput::PathPresence::Missing);
+    const auto write = [&](const QByteArray &bytes) { QFile file(header); return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size(); };
+    QVERIFY(write("int late_first;\n"));
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}, true), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->findStatement("late_first"));
+    const auto originalTime = QFileInfo(header).lastModified();
+    QVERIFY(write("int late_other;\n"));
+    { QFile file(header); QVERIFY(file.open(QIODevice::ReadWrite)); QVERIFY(file.setFileTime(originalTime, QFileDevice::FileModificationTime)); }
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}, true), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->findStatement("late_other")); QVERIFY(!mParser->findStatement("late_first"));
+    QVERIFY(QFile::remove(header));
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}, true), CppParser::ParseResult::Parsed);
+    QVERIFY(!mParser->findStatement("late_other")); QVERIFY(mParser->findStatement("primary"));
+    QVERIFY(mParser->sourceJobReport()->complete());
+}
+
+void TestCppParser::test_source_failure_is_distinct_from_an_empty_source()
+{
+    init_parser(); QTemporaryDir fixture; QVERIFY(fixture.isValid());
+    auto store = std::make_shared<DocumentStore>();
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    const QString source = fixture.filePath("missing.cpp");
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::SourceFailed);
+    const auto failed = mParser->sourceJobReport(); QVERIFY(failed && !failed->complete());
+    QCOMPARE(failed->outcome, CppParser::SourceJobReport::Outcome::InputFailed);
+    QVERIFY(!mParser->freezeStable());
+    { QFile file(source); QVERIFY(file.open(QIODevice::WriteOnly)); }
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->sourceJobReport()->complete());
+    QCOMPARE(mParser->sourceJobReport()->reads.value(source).origin, AnalysisInput::SourceOrigin::Disk);
+    ScopedParserFreeze frozen(mParser); QVERIFY(frozen.acquire());
+}
+
+void TestCppParser::test_source_request_keeps_accepted_directory()
+{
+    init_parser(); QTemporaryDir first, second; QVERIFY(first.isValid()); QVERIFY(second.isValid());
+    QVERIFY(QDir(first.path()).mkdir("includes")); QVERIFY(QDir(second.path()).mkdir("includes"));
+    const auto write = [](const QString &path, const QByteArray &bytes) { QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(); };
+    QVERIFY(write(first.filePath("includes/job.h"), "int accepted_directory;\n"));
+    QVERIFY(write(second.filePath("includes/job.h"), "int wrong_directory;\n"));
+    auto store = std::make_shared<DocumentStore>(); const QString source = first.filePath("source.cpp");
+    store->add(source, [](QStringList &out) { out = {"#include <job.h>", "int primary;"}; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    mParser->addIncludePath("includes");
+    struct Restore { QString path = QDir::currentPath(); ~Restore() { QDir::setCurrent(path); } } restore;
+    QVERIFY(QDir::setCurrent(first.path()));
+    ScopedParserFreeze frozen(mParser); QVERIFY(frozen.acquire());
+    QCOMPARE(CppParser::parseFileNonBlocking(mParser, source, false, {}), CppParser::RequestResult::Accepted);
+    QVERIFY(QDir::setCurrent(second.path())); frozen.releaseOne();
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 10000);
+    const auto report = mParser->sourceJobReport(); QVERIFY(report && report->complete());
+    QCOMPARE(report->workingDirectory, first.path());
+    QVERIFY(mParser->findStatement("accepted_directory")); QVERIFY(!mParser->findStatement("wrong_directory"));
+}
+
+void TestCppParser::test_source_change_during_parse_cannot_certify_ready()
+{
+    init_parser(); QTemporaryDir fixture; QVERIFY(fixture.isValid());
+    const QString source = fixture.filePath("source.cpp"), header = fixture.filePath("header.h");
+    const auto write = [](const QString &path, const QByteArray &bytes) { QFile file(path); return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size(); };
+    QVERIFY(write(source, "#include \"header.h\"\nint before;\n")); QVERIFY(write(header, "int header_symbol;\n"));
+    auto store = std::make_shared<DocumentStore>();
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    bool mutated = false;
+    mParser->setSourceReadObserver([&](const QString &path) { if (path == header && !mutated) mutated = write(source, "#include \"header.h\"\nint after_;\n"); });
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::SourceFailed);
+    QVERIFY(mutated); QVERIFY(!mParser->sourceJobReport()->complete()); QVERIFY(!mParser->freezeStable());
+    mParser->setSourceReadObserver({});
+    QCOMPARE(CppParser::parseFileBlocking(mParser, source, false, {}), CppParser::ParseResult::Parsed);
+    QVERIFY(mParser->sourceJobReport()->complete());
+    QVERIFY(mParser->findStatement("after_")); QVERIFY(!mParser->findStatement("before"));
+}
+
+void TestCppParser::test_source_relative_document_keeps_its_registration_root()
+{
+    init_parser(); QTemporaryDir first, second; QVERIFY(first.isValid()); QVERIFY(second.isValid());
+    struct Restore { QString path = QDir::currentPath(); ~Restore() { QDir::setCurrent(path); } } restore;
+    QVERIFY(QDir::setCurrent(first.path()));
+    auto store = std::make_shared<DocumentStore>();
+    store->add("relative.cpp", [](QStringList &out) { out = {"#include \"local.h\"", "int original_document;"}; return true; });
+    store->add(first.filePath("local.h"), [](QStringList &out) { out = {"int original_header;"}; return true; });
+    mParser->setInputSnapshotProvider([store] { return store->capture(); });
+    QVERIFY(QDir::setCurrent(second.path()));
+    const auto parsed = CppParser::parseFileBlocking(mParser, "relative.cpp", false, {});
+    const auto detail = mParser->sourceJobReport();
+    QVERIFY2(parsed == CppParser::ParseResult::Parsed, qPrintable(detail ? detail->error : "No source report"));
+    const auto report = mParser->sourceJobReport(); QVERIFY(report && report->complete());
+    QVERIFY(report->reads.contains(first.filePath("relative.cpp")));
+    QVERIFY(!report->reads.contains(second.filePath("relative.cpp")));
+    QVERIFY(mParser->findStatement("original_document")); QVERIFY(mParser->findStatement("original_header"));
+    QVERIFY(mParser->fileScanned("relative.cpp"));
+}

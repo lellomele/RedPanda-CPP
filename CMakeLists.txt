@@ -458,6 +458,23 @@ if(BUILD_TESTING)
                     --ide $<TARGET_FILE:RedPandaIDE>)
             set_tests_properties(test-document-snapshots PROPERTIES
                 TIMEOUT 90 LABELS "ide;functional;parser;editing" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-document-files
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_document_files.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-document-files PROPERTIES
+                TIMEOUT 120 LABELS "ide;functional;project;persistence" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            add_test(NAME test-compiler-requests
+                COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_compiler_requests.py
+                    --ide $<TARGET_FILE:RedPandaIDE>)
+            set_tests_properties(test-compiler-requests PROPERTIES
+                TIMEOUT 120 LABELS "ide;functional;compiler;lifecycle" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            foreach(workflow_language IN ITEMS en it_IT)
+                add_test(NAME test-production-compiler-${workflow_language}
+                    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_production_compiler_workflows.py
+                        --ide $<TARGET_FILE:RedPandaIDE> --language ${workflow_language})
+                set_tests_properties(test-production-compiler-${workflow_language} PROPERTIES
+                    TIMEOUT 130 LABELS "ide;functional;compiler;integration" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            endforeach()
             add_test(NAME test-recovery-document-cache
                 COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_recovery_cache.py
                     --ide $<TARGET_FILE:RedPandaIDE>)

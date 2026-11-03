@@ -397,6 +397,21 @@ int main(int argc, char **argv) {
     const auto retried = compile(source);
     if (manager->compiling()) { retainFixtureState = true; return; }
     record("build succeeds after editing a previous compiler error", retried.finished && !retried.timedOut && retried.errors == 0 && QFileInfo(executable).size() > 0);
+    const QString missingHeaderSource = directory.filePath("missing-header.cpp");
+    const QByteArray missingHeaderBytes = "#include \"rm-qa-unavailable-header.h\"\nint main() {}\n";
+    const bool missingHeaderWritten = writeBytes(missingHeaderSource, missingHeaderBytes);
+    const auto missingHeader = compile(missingHeaderSource);
+    if (manager->compiling()) { retainFixtureState = true; return; }
+    bool originalHeaderDiagnostic = false;
+    for (int row = 0; row < table->count(); ++row) {
+        const auto issue = table->issuesModel()->issue(row);
+        const QString original = table->issuesModel()->originalDescription(row);
+        originalHeaderDiagnostic |= issue && issue->type == CompileIssueType::Error &&
+            original.contains("rm-qa-unavailable-header.h") && original.contains("No such file or directory");
+    }
+    record("missing header reaches GCC and retains its original diagnostic",
+           missingHeaderWritten && missingHeader.finished && !missingHeader.timedOut &&
+           missingHeader.errors > 0 && originalHeaderDiagnostic && readBytes(missingHeaderSource) == missingHeaderBytes);
     const QString missingTask = directory.filePath("missing-compiler.cpp");
     writeBytes(missingTask, valid);
     const QString originalCompiler = fixtureSet->cppCompiler();
@@ -429,6 +444,9 @@ int main(int argc, char **argv) {
         else qunsetenv("REDPANDA_QA_WAIT_MARKER");
     });
     const QString originalParameters = fixtureSet->customCompileParams();
+    const bool autolinkBeforeProcessFixture = pSettings->editor().enableAutolink();
+    pSettings->editor().setEnableAutolink(false); // This owned executable is a process fixture, not a compiler driver.
+    const auto restoreAutolink = finally([&] { pSettings->editor().setEnableAutolink(autolinkBeforeProcessFixture); });
     fixtureSet->setCppCompiler(executable); fixtureSet->setCustomCompileParams("--compiler-wait");
     bool cancellationFinished = false;
     QObject cancellationScope;
@@ -458,6 +476,7 @@ int main(int argc, char **argv) {
     record("real FileCompiler subprocess cancellation is bounded", startupWithinDeadline && compilerWasRunning && compilerCancelled && compilerStop.elapsed() < 5000);
     if (!compilerCancelled) { retainFixtureState = true; return; }
     fixtureSet->setCppCompiler(originalCompiler); fixtureSet->setCustomCompileParams(originalParameters);
+    pSettings->editor().setEnableAutolink(autolinkBeforeProcessFixture);
     const auto afterCancellation = compile(source);
     record("real GCC compilation succeeds after compiler-process cancellation", afterCancellation.finished && !afterCancellation.timedOut && afterCancellation.errors == 0 && QFileInfo(executable).size() > 0);
     if (manager->compiling()) { retainFixtureState = true; return; }

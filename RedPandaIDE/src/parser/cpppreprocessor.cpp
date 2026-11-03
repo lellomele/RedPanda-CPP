@@ -17,10 +17,117 @@
 #include "cpppreprocessor.h"
 
 #include <QFile>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QMessageBox>
 #include <QMultiHash>
+#include <QScopeGuard>
 #include <qt_utils/utils.h>
+#include <limits>
+
+namespace {
+struct DependencyFailure {
+    CppPreprocessor::DependencyStatus status;
+    QString reason;
+};
+QString dependencyMessage(const char *message)
+{
+    return QCoreApplication::translate("DependencyScan", message);
+}
+[[noreturn]] void dependencyLimit()
+{
+    throw DependencyFailure{CppPreprocessor::DependencyStatus::LimitExceeded,
+        dependencyMessage("Autolink analysis exceeded its work or memory limit.")};
+}
+}
+
+void CppPreprocessor::dependencyWork(qint64 units) const
+{
+    if (!mDependency) return;
+    auto &control = *mDependency;
+    if (units < 0 || units > control.request.limits.workUnits - control.work)
+        dependencyLimit();
+    const qint64 before = control.work;
+    control.work += units;
+    // A zero charge checks the boundary around an external read or lookup.
+    if (units && before / 1024 == control.work / 1024) return;
+    if (control.request.cancelled && control.request.cancelled->load(std::memory_order_acquire))
+        throw DependencyFailure{DependencyStatus::Cancelled, {}};
+    if (control.deadline.hasExpired())
+        throw DependencyFailure{DependencyStatus::TimedOut,
+            dependencyMessage("Autolink analysis did not finish before its deadline.")};
+}
+
+void CppPreprocessor::dependencyExpansion(qint64 size, qint64 copyCost) const
+{
+    if (!mDependency) return;
+    constexpr qint64 maximumExpansionUnits = 1024 * 1024;
+    if (size < 0 || size > maximumExpansionUnits) dependencyLimit();
+    dependencyWork(copyCost);
+}
+
+CppPreprocessor::DependencyResult CppPreprocessor::scanDependencies(const DependencyRequest &request)
+{
+    DependencyResult result;
+    const DependencyLimits ceiling;
+    const auto &limits = request.limits;
+    if (request.root.isEmpty() || limits.workUnits <= 0 || limits.workUnits > ceiling.workUnits
+            || limits.macroUnits <= 0 || limits.macroUnits > ceiling.macroUnits
+            || limits.directives <= 0 || limits.directives > ceiling.directives
+            || limits.edges <= 0 || limits.edges > ceiling.edges
+            || limits.includeDepth <= 0 || limits.includeDepth > ceiling.includeDepth
+            || limits.milliseconds <= 0 || limits.milliseconds > ceiling.milliseconds) {
+        result.error = dependencyMessage("Autolink analysis received invalid limits or source information.");
+        return result;
+    }
+    DependencyControl control{request, QDeadlineTimer(limits.milliseconds)};
+    CppPreprocessor scanner;
+    scanner.mDependency = &control;
+    scanner.setFileOnlyIncludeOnce(false);
+    auto reader = std::make_shared<AnalysisInput::SourceReadSession>(
+        PAnalysisInputSnapshot{}, request.readPolicy, request.cancelled);
+    scanner.setSourceReadSession(reader);
+    try {
+        scanner.dependencyWork(0);
+        if (request.includePaths.size() > 8192 || request.projectIncludePaths.size() > 8192 - request.includePaths.size()
+                || request.hardDefines.size() > 65536)
+            dependencyLimit();
+        for (const auto &path : request.includePaths) {
+            scanner.dependencyWork(1 + path.size());
+            scanner.addIncludePath(path);
+        }
+        for (const auto &path : request.projectIncludePaths) {
+            scanner.dependencyWork(1 + path.size());
+            scanner.addProjectIncludePath(path);
+        }
+        for (const auto &definition : request.hardDefines) {
+            scanner.dependencyWork(1 + definition.size());
+            scanner.dependencyExpansion(definition.size());
+            if (!definition.startsWith(QLatin1String("#define ")))
+                throw DependencyFailure{DependencyStatus::InputUnavailable,
+                    dependencyMessage("Autolink analysis received an invalid predefined macro.")};
+            scanner.addHardDefineByLine(definition);
+        }
+        scanner.preprocess(request.root);
+        scanner.dependencyWork(0);
+        if (!reader->validateObservedVersions(nullptr, [&] { scanner.dependencyWork(0); }))
+            throw DependencyFailure{DependencyStatus::InputUnavailable,
+                dependencyMessage("Autolink analysis could not read all required source files.")};
+        for (auto it = scanner.mFileInfos.cbegin(); it != scanner.mFileInfos.cend(); ++it) {
+            scanner.dependencyWork(1);
+            result.directIncludes.insert(it.key(), it.value()->directIncludes());
+        }
+        result.reads = reader->actualReads();
+        result.probes = reader->pathProbes();
+        result.status = DependencyStatus::Complete;
+    } catch (const DependencyFailure &failure) {
+        result.status = failure.status;
+        result.error = failure.reason;
+        result.directIncludes.clear();
+    }
+    result.workUnits = control.work;
+    return result;
+}
 
 CppPreprocessor::CppPreprocessor()
 {
@@ -97,6 +204,14 @@ void CppPreprocessor::clearTempResults()
 
 void CppPreprocessor::addDefineByParts(const QString &name, const QString &args, const QString &value, bool hardCoded)
 {
+    if (mDependency) {
+        const qint64 units = 32 + qint64(name.size()) + args.size() + value.size();
+        auto &control = *mDependency;
+        if (units > control.request.limits.macroUnits - control.macroUnits)
+            dependencyLimit();
+        control.macroUnits += units;
+        dependencyWork(units);
+    }
     // Check for duplicates
     PDefine define = std::make_shared<Define>();
     define->name = name;
@@ -117,6 +232,8 @@ void CppPreprocessor::addDefineByParts(const QString &name, const QString &args,
             int version = value.toLong(&ok);
             mSupportCPP23 = (ok && version >=202302);
         }
+    } else if (mDependency) {
+        mDefines.insert(name, define);
     } else {
         PDefineMap defineMap = mFileDefines.value(mFileName,PDefineMap());
         if (!defineMap) {
@@ -202,7 +319,7 @@ void CppPreprocessor::preprocess(const QString &fileName)
     mStopForParserReset = false;
     clearTempResults();
     mFileName = fileName;
-    openInclude(fileName);
+    openInclude(fileName, true);
     preprocessBuffer();
 }
 
@@ -306,7 +423,8 @@ QString CppPreprocessor::getNextPreprocessor()
 
     // Assemble whole line, convert newlines to space
     QString result = mBuffer[mIndex];
-    mResult.append("");// defines resolve into empty files, except #define and #include
+    if (!mDependency)
+        mResult.append("");// defines resolve into empty files, except #define and #include
     return result;
 }
 
@@ -328,7 +446,8 @@ void CppPreprocessor::handleDefine(const QString &tokens)
         }
         // Add to the list
         addDefineByParts(name, args, value, false);
-        mResult[mPreProcIndex] = "#define " + tokens; // add define to result file so the parser can handle it
+        if (!mDependency)
+            mResult[mPreProcIndex] = "#define " + tokens; // add define to result file so the parser can handle it
     }
 }
 
@@ -340,7 +459,8 @@ void CppPreprocessor::handleInclude(const QString &tokens, bool fromNext)
     PParsedFile file = mIncludeStack.back();
     QString fileName;
     // Get full header file name
-    QString currentDir = excludeTrailingPathDelimiter(extractFileDir(file->fileName));
+    const QString includingPath = mSourceReadSession ? file->sourcePath : file->fileName;
+    QString currentDir = excludeTrailingPathDelimiter(extractFileDir(includingPath));
     QStringList includes;
     QStringList projectIncludes;
     if (fromNext && mIncludePaths.contains(currentDir)) {
@@ -367,14 +487,24 @@ void CppPreprocessor::handleInclude(const QString &tokens, bool fromNext)
     if (!s.startsWith('<') && !s.startsWith('\"'))
         s = expandMacros(s);
 
-    fileName = getHeaderFilename(
-                file->fileName,
-                s,
-                includes,
-                projectIncludes);
+    if (mDependency) {
+        dependencyWork(0);
+        dependencyWork(1 + includes.size() + projectIncludes.size());
+    }
+    fileName = mSourceReadSession
+        ? mSourceReadSession->resolveInclude(includingPath, s, includes, projectIncludes)
+        : getHeaderFilename(file->fileName, s, includes, projectIncludes);
 
-    if (fileName.isEmpty())
+    if (mDependency) dependencyWork(0);
+    if (fileName.isEmpty()) {
+        if (mDependency) {
+            const auto status = mSourceReadSession->complete() ? DependencyStatus::UnresolvedInclude
+                                                               : DependencyStatus::InputUnavailable;
+            throw DependencyFailure{status,
+                dependencyMessage("Autolink analysis could not resolve %1 in '%2'.").arg(s, includingPath)};
+        }
         return;
+    }
 
     PParsedFileInfo oldCurrentIncludes = mCurrentFileInfo;
     openInclude(fileName);
@@ -382,6 +512,10 @@ void CppPreprocessor::handleInclude(const QString &tokens, bool fromNext)
 
 void CppPreprocessor::handlePreprocessor(const QString& command, const QString& tokens)
 {
+    if (mDependency && (command == "endif" || command == "else" || command.startsWith("elif"))
+            && mBranchResults.size() <= mIncludeStack.back()->entryBranches)
+        throw DependencyFailure{DependencyStatus::InputUnavailable,
+            dependencyMessage("Autolink analysis encountered an unmatched conditional directive in '%1'.").arg(mFileName)};
     std::function<void(const QString& tokens)> handler = mPreprocessorHandlers.value(command);
     if (handler) {
         handler(tokens);
@@ -404,7 +538,9 @@ void CppPreprocessor::handleUndefine(const QString& tokens)
     if (define) {
         //remove the define from defines set
         mDefines.remove(name);
-        if (define->filename == mFileName) {
+        if (mDependency) {
+            // Private, single translation unit: there is no cache to replay.
+        } else if (define->filename == mFileName) {
             //remove the define form the file where it defines
             PDefineMap defineMap = mFileDefines.value(mFileName);
             if (defineMap) {
@@ -421,7 +557,8 @@ void CppPreprocessor::handleUndefine(const QString& tokens)
                 undefineMap->insert(name, define);
         }
     }
-    mResult[mPreProcIndex] = "#undef " + name; // add define to result file so the parser can handle it
+    if (!mDependency)
+        mResult[mPreProcIndex] = "#undef " + name; // add define to result file so the parser can handle it
 
 }
 
@@ -531,6 +668,7 @@ void CppPreprocessor::handlePragma(const QString &tokens)
 
 QString CppPreprocessor::expandMacros(QString text, bool handleBuffer, const QSet<QString>& macrosToBeIgnored)
 {
+    dependencyExpansion(text.size());
     QString newLine;
     ContentType currentType = ContentType::Other;
     int lenLine = text.length();
@@ -542,6 +680,7 @@ QString CppPreprocessor::expandMacros(QString text, bool handleBuffer, const QSe
     QMultiHash<int,QString> tempIngoreMacros; // endLine, name
     bool lastWordNotProcessed = false;;
     while (i<lenLine) {
+        if (mDependency) dependencyWork(1);
         QChar ch;
         if (!lastWordNotProcessed) {
             prevI = i;
@@ -565,8 +704,10 @@ QString CppPreprocessor::expandMacros(QString text, bool handleBuffer, const QSe
             if (!word.isEmpty()) {
                 PDefine define = getDefine(word);
                 if (!define) {
+                    dependencyExpansion(qint64(newLine.size()) + word.size(), word.size());
                     newLine += word;
                 } else {
+                    if (mDependency) dependencyWork(1 + tempIngoreMacros.size() + macrosToBeIgnored.size());
                     QSet<QString> macrosUsed;
                     QSet<QString> ignores=macrosToBeIgnored;
                     auto it = tempIngoreMacros.begin();
@@ -591,18 +732,23 @@ QString CppPreprocessor::expandMacros(QString text, bool handleBuffer, const QSe
                         foreach(const QString& name, macrosUsed) {
                             tempIngoreMacros.insert(wordStart+newWord.length(), name);
                         }
+                        const qint64 nextSize = qint64(text.size()) - (i-wordStart) + newWord.size();
+                        dependencyExpansion(nextSize, qint64(text.size()) + nextSize);
                         text.replace(wordStart, i-wordStart, newWord);
                         //text = text.left(wordStart)+newWord+text.mid(i);
                         i = wordStart;
                         lenLine = text.length();
                         word = "";
                         continue;
-                    } else
+                    } else {
+                        dependencyExpansion(qint64(newLine.size()) + newWord.size(), newWord.size());
                         newLine += newWord;
+                    }
                 }
                 word = "";
             }
             if (i<lenLine) {
+                dependencyExpansion(qint64(newLine.size()) + 2);
                 ch = text[i];
                 newLine += text[i];
                 switch (ch.unicode()) {
@@ -662,7 +808,7 @@ QString CppPreprocessor::expandMacros(QString text, bool handleBuffer, const QSe
                     case ContentType::String:
                     case ContentType::Character:
                         i++;
-                        newLine += text[i];
+                        if (i<lenLine) newLine += text[i];
                         break;
                     default:
                         break;
@@ -717,6 +863,7 @@ QString CppPreprocessor::expandMacro(QString &text, const PDefine &define, int &
             int level=0;
             bool inString=false;
             while (i<lenLine) {
+                if (mDependency) dependencyWork(1);
                 switch(text[i].unicode()) {
                 case '\\':
                     if (inString)
@@ -773,7 +920,7 @@ QString CppPreprocessor::removeGCCAttributes(const QString &line)
             }
             word = "";
             if (i<lenLine) {
-                newLine = newLine+line[i];
+                newLine += line[i];
             }
         }
         i++;
@@ -809,10 +956,34 @@ void CppPreprocessor::removeGCCAttribute(const QString &line, QString &newLine, 
     }
 }
 
-void CppPreprocessor::openInclude(QString fileName)
+void CppPreprocessor::openInclude(QString fileName, bool documentRoot)
 {
     if (mStopForParserReset)
         return;
+    if (mDependency) {
+        dependencyWork(0);
+        dependencyWork(1 + fileName.size() + mIncludeStack.size());
+    }
+    AnalysisInput::SourcePtr capturedSource;
+    if (mSourceReadSession) {
+        if (mSourceReadObserver) mSourceReadObserver(fileName);
+        const auto captured = documentRoot ? mSourceReadSession->readDocumentRoot(fileName) : mSourceReadSession->read(fileName);
+        if (mDependency) dependencyWork(0);
+        if (!captured.ready()) {
+            if (mDependency) {
+                auto status = DependencyStatus::InputUnavailable;
+                switch (captured.status) {
+                case AnalysisInput::ReadStatus::Cancelled: status = DependencyStatus::Cancelled; break;
+                case AnalysisInput::ReadStatus::TimedOut: status = DependencyStatus::TimedOut; break;
+                case AnalysisInput::ReadStatus::BudgetExceeded: status = DependencyStatus::LimitExceeded; break;
+                default: break;
+                }
+                throw DependencyFailure{status, captured.error};
+            }
+            return;
+        }
+        capturedSource = captured.source;
+    }
     PParsedFileInfo fileInfo = findFileInfo(fileName);
     if (fileInfo) {
         fileName = fileInfo->fileName();
@@ -827,6 +998,7 @@ void CppPreprocessor::openInclude(QString fileName)
                 //prevent recursive including;
                 return;
             }
+            if (mDependency) continue; // no transitive closure in the private graph
             if (parsedFile->fileInfo->including(fileName)) {
                 alreadyIncluded = true;
             }
@@ -836,6 +1008,8 @@ void CppPreprocessor::openInclude(QString fileName)
             }
         }
         PParsedFile innerMostFile = mIncludeStack.back();
+        if (mDependency && mDependency->edges++ >= mDependency->request.limits.edges)
+            dependencyLimit();
         innerMostFile->fileInfo->addDirectInclude(fileName);
         if (alreadyIncluded && !mFilesCouldRepeatInclude.contains(fileName))
             return;
@@ -848,9 +1022,11 @@ void CppPreprocessor::openInclude(QString fileName)
     // Don't parse stuff that no need to parse again
     if (mScannedFiles.contains(fileName) && !mFilesCouldRepeatInclude.contains(fileName)) {
         //add defines of already parsed including headers;
-        addDefinesInFile(fileName);
+        if (!mDependency) addDefinesInFile(fileName);
         return;
     }
+    if (mDependency && mIncludeStack.size() >= mDependency->request.limits.includeDepth)
+        dependencyLimit();
 //    if (mFilesCouldRepeatInclude.contains(fileName)) {
 //        qDebug()<<"++ "<<fileName;
 //    }
@@ -858,7 +1034,9 @@ void CppPreprocessor::openInclude(QString fileName)
     PParsedFile parsedFile = std::make_shared<ParsedFile>();
     parsedFile->index = 0;
     parsedFile->fileName = fileName;
+    parsedFile->sourcePath = capturedSource ? capturedSource->version.path : fileName;
     parsedFile->branches = 0;
+    parsedFile->entryBranches = mBranchResults.size();
     // parsedFile->buffer; it's auto initialized
 
 
@@ -870,16 +1048,25 @@ void CppPreprocessor::openInclude(QString fileName)
     //if not Assigned(Stream) then
     mScannedFiles.insert(fileName);
 
-    if (mFileCache.contains(fileName))
+    if (mDependency) {
+        Q_ASSERT(capturedSource);
+        dependencyWork(capturedSource->lines.size());
+        parsedFile->buffer = capturedSource->lines;
+        const auto checkpoint = [this](qint64 units) { dependencyWork(units); };
+        combineLinesEndingWithBackslash(parsedFile->buffer, checkpoint);
+        replaceCommentsBySpaceChar(parsedFile->buffer, checkpoint, true);
+    } else if (mFileCache.contains(fileName))
         parsedFile->buffer = mFileCache.value(fileName);
     else {
         // Only load up the file if we are allowed to parse it
         bool isSystemFile = isSystemHeaderFile(fileName, mIncludePaths) || isSystemHeaderFile(fileName, mProjectIncludePaths);
         if ((mParseSystem && isSystemFile) || (mParseLocal && !isSystemFile)) {
             QStringList bufferedText;
-            if (mSourceReadObserver)
+            if (mSourceReadObserver && !mSourceReadSession)
                 mSourceReadObserver(fileName);
-            if (mInputSnapshot ? mInputSnapshot->read(fileName, bufferedText)
+            if (capturedSource) {
+                parsedFile->buffer = capturedSource->lines;
+            } else if (mInputSnapshot ? mInputSnapshot->read(fileName, bufferedText)
                                : (mOnGetFileStream && mOnGetFileStream(fileName,bufferedText))) {
                 parsedFile->buffer  = bufferedText;
             } else {
@@ -903,10 +1090,9 @@ void CppPreprocessor::openInclude(QString fileName)
     // Update result file
     if (mIncludeStack.count()>1) {
         // include from within a file
-        QString includeLine = "#include " + fileName + ":-1";
-        mResult[mPreProcIndex] = includeLine;
+        if (!mDependency) mResult[mPreProcIndex] = "#include " + fileName + ":-1";
         mIndex = -1; //mIndex would +1 in processBuffer();
-    } else {
+    } else if (!mDependency) {
         QString includeLine = "#include " + fileName + ":-1";
         mResult.append(includeLine);
     }
@@ -923,7 +1109,10 @@ void CppPreprocessor::closeInclude()
     if (mIncludeStack.isEmpty())
         return;
     PParsedFile lastFile = mIncludeStack.back();
-    if (mFilesCouldRepeatInclude.contains(lastFile->fileName))
+    if (mDependency && mBranchResults.size() != lastFile->entryBranches)
+        throw DependencyFailure{DependencyStatus::InputUnavailable,
+            dependencyMessage("Autolink analysis encountered an unmatched conditional directive in '%1'.").arg(lastFile->fileName)};
+    if (!mDependency && mFilesCouldRepeatInclude.contains(lastFile->fileName))
         mFileCache.insert(lastFile->fileName, lastFile->buffer);
     mIncludeStack.pop_back();
 
@@ -945,7 +1134,7 @@ void CppPreprocessor::closeInclude()
     mCurrentFileInfo = parsedFile->fileInfo;
 
     // Update result file (we've left the previous file)
-    mResult.append(
+    if (!mDependency) mResult.append(
                 QString("#include %1:%2").arg(parsedFile->fileName)
                 .arg(parsedFile->index));
 }
@@ -1002,18 +1191,27 @@ void CppPreprocessor::parseArgs(PDefine define)
 
     if(args=="")
         return ;
+    if (mDependency) {
+        dependencyWork(args.size());
+        if (args.count(',') >= 256 || define->value.size() > 64 * 1024) dependencyLimit();
+        dependencyExpansion(6 * qint64(define->value.size()), define->value.size());
+    }
     QStringList argList = args.split(',');
     for (int i=0;i<argList.size();i++) {
         argList[i]=argList[i].trimmed();
         define->argUsed.append(false);
         define->argNotExpand.append(false);
     }
-    QList<PDefineArgToken> tokens = tokenizeValue(define->value);
+    const WorkCheckpoint checkpoint = mDependency
+        ? WorkCheckpoint([this](qint64 units) { dependencyWork(units); }) : WorkCheckpoint{};
+    QList<PDefineArgToken> tokens = tokenizeValue(define->value, checkpoint);
 
     QString formatStr = "";
     DefineArgTokenType lastTokenType=DefineArgTokenType::Other;
     int index;
     foreach (const PDefineArgToken& token, tokens) {
+        if (mDependency)
+            dependencyWork(1 + qint64(argList.size()) * (1 + token->value.size()));
         switch(token->type) {
         case DefineArgTokenType::Identifier:
             if (token->value == "__VA_ARGS__") {
@@ -1058,15 +1256,24 @@ void CppPreprocessor::parseArgs(PDefine define)
 
 void CppPreprocessor::combineLinesEndingWithBackslash(QStringList &text)
 {
+    combineLinesEndingWithBackslash(text, {});
+}
+
+void CppPreprocessor::combineLinesEndingWithBackslash(QStringList &text, const WorkCheckpoint &checkpoint)
+{
     if (text.isEmpty())
         return;
     int i = text.length()-1;
     while (i>0) {
         const QString& prevLineText = text[i-1];
         int lastI=prevLineText.length()-1;
-        while (lastI>=0 && isSpaceChar(prevLineText[lastI]))
+        if (checkpoint) checkpoint(1);
+        while (lastI>=0 && isSpaceChar(prevLineText[lastI])) {
+            if (checkpoint) checkpoint(1);
             lastI--;
+        }
         if (lastI>=0 && prevLineText[lastI]=='\\') {
+            if (checkpoint) checkpoint(qint64(lastI) + text[i].size());
             text[i-1] = prevLineText.left(lastI)+text[i];
             text[i]="";
         }
@@ -1076,12 +1283,18 @@ void CppPreprocessor::combineLinesEndingWithBackslash(QStringList &text)
 
 QList<PDefineArgToken> CppPreprocessor::tokenizeValue(const QString &value)
 {
+    return tokenizeValue(value, {});
+}
+
+QList<PDefineArgToken> CppPreprocessor::tokenizeValue(const QString &value, const WorkCheckpoint &checkpoint)
+{
     int i=0;
     PDefineArgToken  token = std::make_shared<DefineArgToken>();
     token->type = DefineArgTokenType::Other;
     QList<PDefineArgToken> tokens;
     bool skipSpaces=false;
     while (i<value.length()) {
+        if (checkpoint) checkpoint(1);
         QChar ch = value[i];
         if (isSpaceChar(ch)) {
             if (token->type==DefineArgTokenType::Other) {
@@ -1152,6 +1365,11 @@ QList<PDefineArgToken> CppPreprocessor::tokenizeValue(const QString &value)
 
 void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
 {
+    replaceCommentsBySpaceChar(text, {}, false);
+}
+
+void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text, const WorkCheckpoint &checkpoint, bool directivesOnly)
+{
     ContentType currentType = ContentType::Other;
     QString delimiter;
     for (int lineIdx = 0; lineIdx < text.length(); lineIdx++) {
@@ -1160,6 +1378,9 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
         int lineLen=line.length();
         int currentLineIdx = lineIdx;
         QString s;
+        if (checkpoint) checkpoint(1 + line.size());
+        const bool canStartDirective = currentType != ContentType::RawString
+            && currentType != ContentType::RawStringPrefix;
         s.reserve(line.length());
         // String & Char Literal can't to next line
         if (currentType == ContentType::Character
@@ -1168,6 +1389,8 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
             currentType = ContentType::Other;
         // Really treat Ansi C Style Comment as a space (and merge lines) only when it's used to define macros.
         while (pos<lineLen) {
+            if (checkpoint) checkpoint(1);
+            if (directivesOnly && delimiter.size() > 16) dependencyLimit();
             QChar ch =line[pos];
             if (currentType == ContentType::AnsiCComment) {
                 if (ch=='*' && (pos+1<lineLen) && line[pos+1]=='/') {
@@ -1176,6 +1399,12 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
                 } else {
                     pos+=1;
                 }
+                continue;
+            }
+            if (currentType == ContentType::RawStringPrefix && ch != '(') {
+                delimiter += ch;
+                s += ch;
+                ++pos;
                 continue;
             }
             switch (ch.unicode()) {
@@ -1191,9 +1420,6 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
                 case ContentType::Other:
                     currentType=ContentType::String;
                     break;
-                case ContentType::RawStringPrefix:
-                    delimiter+=ch;
-                    break;
                 default:
                     break;
                 }
@@ -1207,9 +1433,6 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
                 case ContentType::Other:
                     currentType=ContentType::Character;
                     break;
-                case ContentType::RawStringPrefix:
-                    delimiter+=ch;
-                    break;
                 default:
                     break;
                 }
@@ -1222,9 +1445,6 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
                     ch = line[pos];
                     currentType=ContentType::RawStringPrefix;
                     delimiter = "";
-                }
-                if (currentType == ContentType::RawStringPrefix ) {
-                    delimiter += ch;
                 }
                 s+=ch;
                 break;
@@ -1274,7 +1494,12 @@ void CppPreprocessor::replaceCommentsBySpaceChar(QStringList &text)
             }
             pos++;
         }
-        text[currentLineIdx] = s;
+        if (directivesOnly) {
+            if (canStartDirective) s = s.trimmed();
+            text[currentLineIdx] = canStartDirective && s.startsWith('#') ? std::move(s) : QString{};
+        } else {
+            text[currentLineIdx] = std::move(s);
+        }
         if (currentLineIdx!=lineIdx)
             text[lineIdx].clear();
     }
@@ -1296,6 +1521,11 @@ void CppPreprocessor::preprocessBuffer()
             }
             s = getNextPreprocessor();
             if (s.startsWith('#')) {
+                if (mDependency) {
+                    if (mDependency->directives++ >= mDependency->request.limits.directives)
+                        dependencyLimit();
+                    dependencyExpansion(s.size(), 1 + 3 * qint64(s.size()));
+                }
                 QString command;
                 command.reserve(s.length());
                 QString tokens;
@@ -1337,6 +1567,11 @@ void CppPreprocessor::skipToPreprocessor()
     int bufferCount = mBuffer.count();
 // Increment until a line begins with a #
     while ((mIndex < bufferCount) && !mBuffer[mIndex].startsWith('#')) {
+        if (mDependency) {
+            dependencyWork(1);
+            ++mIndex;
+            continue;
+        }
         if (getCurrentBranch()==BranchResult::isTrue) { // if not skipping, expand current macros
             int startIndex = mIndex;
             QString expanded = expandMacros(mBuffer[mIndex],true);
@@ -1382,18 +1617,22 @@ bool CppPreprocessor::evaluateIf(const QString &line) const
 
 QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) const
 {
+    dependencyExpansion(line.size());
     QString newLine;
     int searchPos = 0;
     int lineLen = line.length();
     QMultiHash<int, QString> usedMacros;
     while (searchPos < line.length()) {
+        if (mDependency) dependencyWork(1);
         QChar ch = line[searchPos];
         // We have found an identifier. It is not a number suffix. Try to expand it
         if (isDigit(ch)) {
             int head = searchPos;
             while (searchPos<lineLen && isNumberChar(line[searchPos])) {
+                if (mDependency) dependencyWork(1);
                 searchPos++;
             }
+            dependencyExpansion(qint64(newLine.size()) + searchPos-head, searchPos-head);
             newLine += QStringView(line.constData()+head, searchPos-head);
         } else if (isMacroIdentStartChar(line[searchPos])) {
             int head = searchPos;
@@ -1453,12 +1692,17 @@ QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) cons
                     if (!args.startsWith('<') && !args.startsWith('\"'))
                         args = expandMacros(args);
 
-                    QString fileName = getHeaderFilename(
-                            mCurrentFileInfo->fileName(),
-                            args,
-                            mIncludePathList,
-                            mProjectIncludePathList);
-                    newLine += (mIncludeStack.front()->fileInfo->including(fileName))?"1":"0";
+                    if (mIncludeStack.isEmpty()) return {};
+                    if (mDependency) {
+                        dependencyWork(1 + mIncludePathList.size() + mProjectIncludePathList.size());
+                        dependencyWork(0);
+                    }
+                    const QString including = mIncludeStack.back()->sourcePath;
+                    const QString fileName = mSourceReadSession
+                        ? mSourceReadSession->resolveInclude(including, args, mIncludePathList, mProjectIncludePathList)
+                        : getHeaderFilename(including, args, mIncludePathList, mProjectIncludePathList);
+                    if (mDependency) dependencyWork(0);
+                    newLine += fileName.isEmpty() ? "0" : "1";
                 } else {
                     // ill-formed
                     return "";
@@ -1472,9 +1716,16 @@ QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) cons
                 // Does it exist in the database?
                 PDefine define = getDefine(name.toString());
                 if (!define) {
-                    newLine += name;
+                    // Unexpanded identifiers in a preprocessor expression
+                    // represent zero. Keep legacy public parser behavior
+                    // where callers expect its intermediate text unchanged.
+                    if (mDependency && (name == QLatin1String("true") || name == QLatin1String("false")))
+                        newLine += name == QLatin1String("true") ? "1" : "0";
+                    else if (mDependency) newLine += '0';
+                    else newLine += name;
                     continue;
                 } else {
+                    if (mDependency) dependencyWork(1 + usedMacros.size());
                     QSet<QString> macrosToBeIgnored;
                     auto it = usedMacros.begin();
                     while (it!=usedMacros.end()) {
@@ -1485,7 +1736,8 @@ QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) cons
                     }
 
                     if (macrosToBeIgnored.contains(define->name)) {
-                        newLine += name;
+                        if (mDependency) newLine += '0';
+                        else newLine += name;
                         continue;
                     }
                     QString insertValue;
@@ -1533,10 +1785,13 @@ QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) cons
                     if (needSpace)
                         insertValue+=" ";
                     if (isNumber) {
+                        dependencyExpansion(qint64(newLine.size()) + insertValue.size(), insertValue.size());
                         newLine += insertValue;
                     } else {
                         // Insert found value at place
                         //qDebug()<<"reparsed!"<<insertValue<<name;
+                        const qint64 nextSize = qint64(insertValue.size()) + line.size() - searchPos;
+                        dependencyExpansion(nextSize, qint64(line.size()) + nextSize);
                         line = insertValue + line.mid(searchPos);
                         lineLen = line.length();
                         QMultiHash tempMacros=usedMacros;
@@ -1558,6 +1813,7 @@ QString CppPreprocessor::expandMacrosInConditioningExpression(QString line) cons
             searchPos ++ ;
             newLine += ch;
         }
+        dependencyExpansion(newLine.size());
     }
     return newLine;
 }
@@ -1566,6 +1822,7 @@ bool CppPreprocessor::skipParenthesis(const QString &line, int &index, int step)
 {
     int level = 1;
     while ((index >= 0) && (index < line.length())) { // Find the corresponding opening brace
+        if (mDependency) dependencyWork(1);
         if (line[index] == '(') {
             level++;
         } else if (line[index] == ')') {
@@ -1580,6 +1837,21 @@ bool CppPreprocessor::skipParenthesis(const QString &line, int &index, int step)
 
 QString CppPreprocessor::expandFunctionLikeMacro(PDefine define, const QString &args, const QSet<QString> &macrosToBeIgnored) const
 {
+    if (mDependency) {
+        if (++mDependency->expansionDepth > 48) dependencyLimit();
+        dependencyExpansion(args.size(), 1 + args.size());
+    }
+    const auto leaveExpansion = qScopeGuard([this] { if (mDependency) --mDependency->expansionDepth; });
+    const auto substitute = [this](const QString &pattern, const QString &value) {
+        if (mDependency) {
+            dependencyWork(pattern.size());
+            // At most one substitution per percent sign. Charge before
+            // QString::arg can allocate the multiplied argument.
+            const qint64 ceiling = qint64(pattern.size()) + qint64(pattern.count('%')) * value.size();
+            dependencyExpansion(ceiling, ceiling);
+        }
+        return pattern.arg(value);
+    };
     // Replace function by this string
     QString result = define->formatValue;
 //    if (args.startsWith('(') && args.endsWith(')')) {
@@ -1597,6 +1869,7 @@ QString CppPreprocessor::expandFunctionLikeMacro(PDefine define, const QString &
         int lastSplit=0;
         int level=0;
         while (i<args.length()) {
+            if (mDependency) dependencyWork(1);
             switch(args[i].unicode()) {
             case '\\':
                 if (inString || inChar)
@@ -1622,6 +1895,7 @@ QString CppPreprocessor::expandFunctionLikeMacro(PDefine define, const QString &
                 break;
             case ',':
                 if (!inString && !inChar && level == 0) {
+                    if (mDependency && argValues.size() >= 4096) dependencyLimit();
                     argValues.append(args.mid(lastSplit,i-lastSplit));
                     lastSplit=i+1;
                 }
@@ -1645,22 +1919,26 @@ QString CppPreprocessor::expandFunctionLikeMacro(PDefine define, const QString &
         if (argValues.length() >= define->argUsed.length()
                 && argValues.length()>0) {
             QStringList varArgs;
+            qint64 varArgUnits = 0;
             for (int i=0;i<argValues.length();i++) {
+                if (mDependency) dependencyWork(1);
                 QString argValue = argValues[i];
                 if (define->varArgIndex != -1
                      && i >= define->varArgIndex ) {
                     if (!define->argNotExpand[define->varArgIndex])
                         argValue = expandMacros(argValue,macrosToBeIgnored);
+                    varArgUnits += 1 + argValue.size();
+                    dependencyExpansion(varArgUnits, argValue.size());
                     varArgs.append(argValue.trimmed());
                 } else if (i<define->argUsed.length()
                             && define->argUsed[i]) {                    
                     if (!define->argNotExpand[i])
                         argValue = expandMacros(argValue,macrosToBeIgnored);
-                    result=result.arg(argValue.trimmed());
+                    result=substitute(result, argValue.trimmed());
                 }
             }
             if (!varArgs.isEmpty() && define->varArgIndex != -1) {
-                result=result.arg(varArgs.join(","));
+                result=substitute(result, varArgs.join(","));
             }
         }
     }
@@ -1671,8 +1949,11 @@ QString CppPreprocessor::expandFunctionLikeMacro(PDefine define, const QString &
 
 bool CppPreprocessor::skipSpaces(const QString &expr, int &pos) const
 {
-    while (pos<expr.length() && isSpaceChar(expr[pos]))
+    if (mDependency) dependencyWork(1);
+    while (pos<expr.length() && isSpaceChar(expr[pos])) {
+        if (mDependency) dependencyWork(1);
         pos++;
+    }
     return pos<expr.length();
 }
 
@@ -1684,6 +1965,7 @@ bool CppPreprocessor::evalNumber(const QString &expr, NumberType &result, int &p
         return false;
     QString s;
     while (pos<expr.length() && isNumberChar(expr[pos])) {
+        if (mDependency) dependencyWork(1);
         s+=expr[pos];
         pos++;
     }
@@ -1748,7 +2030,7 @@ bool CppPreprocessor::evalUnaryExpr(const QString &expr, NumberType &result, int
         pos++;
         if (!evalTerm(expr,result,pos))
             return false;
-        result = -result;
+        result = NumberType(0ULL - qulonglong(result));
     } else if (expr[pos]=='~') {
         pos++;
         if (!evalTerm(expr,result,pos))
@@ -1783,12 +2065,14 @@ bool CppPreprocessor::evalMulExpr(const QString &expr, NumberType &result, int &
             pos++;
             if (!evalUnaryExpr(expr,rightResult,pos))
                 return false;
-            result *= rightResult;
+            result = NumberType(qulonglong(result) * qulonglong(rightResult));
         } else if (expr[pos]=='/') {
             pos++;
             if (!evalUnaryExpr(expr,rightResult,pos))
                 return false;
-            if (rightResult != 0)
+            if (rightResult == -1 && result == std::numeric_limits<NumberType>::min()) {
+                // Two's-complement result without triggering integer division overflow.
+            } else if (rightResult != 0)
                 result /= rightResult;
             else
                 result = 0;
@@ -1796,7 +2080,9 @@ bool CppPreprocessor::evalMulExpr(const QString &expr, NumberType &result, int &
             pos++;
             if (!evalUnaryExpr(expr,rightResult,pos))
                 return false;
-            if (rightResult != 0)
+            if (rightResult == -1)
+                result = 0;
+            else if (rightResult != 0)
                 result %= rightResult;
             else
                 result = 0;
@@ -1824,12 +2110,12 @@ bool CppPreprocessor::evalAddExpr(const QString &expr, NumberType &result, int &
             pos++;
             if (!evalMulExpr(expr,rightResult,pos))
                 return false;
-            result += rightResult;
+            result = NumberType(qulonglong(result) + qulonglong(rightResult));
         } else if (expr[pos]=='-') {
             pos++;
             if (!evalMulExpr(expr,rightResult,pos))
                 return false;
-            result -= rightResult;
+            result = NumberType(qulonglong(result) - qulonglong(rightResult));
         } else {
             break;
         }
@@ -1854,11 +2140,13 @@ bool CppPreprocessor::evalShiftExpr(const QString &expr, NumberType &result, int
             pos += 2;
             if (!evalAddExpr(expr,rightResult,pos))
                 return false;
-            result = (result << rightResult);
+            if (rightResult < 0 || rightResult >= std::numeric_limits<qulonglong>::digits) return false;
+            result = NumberType(qulonglong(result) << rightResult);
         } else if (pos+1<expr.length() && expr[pos] == '>' && expr[pos+1]=='>') {
             pos += 2;
             if (!evalAddExpr(expr,rightResult,pos))
                 return false;
+            if (rightResult < 0 || rightResult >= std::numeric_limits<qulonglong>::digits) return false;
             result = (result >> rightResult);
         } else {
             break;
@@ -2102,6 +2390,11 @@ bool CppPreprocessor::evalConnditionalExpr(const QString &expr, NumberType &resu
 
 bool CppPreprocessor::evalExpr(const QString &expr, NumberType &result, int &pos) const
 {
+    if (mDependency) {
+        if (++mDependency->expressionDepth > 48) dependencyLimit();
+        dependencyWork(1);
+    }
+    const auto leaveExpression = qScopeGuard([this] { if (mDependency) --mDependency->expressionDepth; });
     return evalConnditionalExpr(expr,result,pos);
 }
 

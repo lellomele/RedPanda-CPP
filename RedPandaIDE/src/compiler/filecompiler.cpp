@@ -25,23 +25,14 @@
 #include <QMessageBox>
 
 
-FileCompiler::FileCompiler(const QString &filename, const QByteArray &encoding,
-                           FileType fileType,
-                           CppCompileType compileType, bool onlyCheckSyntax):
-    Compiler{filename, onlyCheckSyntax},
-    mEncoding{encoding},
-    mCompileType{compileType},
-    mFileType{fileType}
+FileCompiler::FileCompiler(Compilation::FileCompileRequest::Pointer request):
+    Compiler(request), mEncoding(request->values().sourceEncoding),
+    mCompileType(request->values().compileType), mFileType(request->values().fileType)
 {
-
 }
 
 bool FileCompiler::prepareForCompile()
 {
-    QString oldDebugOptionValue = compilerSet()->getCompileOptionValue(CC_CMD_OPT_DEBUG_INFO);
-    auto action = finally([this, oldDebugOptionValue]{
-       compilerSet()->setCompileOption(CC_CMD_OPT_DEBUG_INFO,oldDebugOptionValue);
-    });
     CompilerSet::CompilationStage stage = CompilerSet::CompilationStage::GenerateExecutable;
     switch(mCompileType) {
     case CppCompileType::PreprocessOnly:
@@ -49,8 +40,7 @@ bool FileCompiler::prepareForCompile()
         break;
     case CppCompileType::GenerateAssemblyOnly:
         stage = CompilerSet::CompilationStage::CompilationProperOnly;
-        if (pSettings->languages().noDebugDirectivesWhenGenerateASM())
-            compilerSet()->setCompileOption(CC_CMD_OPT_DEBUG_INFO,COMPILER_OPTION_OFF);
+        mSuppressDebugInfo = configuration().preferences.noDebugDirectivesWhenGenerateASM;
         break;
     case CppCompileType::GenerateGimpleOnly:
         stage = CompilerSet::CompilationStage::GenerateGimple;
@@ -65,10 +55,10 @@ bool FileCompiler::prepareForCompile()
     }
     log("------------------");
     log(tr("- Filename: %1").arg(mFilename));
-    log(tr("- Compiler Set Name: %1").arg(compilerSet()->name()));
+    log(tr("- Compiler Set Name: %1").arg(configuration().toolchain.name));
     log("");
 
-    CompilerType compilerType = compilerSet()->compilerType();
+    CompilerType compilerType = configuration().toolchain.compilerType;
 
     // GCC `import std;` sources should be added before the main file to generate GCM cache
     if (mFileType == FileType::CppSource &&
@@ -76,54 +66,50 @@ bool FileCompiler::prepareForCompile()
         mArguments += getCppGccImportStdSources(mOnlyCheckSyntax);
     }
 
-    mArguments += QStringList{localizePath(mFilename)};
+    mArguments += QStringList{localizePath(fileRequest()->values().sourcePath)};
     if (!mOnlyCheckSyntax) {
         switch(stage) {
         case CompilerSet::CompilationStage::PreprocessingOnly:
-            mOutputFile=changeFileExt(mFilename,compilerSet()->preprocessingSuffix());
+            mOutputFile=changeFileExt(fileRequest()->values().sourcePath,configuration().toolchain.preprocessingSuffix);
             mArguments << "-E";
             break;
         case CompilerSet::CompilationStage::CompilationProperOnly:
-            mOutputFile=changeFileExt(mFilename,compilerSet()->compilationProperSuffix());
+            mOutputFile=changeFileExt(fileRequest()->values().sourcePath,configuration().toolchain.compilationProperSuffix);
             mArguments += {"-S", "-fverbose-asm"};
             break;
         case CompilerSet::CompilationStage::GenerateGimple:
-            mOutputFile=changeFileExt(mFilename,compilerSet()->compilationProperSuffix());
-            mArguments += {"-S", QString("-fdump-tree-gimple=%1").arg(localizePath(changeFileExt(mFilename,"gimple")))};
+            mOutputFile=changeFileExt(fileRequest()->values().sourcePath,configuration().toolchain.compilationProperSuffix);
+            validateGeneratedOutputPath(changeFileExt(fileRequest()->values().sourcePath,"gimple"));
+            mArguments += {"-S", QString("-fdump-tree-gimple=%1").arg(localizePath(changeFileExt(fileRequest()->values().sourcePath,"gimple")))};
             break;
         case CompilerSet::CompilationStage::AssemblingOnly:
-            mOutputFile=changeFileExt(mFilename,compilerSet()->assemblingSuffix());
+            mOutputFile=changeFileExt(fileRequest()->values().sourcePath,configuration().toolchain.assemblingSuffix);
             mArguments << "-c";
             break;
         case CompilerSet::CompilationStage::GenerateExecutable:
-            mOutputFile = changeFileExt(mFilename,compilerSet()->executableSuffix());
+            mOutputFile = changeFileExt(fileRequest()->values().sourcePath,configuration().toolchain.executableSuffix);
         }
 #ifdef ENABLE_SDCC
-        if (compilerSet()->compilerType()==CompilerType::SDCC) {
-            if (compilerSet()->executableSuffix()==SDCC_IHX_SUFFIX) {
+        if (configuration().toolchain.compilerType==CompilerType::SDCC) {
+            if (configuration().toolchain.executableSuffix==SDCC_IHX_SUFFIX) {
 
             }
         }
 #endif
         mOutputFile = localizePath(mOutputFile);
+        validateGeneratedOutputPath(mOutputFile);
         mArguments += {"-o",  mOutputFile};
 
 #if defined(ARCH_X86_64) || defined(ARCH_X86)
         if (mCompileType == CppCompileType::GenerateAssemblyOnly) {
-            if (pSettings->languages().noSEHDirectivesWhenGenerateASM())
+            if (configuration().preferences.noSEHDirectivesWhenGenerateASM)
                 mArguments << "-fno-asynchronous-unwind-tables";
-            if (pSettings->languages().x86DialectOfASMGenerated()==LanguageSettings::X86ASMDialect::Intel)
+            if (configuration().preferences.intelASMDialect)
                 mArguments << "-masm=intel";
         }
 #endif
-        //remove the old file if it exists
-        QFile outputFile(mOutputFile);
-        if (outputFile.exists()) {
-            if (!outputFile.remove()) {
-                error(tr("Can't delete the old executable file \"%1\".\n").arg(mOutputFile));
-                return false;
-            }
-        }
+        // Preserve the previous artifact during preparation and cancellation.
+        // The external compiler owns replacement after its process is launched.
     }
 
     mArguments += getCharsetArgument(mEncoding, mFileType, mOnlyCheckSyntax);
@@ -133,27 +119,27 @@ bool FileCompiler::prepareForCompile()
         mArguments += getCCompileArguments(mOnlyCheckSyntax);
         mArguments += getCIncludeArguments();
         mArguments += getProjectIncludeArguments();
-        if (pSettings->compile().GASLinkCStandardLib()) {
+        if (configuration().preferences.gasLinkCStandardLib) {
             mArguments.removeAll("-nostdlib");
         } else {
             mArguments += "-nostdlib";
         }
         strFileType = tr("GNU Assembler");
-        mCompiler = compilerSet()->CCompiler();
+        mCompiler = configuration().toolchain.cCompiler;
         break;
     case FileType::CSource:
         mArguments += getCCompileArguments(mOnlyCheckSyntax);
         mArguments += getCIncludeArguments();
         mArguments += getProjectIncludeArguments();
         strFileType = "C";
-        mCompiler = compilerSet()->CCompiler();
+        mCompiler = configuration().toolchain.cCompiler;
         break;
     case FileType::CppSource:
         mArguments += getCppCompileArguments(mOnlyCheckSyntax);
         mArguments += getCppIncludeArguments();
         mArguments += getProjectIncludeArguments();
         strFileType = "C++";
-        mCompiler = compilerSet()->cppCompiler();
+        mCompiler = configuration().toolchain.cppCompiler;
         break;
     default:
         throw CompileError(tr("Can't find the compiler for file %1").arg(mFilename));
@@ -206,19 +192,13 @@ bool FileCompiler::prepareForCompile()
     log(tr("%1 Compiler: %2").arg(strFileType,mCompiler));
     QString command = escapeCommandForLog(mCompiler, mArguments);
     log(tr("Command: %1").arg(command));
-    mDirectory = extractFileDir(mFilename);
+    mDirectory = fileRequest()->values().workingDirectory;
     return true;
 }
 
 bool FileCompiler::prepareForRebuild()
 {
-    QString exeName=compilerSet()->getOutputFilename(mFilename);
-
-    QFile file(exeName);
-
-    if (file.exists() && !file.remove()) {
-        QFileInfo info(exeName);
-        throw CompileError(tr("Can't delete the old executable file \"%1\".\n").arg(info.absoluteFilePath()));
-    }
+    // Direct file compilation already rebuilds the complete translation unit.
+    // Do not delete a confirmed output before the new process starts.
     return true;
 }

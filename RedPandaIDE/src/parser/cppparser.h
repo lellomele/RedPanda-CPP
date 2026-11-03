@@ -41,6 +41,7 @@ public:
         bool updateView;
         PAnalysisInputSnapshot inputs;
         SourceReadObserver readObserver;
+        AnalysisInput::SourceReadRequestPtr sourceRequest;
     };
     using PParseFileCommand = std::unique_ptr<ParseFileCommand>;
 
@@ -148,6 +149,19 @@ public:
     void setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream);
     void setInputSnapshotProvider(InputSnapshotProvider provider);
     void setSourceReadObserver(SourceReadObserver observer);
+    struct SourceJobReport {
+        enum class Outcome { Complete, VerifiedNoChange, InputFailed, Stopped, UnverifiedCache };
+        Outcome outcome = Outcome::UnverifiedCache;
+        quint64 job = 0;
+        quint64 inputGeneration = 0;
+        QString workingDirectory;
+        QHash<QString, AnalysisInput::SourceVersion> reads;
+        QHash<QString, AnalysisInput::PathPresence> probes;
+        QString error;
+        bool complete() const { return outcome == Outcome::Complete || outcome == Outcome::VerifiedNoChange; }
+    };
+    using SourceJobReportPtr = std::shared_ptr<const SourceJobReport>;
+    SourceJobReportPtr sourceJobReport() const;
 
     int parserId() const;
 
@@ -182,7 +196,7 @@ public:
     bool sharedByFiles() const;
     void setSharedByFiles(bool newSharedByFiles);
 
-    enum class ParseResult { Parsed, Busy, Disabled, NotParsed, InputUnavailable };
+    enum class ParseResult { Parsed, Busy, Disabled, NotParsed, InputUnavailable, SourceFailed };
     enum class RequestResult { Accepted, QueuedForOwner, Disabled, InputUnavailable };
     static ParseResult parseFileBlocking(
         PCppParser parser,
@@ -224,10 +238,16 @@ private:
                    bool onlyIfNotParsed = false, bool updateView = true,
                    bool consumeSyncReservation = false,
                    PAnalysisInputSnapshot inputs = {},
-                   SourceReadObserver readObserver = {}
+                   SourceReadObserver readObserver = {},
+                   AnalysisInput::SourceReadRequestPtr sourceRequest = {}
                    );
-    void parseFileList(bool updateView = true, PAnalysisInputSnapshot inputs = {}, SourceReadObserver readObserver = {});
+    void parseFileList(bool updateView = true, PAnalysisInputSnapshot inputs = {}, SourceReadObserver readObserver = {},
+                       AnalysisInput::SourceReadRequestPtr sourceRequest = {});
     InputCaptureResult captureInputSnapshot() const;
+    AnalysisInput::SourceReadRequestPtr captureSourceRequest(PAnalysisInputSnapshot inputs) const;
+    void beginSourceJob(const AnalysisInput::SourceReadRequestPtr &request);
+    bool finishSourceJob(bool verifiedNoChange = false);
+    void clearEngineResultsPreservingConfig();
     PParseFileCommand retrievePendingParseFileCommand();
 
     PStatement addInheritedStatement(
@@ -799,6 +819,8 @@ private:
     bool mActiveFileListUpdateView = false;
     PAnalysisInputSnapshot mActiveFileListInputs;
     PAnalysisInputSnapshot mPendingFileListInputs;
+    AnalysisInput::SourceReadRequestPtr mActiveFileListSourceRequest;
+    AnalysisInput::SourceReadRequestPtr mPendingFileListSourceRequest;
     SourceReadObserver mActiveFileListReadObserver;
     SourceReadObserver mPendingFileListReadObserver;
     QSet<QString> mActiveFileListNames;
@@ -812,6 +834,16 @@ private:
     bool mSyncParseReserved = false;
     InputSnapshotProvider mInputSnapshotProvider;
     SourceReadObserver mSourceReadObserver;
+    std::shared_ptr<AnalysisInput::SourceReadSession> mSourceSession;
+    AnalysisInput::SourceReadRequestPtr mActiveSourceRequest;
+    SourceJobReportPtr mSourceJobReport;
+    quint64 mSourceJobSequence = 0;
+    quint64 mSourceConfigGeneration = 0;
+    quint64 mActiveSourceConfigGeneration = 0;
+    quint64 mCompletedSourceConfigGeneration = 0;
+    bool mSourceCacheCertified = false;
+    bool mSourceJobRebuild = false;
+    QSet<QString> mSourceRoots;
     void queueParseFileCommand(const ParseFileCommand &command);
     void queueOlderParseFileCommand(const ParseFileCommand &command);
     void schedulePendingParseCommands();
@@ -836,7 +868,8 @@ public:
             bool updateView = true,
             QObject *parent = nullptr,
             PAnalysisInputSnapshot inputs = {},
-            SourceReadObserver readObserver = {});
+            SourceReadObserver readObserver = {},
+            AnalysisInput::SourceReadRequestPtr sourceRequest = {});
     ~CppFileParserThread();
 private:
     PCppParser mParser;
@@ -848,6 +881,7 @@ private:
     int mId;
     PAnalysisInputSnapshot mInputs;
     SourceReadObserver mReadObserver;
+    AnalysisInput::SourceReadRequestPtr mSourceRequest;
     bool mInputsAvailable = true;
 
     // QThread interface
@@ -864,12 +898,14 @@ public:
             bool updateView = true,
             QObject *parent = nullptr,
             PAnalysisInputSnapshot inputs = {},
-            SourceReadObserver readObserver = {});
+            SourceReadObserver readObserver = {},
+            AnalysisInput::SourceReadRequestPtr sourceRequest = {});
 private:
     PCppParser mParser;
     bool mUpdateView;
     PAnalysisInputSnapshot mInputs;
     SourceReadObserver mReadObserver;
+    AnalysisInput::SourceReadRequestPtr mSourceRequest;
     bool mInputsAvailable = true;
     // QThread interface
 protected:

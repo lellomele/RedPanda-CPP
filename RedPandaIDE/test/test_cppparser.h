@@ -49,6 +49,12 @@ private slots:
     void test_snapshot_requests_coalesce_latest_revision();
     void test_snapshot_submission_owner_and_destroyed_parser();
     void test_snapshot_project_list_keeps_one_input_view();
+    void test_source_manifest_revalidates_unsaved_included_header();
+    void test_source_manifest_revalidates_closed_and_previously_missing_headers();
+    void test_source_failure_is_distinct_from_an_empty_source();
+    void test_source_request_keeps_accepted_directory();
+    void test_source_change_during_parse_cannot_certify_ready();
+    void test_source_relative_document_keeps_its_registration_root();
 
 protected:
     std::shared_ptr<CppParser> mParser;

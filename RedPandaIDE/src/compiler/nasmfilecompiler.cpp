@@ -24,32 +24,28 @@
 #include <QMessageBox>
 
 
-NASMFileCompiler::NASMFileCompiler(const QString &filename):
-    Compiler(filename, false)
+NASMFileCompiler::NASMFileCompiler(Compilation::FileCompileRequest::Pointer request): Compiler(request)
 {
-
 }
 
 bool NASMFileCompiler::prepareForCompile()
 {
-    //compilerSet()->setCompilationStage(CompilerSet::CompilationStage::GenerateExecutable);
-
     if (mOnlyCheckSyntax) {
-        qFatal("NASM can't check syntax!");
+        throw CompileError(tr("NASM does not support this syntax-check request."));
     }
     log(tr("Compiling single file..."));
     log("------------------");
     log(tr("- Filename: %1").arg(mFilename));
-    log(tr("- Compiler Set Name: %1").arg(compilerSet()->name()));
+    log(tr("- Compiler Set Name: %1").arg(configuration().toolchain.name));
     log("");
 
     QString strFileType = "C";
-    mCompiler = pSettings->compile().NASMPath();
+    mCompiler = configuration().preferences.nasmPath;
 
     QStringList arguments = getCCompileArguments(false);
 #ifdef Q_OS_WIN
-    if (arguments.contains("-m32") || QString("i686").compare(compilerSet()->target(), Qt::CaseInsensitive)==0
-            || QString("i386").compare(compilerSet()->target(), Qt::CaseInsensitive)==0) {
+    if (arguments.contains("-m32") || QString("i686").compare(configuration().toolchain.target, Qt::CaseInsensitive)==0
+            || QString("i386").compare(configuration().toolchain.target, Qt::CaseInsensitive)==0) {
         mArguments += {"-f","elf32"};
     } else if (arguments.contains("-m64")) {
         mArguments += {"-f","elf64"};
@@ -69,13 +65,15 @@ bool NASMFileCompiler::prepareForCompile()
                     +tr("Please check NASM settings."));
     }
 
-    mOutputFile=changeFileExt(mFilename, compilerSet()->executableSuffix());
-    mObjFilename= changeFileExt(mFilename, DEFAULT_ASSEMBLING_SUFFIX );
+    mOutputFile=changeFileExt(fileRequest()->values().sourcePath, configuration().toolchain.executableSuffix);
+    mObjFilename= changeFileExt(fileRequest()->values().sourcePath, DEFAULT_ASSEMBLING_SUFFIX );
+    validateGeneratedOutputPath(mOutputFile);
+    validateGeneratedOutputPath(mObjFilename);
 
-    mArguments += {mFilename, "-o", mObjFilename};
-    mExtraCompilersList << compilerSet()->CCompiler();
+    mArguments += {fileRequest()->values().sourcePath, "-o", mObjFilename};
+    mExtraCompilersList << configuration().toolchain.cCompiler;
     QStringList args = getLibraryArguments(FileType::CSource);
-    if (pSettings->compile().NASMLinkCStandardLib()) {
+    if (configuration().preferences.nasmLinkCStandardLib) {
         args.removeAll("-nostdlib");
     } else {
         args += "-nostdlib";
@@ -88,7 +86,7 @@ bool NASMFileCompiler::prepareForCompile()
     log(tr("- %1 Compiler: %2").arg(strFileType, mCompiler));
     QString command = escapeCommandForLog(mCompiler, mArguments);
     log(tr("- Command: %1").arg(command));
-    mDirectory = extractFileDir(mFilename);
+    mDirectory = fileRequest()->values().workingDirectory;
     mStartCompileTime = QDateTime::currentDateTime();
     return true;
 }
@@ -104,20 +102,7 @@ bool NASMFileCompiler::beforeRunExtraCommand(int idx)
 
 bool NASMFileCompiler::prepareForRebuild()
 {
-    QString exeName=compilerSet()->getOutputFilename(mFilename);
-
-    QFile file(exeName);
-
-    if (file.exists() && !file.remove()) {
-        QFileInfo info(exeName);
-        throw CompileError(tr("Can't delete the old executable file \"%1\".\n").arg(info.absoluteFilePath()));
-    }
-
-    QString objFileName = changeFileExt(mFilename, DEFAULT_ASSEMBLING_SUFFIX);
-    QFile objFile = QFile(objFileName);
-    if (objFile.exists() && !objFile.remove()) {
-        QFileInfo info(objFileName);
-        throw CompileError(tr("Can't delete the old object file \"%1\".\n").arg(info.absoluteFilePath()));
-    }
+    // Direct assembler/compiler invocations regenerate their own artifacts.
+    // Cancellation before launch retains the previous confirmed files.
     return true;
 }

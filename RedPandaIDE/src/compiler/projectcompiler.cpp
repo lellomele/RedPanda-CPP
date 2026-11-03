@@ -19,7 +19,6 @@
 #include "compilermanager.h"
 #include "../systemconsts.h"
 #include "qt_utils/charsetinfo.h"
-#include "../editor.h"
 #include "qt_utils/utils.h"
 #include "../utils.h"
 #include "../utils/escape.h"
@@ -491,14 +490,14 @@ void ProjectCompiler::writeMakeObjFilesRules(QFile &file)
         } else {
             QString encodingStr;
             if (compilerSet()->supportConvertingCharset() && mProject->options().addCharset) {
-                QByteArray defaultSystemEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
+                const QByteArray defaultSystemEncoding = mProjectSystemEncoding;
                 QByteArray encoding = mProject->options().execEncoding;
                 QByteArray targetEncoding;
                 QByteArray sourceEncoding;
                 if ( encoding == ENCODING_SYSTEM_DEFAULT || encoding.isEmpty()) {
                     targetEncoding = defaultSystemEncoding;
                 } else if (encoding == ENCODING_OEM_DEFAULT) {
-                    targetEncoding = pCharsetInfoManager->getDefaultConsoleEncoding();
+                    targetEncoding = mProjectConsoleEncoding;
                 } else if (encoding == ENCODING_UTF8_BOM) {
                     targetEncoding = "UTF-8";
                 } else if (encoding == ENCODING_UTF16_BOM) {
@@ -509,28 +508,11 @@ void ProjectCompiler::writeMakeObjFilesRules(QFile &file)
                     targetEncoding = encoding;
                 }
 
-                if (unit->realEncoding().isEmpty()) {
-                    if (unit->encoding() == ENCODING_AUTO_DETECT) {
-                        Editor* editor = mProject->unitEditor(unit);
-                        if (editor && editor->fileEncoding()!=ENCODING_ASCII
-                                && editor->fileEncoding()!=targetEncoding) {
-                            sourceEncoding = editor->fileEncoding();
-                        } else {
-                            sourceEncoding = targetEncoding;
-                        }
-                    } else if (unit->encoding()==ENCODING_PROJECT) {
-                        sourceEncoding=mProject->options().encoding;
-                    } else if (unit->encoding()==ENCODING_SYSTEM_DEFAULT) {
-                        sourceEncoding = defaultSystemEncoding;
-                    } else if (unit->encoding()!=ENCODING_ASCII && !unit->encoding().isEmpty()) {
-                        sourceEncoding = unit->encoding();
-                    } else {
-                        sourceEncoding = targetEncoding;
-                    }
-                } else if (unit->realEncoding()==ENCODING_ASCII) {
+                const QByteArray capturedSource = mProjectSourceEncodings.value(reinterpret_cast<quintptr>(unit.get()));
+                if (capturedSource.isEmpty() || capturedSource == ENCODING_ASCII) {
                     sourceEncoding = targetEncoding;
                 } else {
-                    sourceEncoding = unit->realEncoding();
+                    sourceEncoding = capturedSource;
                 }
                 if (sourceEncoding==ENCODING_SYSTEM_DEFAULT)
                     sourceEncoding = defaultSystemEncoding;

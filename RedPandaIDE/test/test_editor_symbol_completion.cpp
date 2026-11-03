@@ -2754,20 +2754,16 @@ void TestEditorSymbolCompletion::test_header_completion_preserves_include_preced
 }
 
 
-void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity_data()
+void TestEditorSymbolCompletion::test_unregistered_save_as_preserves_editor_and_files_data()
 {
     QTest::addColumn<bool>("newDocument");
-    QTest::addColumn<bool>("directoryTarget");
-    QTest::newRow("existing-directory") << false << true;
-    QTest::newRow("existing-missing-parent") << false << false;
-    QTest::newRow("new-directory") << true << true;
-    QTest::newRow("new-missing-parent") << true << false;
+    QTest::newRow("existing-document") << false;
+    QTest::newRow("new-document") << true;
 }
 
-void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity()
+void TestEditorSymbolCompletion::test_unregistered_save_as_preserves_editor_and_files()
 {
     QFETCH(bool, newDocument);
-    QFETCH(bool, directoryTarget);
     init_editor();
     mEditorSettings->setAutoFormatWhenSaved(false);
     mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
@@ -2800,14 +2796,21 @@ void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity()
     QSignalSpy renamed(mEditor.get(), &Editor::fileSaveAsed);
     QSignalSpy saved(mEditor.get(), &Editor::fileSaved);
     QSignalSpy failed(mEditor.get(), &Editor::fileSaveError);
-    QTimer closeErrors;
-    connect(&closeErrors, &QTimer::timeout, mEditor.get(), [] {
-        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
-            box->accept();
-    });
-    closeErrors.start(10);
-    const QString target = directoryTarget ? temp.path() : temp.filePath("missing/target.c");
-    QVERIFY(!mEditor->saveAs(target, false));
+    QSignalSpy saving(mEditor.get(), &Editor::fileSaving);
+    const QString target = temp.filePath("protected.c");
+    const QByteArray protectedBytes("int protected_destination = 7;");
+    { QFile file(target); QVERIFY(file.open(QIODevice::WriteOnly)); QCOMPARE(file.write(protectedBytes), qint64(protectedBytes.size())); }
+    // Save As is a document operation. Its production controller is exercised
+    // by the registered GUI workflow; an unregistered widget must refuse even
+    // a writable destination, before attempting I/O or announcing a save.
+    const auto result = mEditor->saveAsOperation(target, false);
+    QCOMPARE(result.outcome.status, OperationStatus::Failed);
+    QVERIFY(!result.outcome.error.isEmpty());
+    QCOMPARE(result.textFile.state, ResourceCommitState::NotAttempted);
+    const QString absent = temp.filePath("not-created.c");
+    QVERIFY(!mEditor->saveAs(absent, false));
+    QVERIFY(!QFileInfo::exists(absent));
+    { QFile file(target); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), protectedBytes); }
     QCOMPARE(mEditor->filename(), original);
     QCOMPARE(mEditor->fileType(), FileType::CppSource);
     QCOMPARE(mEditor->isNew(), newDocument);
@@ -2816,86 +2819,16 @@ void TestEditorSymbolCompletion::test_failed_save_as_preserves_editor_identity()
     QVERIFY(mEditor->canUndo());
     QCOMPARE(renamed.count(), 0);
     QCOMPARE(saved.count(), 0);
-    QCOMPARE(failed.count(), 1);
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(saving.count(), 0);
     QCOMPARE(watcher.files().contains(original), !newDocument);
     if (!newDocument) {
         QFile file(original);
         QVERIFY(file.open(QIODevice::ReadOnly));
         QCOMPARE(file.readAll(), originalBytes);
     }
-    const QString retry = temp.filePath("retry.c");
-    bool coherentSavedState = false;
-    connect(mEditor.get(), &Editor::fileSaved, mEditor.get(), [&](Editor*, const QString &filename) {
-        coherentSavedState = filename == retry && mEditor->filename() == retry
-                && mEditor->fileType() == FileType::CSource && !mEditor->isNew()
-                && !mEditor->modified();
-    });
-    QVERIFY(mEditor->saveAs(retry, false));
-    QCOMPARE(renamed.count(), 1);
-    QCOMPARE(saved.count(), 1);
-    QCOMPARE(failed.count(), 1);
-    QVERIFY(coherentSavedState);
-    QVERIFY(watcher.files().contains(retry));
-    QVERIFY(!watcher.files().contains(original));
-    QFile file(retry);
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    QVERIFY(file.readAll().contains("int original = 1;x"));
     mEditor->setFileSystemWatcher(nullptr);
 }
-
-void TestEditorSymbolCompletion::test_failed_encoding_conversion_preserves_document()
-{
-    init_editor();
-    mEditorSettings->setAutoFormatWhenSaved(false);
-    mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
-    mEditorSettings->setSyntaxCheckWhenSave(false);
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QString original = temp.filePath("encoding.cpp");
-    const QByteArray bytes = QString::fromUtf8("// caffè 😀\nint value = 1;").toUtf8();
-    QFile file(original);
-    QVERIFY(file.open(QIODevice::WriteOnly));
-    QCOMPARE(file.write(bytes), qint64(bytes.size()));
-    file.close();
-    mEditor->setFilename(original);
-    mEditor->setFileType(FileType::CppSource, false);
-    mEditor->loadFile({}, false);
-    mEditor->setCaretXY(mEditor->fileEnd());
-    QTest::keyPress(mEditor.get(), 'x');
-    const QStringList text = mEditor->content();
-    const QByteArray encoding = mEditor->editorEncoding();
-    const QByteArray fileEncoding = mEditor->fileEncoding();
-    QSignalSpy changed(mEditor.get(), &Editor::editorEncodingChanged);
-    QSignalSpy failed(mEditor.get(), &Editor::fileSaveError);
-    QTimer closeErrors;
-    connect(&closeErrors, &QTimer::timeout, mEditor.get(), [] {
-        if (auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
-            box->accept();
-    });
-    closeErrors.start(10);
-    mEditor->convertToEncoding("ISO-8859-1");
-    QCOMPARE(failed.count(), 1);
-    QCOMPARE(changed.count(), 0);
-    QCOMPARE(mEditor->filename(), original);
-    QCOMPARE(mEditor->editorEncoding(), encoding);
-    QCOMPARE(mEditor->fileEncoding(), fileEncoding);
-    QCOMPARE(mEditor->content(), text);
-    QVERIFY(mEditor->modified());
-    QVERIFY(mEditor->canUndo());
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    QCOMPARE(file.readAll(), bytes);
-    file.close();
-    mEditor->undo();
-    QVERIFY(!mEditor->content().last().endsWith('x'));
-    mEditor->redo();
-    QCOMPARE(mEditor->content(), text);
-    // Retry using the original codec after the recoverable conversion failure.
-    QVERIFY(mEditor->save(false, false));
-    QVERIFY(!mEditor->modified());
-    QVERIFY(file.open(QIODevice::ReadOnly));
-    QVERIFY(file.readAll().contains("int value = 1;x"));
-}
-
 
 void TestEditorSymbolCompletion::test_encoding_reload_cancel_preserves_edits()
 {
@@ -2974,49 +2907,4 @@ void TestEditorSymbolCompletion::test_encoding_reload_failure_preserves_state()
     QCOMPARE(changed.count(), 1);
     QCOMPARE(mEditor->content(), text);
     QVERIFY(!mEditor->modified());
-}
-
-
-void TestEditorSymbolCompletion::test_save_as_encoding_observer_sees_committed_identity()
-{
-    init_editor();
-    mEditorSettings->setAutoFormatWhenSaved(false);
-    mEditorSettings->setRemoveTrailingSpacesWhenSaved(false);
-    mEditorSettings->setSyntaxCheckWhenSave(false);
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QString original = temp.filePath("identity.cpp");
-    QFile source(original);
-    QVERIFY(source.open(QIODevice::WriteOnly));
-    QCOMPARE(source.write("int original = 1;"), qint64(17));
-    source.close();
-    mEditor->setFilename(original);
-    mEditor->setFileType(FileType::CppSource, false);
-    // New documents choose an output codec without reloading an existing file.
-    mEditor->setContent(QStringList{"int original = 1;"});
-    QVERIFY(mEditor->isNew());
-    mEditor->setEditorEncoding(ENCODING_UTF8_BOM);
-    mEditor->setCaretXY(mEditor->fileEnd());
-    QTest::keyPress(mEditor.get(), 'x');
-    QFileSystemWatcher watcher;
-    QVERIFY(watcher.addPath(original));
-    mEditor->setFileSystemWatcher(&watcher);
-    const QString destination = temp.filePath("identity.c");
-    QSignalSpy changed(mEditor.get(), &Editor::fileEncodingChanged);
-    bool coherent = false;
-    connect(mEditor.get(), &Editor::fileEncodingChanged, mEditor.get(), [&](Editor*) {
-        coherent = mEditor->filename() == destination && mEditor->fileType() == FileType::CSource
-                && !mEditor->isNew() && !mEditor->modified()
-                && watcher.files().contains(destination) && !watcher.files().contains(original);
-        QFile committed(destination);
-        coherent = coherent && committed.open(QIODevice::ReadOnly)
-                && committed.read(3) == QByteArray::fromHex("efbbbf");
-    });
-    QVERIFY(mEditor->saveAs(destination, false));
-    QCOMPARE(changed.count(), 1);
-    QVERIFY(coherent);
-    QCOMPARE(mEditor->fileEncoding(), QByteArray(ENCODING_UTF8_BOM));
-    QVERIFY(source.open(QIODevice::ReadOnly));
-    QCOMPARE(source.readAll(), QByteArray("int original = 1;"));
-    mEditor->setFileSystemWatcher(nullptr);
 }

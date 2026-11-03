@@ -88,6 +88,11 @@ public:
     QStringList& defaultCIncludeDirs();
     QStringList& defaultCppIncludeDirs();
     QStringList& defaultLibDirs();
+    // Capture-only access: never starts directory discovery or changes caches.
+    const QStringList &cachedDefaultCppIncludeDirs() const { return mDefaultCppIncludeDirs; }
+    // Match the historical defaultLibDirs() macro contract, which returns the
+    // configured mLibDirs list. Changing that policy is a separate migration.
+    const QStringList &cachedDefaultLibDirs() const { return mLibDirs; }
 
     const QString& dumpMachine() const;
     void setDumpMachine(const QString& value);

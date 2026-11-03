@@ -1878,8 +1878,21 @@ Editor* MainWindow::openFile(QString filename, bool activate, FileType fileType,
     if (info.isAbsolute())
         filename = info.absoluteFilePath();
 
-    Editor* editor = mEditorManager->getOpenedEditor(filename);
+    const auto openedPath = mEditorManager->resolveOpenedEditor(filename);
+    if (openedPath.status == EditorPathStatus::Conflict) {
+        statusBar()->showMessage(openedPath.error);
+        return nullptr;
+    }
+    Editor* editor = openedPath.editor;
     if (editor!=nullptr) {
+        if (mProject) {
+            const auto member = mProject->resolveUnitPath(filename);
+            if (member.status == ProjectPathStatus::Conflict) statusBar()->showMessage(member.error);
+            else if (member.unit) {
+                const auto bound = mProject->associateEditorToUnit(editor, member.unit);
+                if (!bound.succeeded()) statusBar()->showMessage(bound.error);
+            }
+        }
         editor->setContextFile(contextFile);
         if (fileType != FileType::None)
             editor->setFileType(fileType);
@@ -1899,11 +1912,14 @@ Editor* MainWindow::openFile(QString filename, bool activate, FileType fileType,
             }
         }
         //mVisitHistoryManager->removeFile(filename);
+        const auto project = mProject;
         PProjectUnit unit;
-        if (mProject) {
-            unit = mProject->findUnit(filename);
+        if (project) {
+            const auto path = project->resolveUnitPath(filename);
+            if (path.status == ProjectPathStatus::Conflict) throw FileError(path.error);
+            unit = path.unit;
         }
-        bool inProject = (mProject && unit);
+        bool inProject = (project && unit);
         QByteArray encoding = unit ? unit->encoding() :
                                      (pSettings->editor().autoDetectFileEncoding() ? QByteArray(ENCODING_AUTO_DETECT) : pSettings->editor().defaultEncoding());
         if (inProject && encoding==ENCODING_PROJECT)
@@ -1911,6 +1927,14 @@ Editor* MainWindow::openFile(QString filename, bool activate, FileType fileType,
         editor = mEditorManager->newEditor(filename,encoding,
                                         fileType, contextFile,
                                         inProject, false, nullptr);
+        if (unit && editor) {
+            const auto bound = mProject == project ? project->associateEditorToUnit(editor, unit)
+                : OperationResult::conflict(tr("The project changed while opening the file."));
+            if (!bound.succeeded()) {
+                editor->setInProject(false);
+                statusBar()->showMessage(bound.error);
+            }
+        }
 
         if (activate) {
             mEditorManager->activeEditor(editor,true);
@@ -2021,7 +2045,8 @@ void MainWindow::openProject(QString filename, bool openFiles)
     //update editor's inproject flag
     foreach (PProjectUnit unit, mProject->unitList()) {
         Editor* e = mEditorManager->getOpenedEditor(unit->fileName());
-        mProject->associateEditorToUnit(e,unit);
+        const auto associated = mProject->associateEditorToUnit(e,unit);
+        if (!associated.succeeded() && !associated.error.isEmpty()) statusBar()->showMessage(associated.error);
         if (e)
             e->resetBookmarks(mBookmarkModel);
     }
@@ -4146,6 +4171,8 @@ void MainWindow::onProjectViewContextMenu(const QPoint &pos)
     }
     if (onUnit && !multiSelection) {
         menu.addAction(mProject_Rename_Unit);
+        auto *relink = menu.addAction(tr("Relink file..."), this, &MainWindow::onProjectRelinkFile);
+        relink->setObjectName("projectRelinkFileAction");
     }
     menu.addSeparator();
 #ifdef ENABLE_VCS
@@ -5202,6 +5229,25 @@ void MainWindow::onProjectRemoveFolder()
 
 }
 
+void MainWindow::onProjectRelinkFile()
+{
+    const auto project = mProject;
+    if (!project || mQuitting) return;
+    const QModelIndex current = mProjectProxyModel->mapToSource(ui->projectView->currentIndex());
+    if (!current.isValid()) return;
+    const auto node = project->pointerToNode(static_cast<ProjectModelNode *>(current.internalPointer()));
+    if (!node || !node->isUnit) return;
+    const auto unit = node->pUnit.lock();
+    if (!unit) return;
+    const auto result = mEditorManager->relinkProjectUnit(project, unit);
+    if (result.projection == UnitProjectionState::Applied && mProject == project && !mQuitting) {
+        updateProjectView();
+        setProjectViewCurrentUnit(unit);
+        mCompileIssuesState = CompileIssuesState::None;
+        if (result.outcome.succeeded()) statusBar()->showMessage(tr("Project file relinked."), 5000);
+    }
+}
+
 void MainWindow::onProjectRenameFolder()
 {
     if (ui->projectView->currentIndex().isValid()) {
@@ -5866,42 +5912,39 @@ void MainWindow::onFileSystemModelLayoutChanged()
 
 void MainWindow::onFileRenamedInFileSystemModel(const QString &path, const QString &oldName, const QString &newName)
 {
-    QDir folder(path);
-    QString oldFile = folder.absoluteFilePath(oldName);
-    QString newFile = folder.absoluteFilePath(newName);
-
-//    if (QFileInfo::exists(newFile)) {
-//        QMessageBox::critical(this, tr("Rename Error"),
-//                              tr("File %1 already exist!").arg(newFile));
-//        return;
-//    }
-    Editor *e = mEditorManager->getOpenedEditor(newFile);
-    if (e) {
-//        QMessageBox::critical(this, tr("Rename Error"),
-//                              tr("File %1 already openned!").arg(newFile));
-        mEditorManager->activeEditor(e,true);
-        return;
-    }
-    if (mProject && mProject->inProject(oldFile)) {
-        PProjectUnit unit = mProject->findUnit(oldFile);
-        const auto renamed = mProject->renameUnit(unit, newFile);
-        if (!renamed.succeeded()) {
-            // QFileSystemModel has already renamed the disk resource. Report
-            // reconciliation/follow-up failures without claiming a rollback.
-            qWarning() << "Project rename requires follow-up:" << renamed.error;
-            ui->statusbar->showMessage(renamed.error);
-            if (!renamed.committed())
-                return;
+    const QDir folder(path);
+    const QString oldFile = folder.absoluteFilePath(oldName);
+    const QString newFile = folder.absoluteFilePath(newName);
+    const auto project = mProject;
+    if (project) {
+        auto unit = project->findUnit(oldFile);
+        if (unit) {
+            const auto renamed = project->renameUnit(unit, newFile);
+            const auto saved = project->saveMetadata();
+            if (!renamed.succeeded() || !saved.succeeded()) {
+                const QString diagnostic = renamed.error + (saved.succeeded() ? QString()
+                    : QLatin1Char('\n') + tr("The disk rename completed, but project metadata could not be saved: %1").arg(saved.error));
+                statusBar()->showMessage(diagnostic);
+            }
+            if (renamed.succeeded() && mProject == project)
+                if (Editor *editor = project->unitEditor(unit)) mEditorManager->activeEditor(editor, true);
+            return; // The Project command owns reconciliation; no path-based rebinding follows.
         }
     }
-    e = mEditorManager->getOpenedEditor(oldFile);
-    if (e) {
-        e->rename(newFile);        
+    const QPointer<Editor> source(mEditorManager->getOpenedEditor(oldFile));
+    const auto destinationPath = mEditorManager->resolveOpenedEditor(newFile);
+    if (destinationPath.status == EditorPathStatus::Conflict) {
+        if (source) source->setModified(true);
+        statusBar()->showMessage(destinationPath.error);
+        return;
     }
-    if (mProject && mProject->inProject(newFile)) {
-        e = mEditorManager->getOpenedEditor(newFile);
-        mProject->associateEditor(e);
+    Editor *destination = destinationPath.editor;
+    if (source && destination && destination != source) {
+        source->setModified(true);
+        statusBar()->showMessage(tr("The file was renamed on disk, but the destination is open in another document. Both buffers were preserved."));
+        return;
     }
+    if (source) source->rename(newFile);
 }
 
 void MainWindow::on_actionOpen_triggered()
@@ -6218,9 +6261,8 @@ void MainWindow::on_actionSaveAs_triggered()
     Editor * editor = mEditorManager->getEditor();
     if (!editor)
         return;
-    editor->saveAs();
-    if (mProject)
-        mProject->associateEditor(editor);
+    const auto saved = editor->saveAsOperation();
+    if (saved.outcome.committed()) mCompileIssuesState = CompileIssuesState::None;
 }
 
 void MainWindow::on_actionOptions_triggered()
@@ -6273,6 +6315,8 @@ void MainWindow::logToolsOutput(const QString& msg)
 
 void MainWindow::onCompileIssue(PCompileIssue issue)
 {
+    if (!issue)
+        return;
     if (issue->filename.isEmpty())
         return;
     if (issue->filename.contains("*"))
@@ -6282,6 +6326,13 @@ void MainWindow::onCompileIssue(PCompileIssue issue)
     if (issue->type == CompileIssueType::Error || issue->type ==
             CompileIssueType::Warning) {
         Editor* e = mEditorManager->getOpenedEditor(issue->filename);
+        if (issue->hintEligibility == DiagnosticHintEligibility::Suppressed)
+            return;
+        if (issue->hintEligibility == DiagnosticHintEligibility::CapturedDocument
+                && (!e || !issue->diagnosticDocumentId || !issue->diagnosticTextRevision
+                    || mEditorManager->documentId(e) != issue->diagnosticDocumentId
+                    || mEditorManager->documentRevision(e) != issue->diagnosticTextRevision))
+            return;
         if (e!=nullptr && (issue->line>=0)) {
             int line = issue->line;
             if (line >= e->lineCount()) {
@@ -6369,7 +6420,8 @@ void MainWindow::onCompileFinished(QString filename, bool isCheckSyntax)
 
 
     if (isCheckSyntax) {
-        if (!CompilerInfoManager::supportSyntaxCheck(pSettings->compilerSets().defaultSet()->compilerType())) {
+        if (mCompilerManager->lastSyntaxCheckOutcome().succeeded()
+                && !CompilerInfoManager::supportSyntaxCheck(mCompilerManager->lastSyntaxCompilerType())) {
             QDir dir(extractFileDir(filename));
 #ifdef Q_OS_WIN
             QFile::remove(dir.absoluteFilePath("a.exe"));
@@ -6397,7 +6449,9 @@ void MainWindow::onCompileFinished(QString filename, bool isCheckSyntax)
 
     if (!isCheckSyntax) {
         //run succession task if there aren't any errors
-        if (mCompileSuccessionTask && mCompilerManager->compileErrorCount()==0) {
+        if (mCompileSuccessionTask && mCompilerManager->lastCompileOutcome().succeeded()
+                && mCompilerManager->canContinueLastCompile()
+                && mCompilerManager->compileErrorCount()==0) {
             if (!fileExists(mCompileSuccessionTask->execName)) {
                 QMessageBox::critical(this,tr("Compile Failed"),
                                       tr("Failed to generate the executable.")+"<BR/><BR/>"
@@ -9675,7 +9729,7 @@ MainWindow::CompileSuccessionTaskType MainWindow::runTypeToCompileSuccessionTask
     }
 }
 
-QMap<QString, QString> MainWindow::macroVariables()
+QMap<QString, QString> MainWindow::macroVariables(bool allowToolchainDiscovery)
 {
     Editor *e = mEditorManager->getEditor();
 
@@ -9690,15 +9744,19 @@ QMap<QString, QString> MainWindow::macroVariables()
 
     PCompilerSet compilerSet = pSettings->compilerSets().defaultSet();
     if (compilerSet) {
+        const auto &cppIncludes = allowToolchainDiscovery ? compilerSet->defaultCppIncludeDirs()
+                                                        : compilerSet->cachedDefaultCppIncludeDirs();
+        const auto &libraries = allowToolchainDiscovery ? compilerSet->defaultLibDirs()
+                                                      : compilerSet->cachedDefaultLibDirs();
         // Only provide the first cpp include dir
-        if (compilerSet->defaultCppIncludeDirs().count() > 0)
-            result["INCLUDE"] = localizePath(compilerSet->defaultCppIncludeDirs().front());
+        if (!cppIncludes.isEmpty())
+            result["INCLUDE"] = localizePath(cppIncludes.front());
         else
             result["INCLUDE"] = "";
 
         // Only provide the first lib dir
-        if (compilerSet->defaultLibDirs().count() > 0)
-            result["LIB"] = localizePath(compilerSet->defaultLibDirs().front());
+        if (!libraries.isEmpty())
+            result["LIB"] = localizePath(libraries.front());
         else
             result["LIB"] = "";
     }

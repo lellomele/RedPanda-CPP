@@ -123,6 +123,11 @@ void AutolinkManager::setLink(const QString &header, const QString &linkOption, 
     }
 }
 
+void AutolinkManager::removeLink(const QString &header)
+{
+    mLinks.remove(header);
+}
+
 const QMap<QString, PAutolink> &AutolinkManager::links() const
 {
     return mLinks;

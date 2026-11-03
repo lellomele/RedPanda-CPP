@@ -86,20 +86,44 @@ recovery cache invalidation, cancelled project removal, case-only Windows rename
 and durable external-rename conflicts. Compilation refuses unresolved relocation
 state before submitting a worker. See the [qualification record](QUALIFICATION_3_5_4.md).
 
-P2 input snapshots do not yet guarantee a fresh semantic index: invalidating
-cached include dependencies by revision and publishing immutable semantic results
-remain P3 work. Compiler requests and asynchronous application shutdown remain
-P5 work. The owner event loop must stay alive until background services release
-their objects; posting deleteLater is not a substitute for that lifecycle gate.
+The second integration binds project units to session DocumentIds and moves Save
+As and Relink into one GUI-owned controller. Plans validate identity/revision and
+unit settings across modal operations. Text and project metadata have separate
+commit receipts; a partial commit preserves the current buffer and is explicit.
+Native Windows path comparison preserves Unicode filenames that Qt case folding
+would merge. Ambiguous case-sensitive namespaces are refused without overwriting
+units or documents. Unverifiable virtual aliases remain conflicts.
 
-The semantic builder, compilation value types/checked generated-file writer and
-lifecycle kernel have integrated unit tests but do not yet replace their legacy
-runtime adapters. Before semantic publication, add a whole-cache byte budget and
-shared ownership of cross-file subgraphs; a per-file traversal limit is not a
-total application memory limit. Selection keys are best-effort lookup keys, not
-unique symbol identities. Project document binding and Save As require explicit
-identity-based reconciliation; the relocation repair API still needs its GUI
-controller. These are remaining work, not completed guarantees.
+Analysis requests now capture the working directory and decoder candidates as
+values. The worker records actual source versions and negative include probes,
+checks resource admission before decoding/materializing lines, and verifies
+observed end versions. Registered document roots retain their original absolute
+paths through both preliminary dependency analysis and parsing. A changed cache
+dependency triggers a conservative asynchronous rebuild. This read certificate
+does not certify the still-legacy mutable configuration or current GUI intent;
+immutable configuration, publication and consumers remain P3/P4 work.
+
+Single-file and stdin compilation now use frozen configuration/input values.
+Diagnostic hints check the accepted DocumentId/revision, including open headers;
+original messages remain in the panel. Windows process trees join a native Job
+atomically at launch; completion requires a kernel acknowledgement that all
+descendants have exited. Legacy Project/SDCCProject preparation and global
+asynchronous shutdown still need migration. Non-Windows does not claim this
+Windows process-tree guarantee.
+
+The union/shard semantic representation, aggregate allocation ledger and one
+retirement worker have isolated tests but are not the runtime publisher yet.
+Retained objects stay charged until actual reclamation. The ledger is not a
+process RSS limit and does not bound the mutable engine or all accepted source
+snapshot generations. Selection hints can be ambiguous; they are not identities.
+
+New persistence audit probes confirmed two blocking legacy Save paths: an edit
+from a post-save observer can be marked clean without being written, and closing
+the editor from a pre-save observer can cause an access violation. SaveExisting,
+Save As and encoding conversion must follow one persistence contract before
+release. Passing the regular suite does not remove these separate red probes.
+The owner event loop must also remain alive until every service acknowledges
+stopping; deleteLater and an empty task queue are not shutdown certificates.
 
 Temporary adapter: EditorClosePlan currently compares GUI text snapshots at
 close time. Replace that identity/revision check with DocumentStore revisions

@@ -24,37 +24,31 @@
 #include <QMessageBox>
 
 
-SDCCFileCompiler::SDCCFileCompiler(const QString &filename, const QByteArray &encoding,
-                           CppCompileType compileType, bool onlyCheckSyntax):
-    Compiler(filename, onlyCheckSyntax),
-    mEncoding(encoding),
-    mCompileType(compileType),
-    mNoStartup(false)
+SDCCFileCompiler::SDCCFileCompiler(Compilation::FileCompileRequest::Pointer request):
+    Compiler(request), mEncoding(request->values().sourceEncoding),
+    mCompileType(request->values().compileType), mNoStartup(false)
 {
-
 }
 
 bool SDCCFileCompiler::prepareForCompile()
 {
-    //compilerSet()->setCompilationStage(CompilerSet::CompilationStage::GenerateExecutable);
-
     if (mOnlyCheckSyntax) {
-        mCompiler = compilerSet()->CCompiler();
+        mCompiler = configuration().toolchain.cCompiler;
         mArguments += getCCompileArguments(false);
         mArguments += getCIncludeArguments();
         mArguments += getProjectIncludeArguments();
-        mArguments += {"--syntax-only", mFilename};
-        mDirectory = extractFileDir(mFilename);
+        mArguments += {"--syntax-only", fileRequest()->values().sourcePath};
+        mDirectory = fileRequest()->values().workingDirectory;
         return true;
     }
     log(tr("Compiling single file..."));
     log("------------------");
     log(tr("- Filename: %1").arg(mFilename));
-    log(tr("- Compiler Set Name: %1").arg(compilerSet()->name()));
+    log(tr("- Compiler Set Name: %1").arg(configuration().toolchain.name));
     log("");
 
     QString strFileType = "C";
-    mCompiler = compilerSet()->CCompiler();
+    mCompiler = configuration().toolchain.cCompiler;
     mArguments += getCCompileArguments(false);
     mArguments += getCIncludeArguments();
     mArguments += getProjectIncludeArguments();
@@ -66,14 +60,17 @@ bool SDCCFileCompiler::prepareForCompile()
                     +tr("Please check the \"program\" page of compiler settings."));
     }
 
-    mOutputFile=changeFileExt(mFilename, compilerSet()->executableSuffix());
-    mIhxFilename = changeFileExt(mFilename,SDCC_IHX_SUFFIX);
+    mOutputFile=changeFileExt(fileRequest()->values().sourcePath, configuration().toolchain.executableSuffix);
+    mIhxFilename = changeFileExt(fileRequest()->values().sourcePath,SDCC_IHX_SUFFIX);
+    validateGeneratedOutputPath(mOutputFile);
+    validateGeneratedOutputPath(mIhxFilename);
 
-    QString val = compilerSet()->compileOptions().value(SDCC_OPT_NOSTARTUP);
+    QString val = configuration().toolchain.compileOptions.value(SDCC_OPT_NOSTARTUP);
     mNoStartup = (val==COMPILER_OPTION_ON);
     if (mNoStartup) {
-        mRelFilename = changeFileExt(mFilename,SDCC_REL_SUFFIX);
-        mArguments += {"-c", mFilename};
+        mRelFilename = changeFileExt(fileRequest()->values().sourcePath,SDCC_REL_SUFFIX);
+        validateGeneratedOutputPath(mRelFilename);
+        mArguments += {"-c", fileRequest()->values().sourcePath};
         mExtraCompilersList << mCompiler;
         QStringList args = getLibraryArguments(FileType::CSource);
         args += {"-o", mIhxFilename, mRelFilename};
@@ -81,11 +78,11 @@ bool SDCCFileCompiler::prepareForCompile()
         mExtraOutputFilesList << "";
     } else {
         mArguments += getLibraryArguments(FileType::CSource);
-        mArguments += {mFilename, "-o", mIhxFilename};
+        mArguments += {fileRequest()->values().sourcePath, "-o", mIhxFilename};
     }
 
-    if (compilerSet()->executableSuffix() == SDCC_HEX_SUFFIX) {
-        QString packihx = compilerSet()->findProgramInBinDirs(PACKIHX_PROGRAM);
+    if (configuration().toolchain.executableSuffix == SDCC_HEX_SUFFIX) {
+        QString packihx = configuration().toolchain.additionalPrograms.value(PACKIHX_PROGRAM);
         if (packihx.isEmpty()) {
             error(tr("Can't find \"%1\".\n").arg(PACKIHX_PROGRAM));
             return false;
@@ -94,8 +91,8 @@ bool SDCCFileCompiler::prepareForCompile()
         QStringList args{mIhxFilename};
         mExtraArgumentsList << args;
         mExtraOutputFilesList << mOutputFile;
-    } else if (compilerSet()->executableSuffix() == SDCC_BIN_SUFFIX) {
-        QString makebin = compilerSet()->findProgramInBinDirs(MAKEBIN_PROGRAM);
+    } else if (configuration().toolchain.executableSuffix == SDCC_BIN_SUFFIX) {
+        QString makebin = configuration().toolchain.additionalPrograms.value(MAKEBIN_PROGRAM);
         if (makebin.isEmpty()) {
             error(tr("Can't find \"%1\".\n").arg(PACKIHX_PROGRAM));
             return false;
@@ -111,7 +108,7 @@ bool SDCCFileCompiler::prepareForCompile()
     log(tr("- %1 Compiler: %2").arg(strFileType, mCompiler));
     QString command = escapeCommandForLog(mCompiler, mArguments);
     log(tr("- Command: %1").arg(command));
-    mDirectory = extractFileDir(mFilename);
+    mDirectory = fileRequest()->values().workingDirectory;
     mStartCompileTime = QDateTime::currentDateTime();
     return true;
 }
@@ -137,13 +134,7 @@ bool SDCCFileCompiler::beforeRunExtraCommand(int idx)
 
 bool SDCCFileCompiler::prepareForRebuild()
 {
-    QString exeName=compilerSet()->getOutputFilename(mFilename);
-
-    QFile file(exeName);
-
-    if (file.exists() && !file.remove()) {
-        QFileInfo info(exeName);
-        throw CompileError(tr("Can't delete the old executable file \"%1\".\n").arg(info.absoluteFilePath()));
-    }
+    // Direct assembler/compiler invocations regenerate their own artifacts.
+    // Cancellation before launch retains the previous confirmed files.
     return true;
 }

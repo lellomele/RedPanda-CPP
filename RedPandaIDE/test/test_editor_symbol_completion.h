@@ -87,12 +87,10 @@ private slots:
     void test_header_completion_without_parser();
     void test_header_completion_preserves_include_precedence();
 
-    void test_failed_save_as_preserves_editor_identity_data();
-    void test_failed_save_as_preserves_editor_identity();
-    void test_failed_encoding_conversion_preserves_document();
+    void test_unregistered_save_as_preserves_editor_and_files_data();
+    void test_unregistered_save_as_preserves_editor_and_files();
     void test_encoding_reload_cancel_preserves_edits();
     void test_encoding_reload_failure_preserves_state();
-    void test_save_as_encoding_observer_sees_committed_identity();
 
 
 };

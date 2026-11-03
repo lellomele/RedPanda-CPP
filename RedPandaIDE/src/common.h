@@ -35,6 +35,8 @@ enum class CompileIssueType {
     Error,
 };
 
+enum class DiagnosticHintEligibility { Legacy, CapturedDocument, Suppressed };
+
 struct CompileIssue {
     QString filename;
     int line;
@@ -44,6 +46,9 @@ struct CompileIssue {
     CompileIssueType type;
     QString originalDescription; // Exact message before UI severity formatting.
     bool gccDiagnostic = false;
+    DiagnosticHintEligibility hintEligibility = DiagnosticHintEligibility::Legacy;
+    quint64 diagnosticDocumentId = 0;
+    quint64 diagnosticTextRevision = 0;
 };
 
 typedef std::shared_ptr<CompileIssue> PCompileIssue;

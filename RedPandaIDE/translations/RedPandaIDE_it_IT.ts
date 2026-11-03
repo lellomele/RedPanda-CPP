@@ -700,6 +700,129 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>The compiler process could not be stopped within the timeout.</source>
             <translation>Non è stato possibile arrestare il processo di compilazione entro il tempo previsto.</translation>
         </message>
+        <message>
+            <source>Compilation requires a captured immutable request.</source>
+            <translation>Mancano i dati acquisiti per avviare la compilazione.</translation>
+        </message>
+        <message>
+            <source>Compilation output budgets are invalid.</source>
+            <translation>I limiti per l'output della compilazione non sono validi.</translation>
+        </message>
+        <message>
+            <source>Compilation has no prepared immutable configuration.</source>
+            <translation>Non è disponibile una configurazione preparata per questa compilazione.</translation>
+        </message>
+        <message>
+            <source>The generated output path is invalid: '%1'.</source>
+            <translation>Il percorso del file da generare non è valido: '%1'.</translation>
+        </message>
+        <message>
+            <source>The generated output would replace an input file: '%1'.</source>
+            <translation>Il file generato sovrascriverebbe un file di origine: '%1'.</translation>
+        </message>
+        <message>
+            <source>The generated output would replace a compiler program: '%1'.</source>
+            <translation>Il file generato sovrascriverebbe un programma della toolchain: '%1'.</translation>
+        </message>
+        <message>
+            <source>Compilation reported errors.</source>
+            <translation>Sono stati rilevati errori durante la compilazione.</translation>
+        </message>
+        <message>
+            <source>Toolchain directory macros are not available: %1. Open Compiler Options and configure the toolchain directories before using these macros.</source>
+            <translation>Le macro dei percorsi della toolchain non sono disponibili: %1. Aprire Opzioni del compilatore e configurare i percorsi della toolchain prima di usare queste macro.</translation>
+        </message>
+        <message>
+            <source>Waiting for code analysis...</source>
+            <translation>In attesa dell'analisi del codice...</translation>
+        </message>
+        <message>
+            <source>Compilation has no captured configuration.</source>
+            <translation>Non è stata acquisita la configurazione per questa compilazione.</translation>
+        </message>
+        <message>
+            <source>Preparing the compiler toolchain...</source>
+            <translation>Preparazione della toolchain del compilatore...</translation>
+        </message>
+        <message>
+            <source>Compilation preparation could not be completed.</source>
+            <translation>Impossibile completare la preparazione della compilazione.</translation>
+        </message>
+        <message>
+            <source>A required intermediate compilation artifact was not produced.</source>
+            <translation>Non è stato generato un file intermedio necessario alla compilazione.</translation>
+        </message>
+        <message>
+            <source>A captured compilation must not read live compiler settings.</source>
+            <translation>La compilazione deve usare le impostazioni acquisite all'avvio, senza leggere quelle in corso di modifica.</translation>
+        </message>
+        <message>
+            <source>Cannot stage output '%1': %2</source>
+            <translation>Impossibile preparare il file di output '%1': %2</translation>
+        </message>
+        <message>
+            <source>The captured compiler output encoding is not available.</source>
+            <translation>La codifica selezionata per i messaggi del compilatore non è disponibile.</translation>
+        </message>
+        <message>
+            <source>The compiler process for '%1' could not start: %2</source>
+            <translation>Impossibile avviare il compilatore per '%1': %2</translation>
+        </message>
+        <message>
+            <source>Could not send the captured source text to the compiler.</source>
+            <translation>Impossibile inviare al compilatore il testo del sorgente acquisito.</translation>
+        </message>
+        <message>
+            <source>Compiler output exceeded the captured output budget.</source>
+            <translation>L'output del compilatore ha superato il limite previsto per questa compilazione.</translation>
+        </message>
+        <message>
+            <source>Cannot write output '%1': %2</source>
+            <translation>Impossibile scrivere il file di output '%1': %2</translation>
+        </message>
+        <message>
+            <source>Compiler process exited with code %1.</source>
+            <translation>Il compilatore è terminato con codice %1.</translation>
+        </message>
+        <message>
+            <source>Cannot commit output '%1': %2</source>
+            <translation>Impossibile salvare il file di output '%1': %2</translation>
+        </message>
+        <message>
+            <source>A captured file compilation must not retain a live project.</source>
+            <translation>La compilazione di un singolo file non può usare direttamente un progetto aperto.</translation>
+        </message>
+        <message>
+            <source>Project compilation inputs must be captured on their owner thread.</source>
+            <translation>I dati del progetto per la compilazione devono essere acquisiti nel contesto principale dell'IDE.</translation>
+        </message>
+        <message>
+            <source>The compiler executable is unavailable: '%1'.</source>
+            <translation>L’eseguibile del compilatore non è disponibile: «%1».</translation>
+        </message>
+        <message>
+            <source>The source dependencies could not be prepared.</source>
+            <translation>Impossibile preparare le dipendenze del sorgente.</translation>
+        </message>
+        <message>
+            <source>The saved source changed before dependency analysis. Build it again.</source>
+            <translation>Il sorgente su disco è cambiato prima dell’analisi delle dipendenze. Ripeti la compilazione.</translation>
+        </message>
+        <message>
+            <source>The saved source changed during dependency analysis. Build it again.</source>
+            <translation>Il sorgente su disco è cambiato durante l’analisi delle dipendenze. Ripeti la compilazione.</translation>
+        </message>
+        <message>
+            <source>Reading the saved source dependencies...</source>
+            <translation>Analisi delle dipendenze del sorgente su disco…</translation>
+        </message>
+        <message>
+            <source>Autolink was skipped for this build: %1</source>
+            <translation>Collegamento automatico saltato per questa compilazione: %1</translation>
+        </message>
+
+
+
     </context>
     <context>
         <name>CompilerAutolinkWidget</name>
@@ -812,6 +935,55 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Project input conflict</source>
             <translation>Conflitto nei file del progetto</translation>
         </message>
+        <message>
+            <source>Compilation must be submitted on its owner thread.</source>
+            <translation>La compilazione deve essere avviata nel contesto principale dell'IDE.</translation>
+        </message>
+        <message>
+            <source>The source exceeds the background syntax-check size limit (32 Mi characters).</source>
+            <translation>Il sorgente supera il limite di dimensione per il controllo della sintassi in background (32 Mi caratteri).</translation>
+        </message>
+        <message>
+            <source>The compilation job identifier space is exhausted.</source>
+            <translation>È stato raggiunto il limite degli identificativi delle compilazioni.</translation>
+        </message>
+        <message>
+            <source>The source revision changed before compilation was submitted.</source>
+            <translation>Il sorgente è stato modificato prima dell'avvio della compilazione.</translation>
+        </message>
+        <message>
+            <source>The captured source text does not match its document revision.</source>
+            <translation>Il testo acquisito del sorgente non corrisponde alla versione del documento.</translation>
+        </message>
+        <message>
+            <source>Syntax check could not finish: %1</source>
+            <translation>Impossibile completare il controllo della sintassi: %1</translation>
+        </message>
+        <message>
+            <source>The project changed while compilation awaited analysis.</source>
+            <translation>Il progetto è cambiato mentre la compilazione era in attesa dell'analisi del codice.</translation>
+        </message>
+        <message>
+            <source>The compiler configuration changed while compilation awaited analysis.</source>
+            <translation>La configurazione del compilatore è cambiata mentre la compilazione era in attesa dell'analisi del codice.</translation>
+        </message>
+        <message>
+            <source>The temporary analysis adapter cannot provide the accepted historical source revision.</source>
+            <translation>L'analisi temporanea non può fornire la versione del sorgente richiesta dalla compilazione.</translation>
+        </message>
+        <message>
+            <source>The compilation worker could not start.</source>
+            <translation>Impossibile avviare la compilazione in background.</translation>
+        </message>
+        <message>
+            <source>Compilation could not start</source>
+            <translation>Impossibile avviare la compilazione</translation>
+        </message>
+        <message>
+            <source>The syntax-check worker could not start.</source>
+            <translation>Impossibile avviare il controllo della sintassi in background.</translation>
+        </message>
+
 
     </context>
     <context>
@@ -1568,6 +1740,16 @@ Dovresti aver ricevuto una copia della GNU General Public License insieme a ques
             <source>Cannot save '%1': %2</source>
             <translation>Impossibile salvare '%1': %2</translation>
         </message>
+        <message>
+            <source>Save As requires a registered document controller.</source>
+            <translation>Salva con nome richiede un documento registrato nell'IDE.</translation>
+        </message>
+        <message>
+            <source>The document is not available for saving. Reopen the file and try again.</source>
+            <translation>Il documento non è disponibile per il salvataggio. Riaprire il file e riprovare.</translation>
+        </message>
+
+
     </context>
     <context>
         <name>EditorAutoSaveWidget</name>
@@ -7274,6 +7456,27 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <translation>Le modifiche al progetto sono state applicate, ma non è stato possibile salvare il file del progetto:
 %1</translation>
         </message>
+        <message>
+            <source>The project changed while opening the file.</source>
+            <translation>Il progetto è cambiato durante l'apertura del file.</translation>
+        </message>
+        <message>
+            <source>Relink file...</source>
+            <translation>Ricollega file...</translation>
+        </message>
+        <message>
+            <source>Project file relinked.</source>
+            <translation>File del progetto ricollegato.</translation>
+        </message>
+        <message>
+            <source>The disk rename completed, but project metadata could not be saved: %1</source>
+            <translation>La rinomina su disco è stata completata, ma non è stato possibile salvare i dati del progetto: %1</translation>
+        </message>
+        <message>
+            <source>The file was renamed on disk, but the destination is open in another document. Both buffers were preserved.</source>
+            <translation>Il file è stato rinominato su disco, ma la destinazione è aperta in un altro documento. Entrambi i contenuti sono stati conservati.</translation>
+        </message>
+
 
 
 </context>
@@ -7361,6 +7564,11 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <translation>Impossibile eliminare il vecchio file oggetto "%1".
 </translation>
         </message>
+        <message>
+            <source>NASM does not support this syntax-check request.</source>
+            <translation>NASM non supporta il controllo della sintassi richiesto.</translation>
+        </message>
+
     </context>
     <context>
         <name>NewClassDialog</name>
@@ -7977,6 +8185,95 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>This project file has an unresolved rename conflict. Save detached buffers with Save As, then resolve or remove and re-add the unit.</source>
             <translation>Questo file del progetto ha un conflitto di rinomina non risolto. Salvare i documenti scollegati con Salva con nome, quindi risolvere il conflitto oppure rimuovere e aggiungere nuovamente il file al progetto.</translation>
         </message>
+        <message>
+            <source>Invalid or excessive project unit count.</source>
+            <translation>Il numero di file nel progetto non è valido o supera il limite consentito.</translation>
+        </message>
+        <message>
+            <source>Invalid file path in project unit %1.</source>
+            <translation>Il percorso del file %1 del progetto non è valido.</translation>
+        </message>
+        <message>
+            <source>Project paths '%1' and '%2' share the same native path namespace. Duplicate units and case-sensitive aliases are not supported; the project was not changed.</source>
+            <translation>I percorsi '%1' e '%2' del progetto appartengono allo stesso spazio di nomi del sistema. I file duplicati e gli alias nelle cartelle che distinguono maiuscole e minuscole non sono supportati; il progetto non è stato modificato.</translation>
+        </message>
+        <message>
+            <source>Invalid project file path.</source>
+            <translation>Il percorso del file del progetto non è valido.</translation>
+        </message>
+        <message>
+            <source>The requested path conflicts with a project file and its identity could not be uniquely verified: '%1'.</source>
+            <translation>Il percorso richiesto è in conflitto con un file del progetto e non è stato possibile verificarne l'identità in modo univoco: '%1'.</translation>
+        </message>
+        <message>
+            <source>Project file operations must run on the editor's owner thread.</source>
+            <translation>L'operazione sul file deve essere eseguita nel contesto dell'editor.</translation>
+        </message>
+        <message>
+            <source>The selected destination is not an existing regular file: '%1'.</source>
+            <translation>Il percorso selezionato non corrisponde a un file esistente: '%1'.</translation>
+        </message>
+        <message>
+            <source>The source document is changing or no longer available.</source>
+            <translation>Il documento di origine è in corso di modifica o non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The selected document is changing or no longer available.</source>
+            <translation>Il documento selezionato è in corso di modifica o non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The source document is not bound to this project file.</source>
+            <translation>Il documento di origine non è associato a questo file del progetto.</translation>
+        </message>
+        <message>
+            <source>The project file changed while preparing the operation. Please try again.</source>
+            <translation>Il file del progetto è cambiato durante la preparazione dell'operazione. Riprovare.</translation>
+        </message>
+        <message>
+            <source>An open document changed while preparing the operation. Please try again.</source>
+            <translation>Un documento aperto è cambiato durante la preparazione dell'operazione. Riprovare.</translation>
+        </message>
+        <message>
+            <source>The destination is open in another document.</source>
+            <translation>Il file di destinazione è già aperto in un altro documento.</translation>
+        </message>
+        <message>
+            <source>The selected document does not match the project file.</source>
+            <translation>Il documento selezionato non corrisponde al file del progetto.</translation>
+        </message>
+        <message>
+            <source>The selected document already belongs to another project file.</source>
+            <translation>Il documento selezionato è già associato a un altro file del progetto.</translation>
+        </message>
+        <message>
+            <source>A source inspection cannot be committed.</source>
+            <translation>La sola verifica del documento di origine non può essere applicata come modifica.</translation>
+        </message>
+        <message>
+            <source>The selected recovery file is no longer available.</source>
+            <translation>Il file scelto per il ripristino non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The project was closed after its metadata was saved.</source>
+            <translation>Il progetto è stato chiuso dopo il salvataggio dei suoi dati.</translation>
+        </message>
+        <message>
+            <source>The project reference was saved, but analysis input is temporarily unavailable. Please retry analysis.</source>
+            <translation>Il collegamento del progetto è stato salvato, ma i dati per l'analisi non sono momentaneamente disponibili. Riprovare l'analisi.</translation>
+        </message>
+        <message>
+            <source>The pending project state could not be saved: %1</source>
+            <translation>Impossibile salvare lo stato del progetto ancora da riconciliare: %1</translation>
+        </message>
+        <message>
+            <source>The project unit is no longer available.</source>
+            <translation>Il file del progetto non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The project file already has another open document.</source>
+            <translation>Il file del progetto è già associato a un altro documento aperto.</translation>
+        </message>
+
 
 
 </context>
@@ -11483,6 +11780,19 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>Command: %1</source>
             <translation>Comando: %1</translation>
         </message>
+        <message>
+            <source>An in-memory source request requires captured UTF-8 transport.</source>
+            <translation>Per compilare un sorgente in memoria è necessario inviare il testo in UTF-8.</translation>
+        </message>
+        <message>
+            <source>The captured source encoding is not available.</source>
+            <translation>La codifica selezionata per il sorgente non è disponibile.</translation>
+        </message>
+        <message>
+            <source>The source contains characters that cannot be represented in the captured encoding.</source>
+            <translation>Il sorgente contiene caratteri non rappresentabili nella codifica selezionata.</translation>
+        </message>
+
     </context>
     <context>
         <name>SymbolUsageManager</name>
@@ -12127,6 +12437,23 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>An open document is being modified.</source>
             <translation>Un documento aperto è in corso di modifica.</translation>
         </message>
+        <message>
+            <source>Invalid document path.</source>
+            <translation>Il percorso del documento non è valido.</translation>
+        </message>
+        <message>
+            <source>The identity of an open document path alias could not be verified: %1</source>
+            <translation>Non è stato possibile verificare l'identità di un alias del percorso di un documento aperto: %1</translation>
+        </message>
+        <message>
+            <source>Distinct files share an unsupported case-sensitive path namespace: %1</source>
+            <translation>File diversi condividono uno spazio di nomi che distingue maiuscole e minuscole e non è supportato: %1</translation>
+        </message>
+        <message>
+            <source>Several open documents have the same or unverifiable path: %1</source>
+            <translation>Più documenti aperti hanno lo stesso percorso oppure un percorso di cui non è stato possibile verificare l'identità: %1</translation>
+        </message>
+
 
     </context>
     <context>
@@ -12134,6 +12461,281 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
         <message>
             <source>Document input must be captured in the parser's owning thread.</source>
             <translation>Il contenuto dei documenti non è disponibile per avviare l’analisi. Riprovare.</translation>
+        </message>
+    </context>
+    <context>
+        <name>DocumentFileController</name>
+        <message>
+            <source>Save As</source>
+            <translation>Salva con nome</translation>
+        </message>
+        <message>
+            <source>The document manager is no longer available.</source>
+            <translation>Il documento non è più disponibile. Riaprire il file e riprovare.</translation>
+        </message>
+        <message>
+            <source>The document is changing or no longer available.</source>
+            <translation>Il documento è in corso di modifica o non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The document is no longer available.</source>
+            <translation>Il documento non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The document changed while preparing Save As. Please try again.</source>
+            <translation>Il documento è cambiato durante la preparazione di Salva con nome. Riprovare.</translation>
+        </message>
+        <message>
+            <source>Project membership changed while preparing Save As. Please try again.</source>
+            <translation>L'associazione al progetto è cambiata durante la preparazione di Salva con nome. Riprovare.</translation>
+        </message>
+        <message>
+            <source>The destination already belongs to another project file. Choose a different path.</source>
+            <translation>Il percorso di destinazione è già usato da un altro file del progetto. Scegliere un altro percorso.</translation>
+        </message>
+        <message>
+            <source>The destination is open in another document.</source>
+            <translation>Il file di destinazione è già aperto in un altro documento.</translation>
+        </message>
+        <message>
+            <source>The destination is not a regular file.</source>
+            <translation>La destinazione selezionata non è un file.</translation>
+        </message>
+        <message>
+            <source>The destination changed while preparing Save As. Please try again.</source>
+            <translation>Il file di destinazione è cambiato durante la preparazione di Salva con nome. Riprovare.</translation>
+        </message>
+        <message>
+            <source>The file and project metadata were saved, but the document could not adopt the new path. Its contents were preserved; resolve the project file before building.
+%1</source>
+            <translation>Il file e i dati del progetto sono stati salvati, ma il documento non ha potuto adottare il nuovo percorso. Il contenuto è stato conservato; risolvere il collegamento del file nel progetto prima di compilare.
+%1</translation>
+        </message>
+        <message>
+            <source>The file was saved to '%1', but the project reference was not updated. The current document keeps its original path.
+%2</source>
+            <translation>Il file è stato salvato in '%1', ma il collegamento nel progetto non è stato aggiornato. Il documento aperto conserva il percorso originale.
+%2</translation>
+        </message>
+        <message>
+            <source>The file was saved, but its document was closed before the new path could be applied.</source>
+            <translation>Il file è stato salvato, ma il documento è stato chiuso prima di poter applicare il nuovo percorso.</translation>
+        </message>
+        <message>
+            <source>The file was saved, but its destination was opened in another document. Both buffers were preserved.</source>
+            <translation>Il file è stato salvato, ma la destinazione è stata aperta in un altro documento. Entrambi i contenuti sono stati conservati.</translation>
+        </message>
+        <message>
+            <source>The file was saved, but newer edits remain unsaved in the document.</source>
+            <translation>Il file è stato salvato, ma il documento contiene modifiche successive ancora da salvare.</translation>
+        </message>
+        <message>
+            <source>Relink file</source>
+            <translation>Ricollega file</translation>
+        </message>
+        <message>
+            <source>The selected project file is no longer available.</source>
+            <translation>Il file del progetto selezionato non è più disponibile.</translation>
+        </message>
+        <message>
+            <source>The project changed while choosing the recovery file.</source>
+            <translation>Il progetto è cambiato durante la scelta del file da ricollegare.</translation>
+        </message>
+        <message>
+            <source>Relink '%1' to the existing file '%2'?
+The project's build and encoding settings for this file will be kept.</source>
+            <translation>Ricollegare '%1' al file esistente '%2'?
+Le impostazioni di compilazione e codifica di questo file nel progetto saranno conservate.</translation>
+        </message>
+        <message>
+            <source>Relink and use open document</source>
+            <translation>Ricollega e usa il documento aperto</translation>
+        </message>
+        <message>
+            <source>Relink</source>
+            <translation>Ricollega</translation>
+        </message>
+        <message>
+            <source>The selected file is open with unsaved changes. Its text will be preserved; a later Save will write those changes to the selected file.</source>
+            <translation>Il file selezionato è aperto e contiene modifiche non salvate. Il testo sarà conservato; un successivo salvataggio scriverà queste modifiche nel file selezionato.</translation>
+        </message>
+        <message>
+            <source>The selected file is already open. That document will be associated with this project file.</source>
+            <translation>Il file selezionato è già aperto. Quel documento sarà associato a questo file del progetto.</translation>
+        </message>
+        <message>
+            <source>The project changed while confirming the recovery file.</source>
+            <translation>Il progetto è cambiato durante la conferma del file da ricollegare.</translation>
+        </message>
+        <message>
+            <source>This document is already being saved.</source>
+            <translation>È già in corso il salvataggio di questo documento.</translation>
+        </message>
+        <message>
+            <source>The document changed while preparing the save. Please try again.</source>
+            <translation>Il documento è cambiato durante la preparazione del salvataggio. Riprova.</translation>
+        </message>
+        <message>
+            <source>Project membership changed while preparing the save. Please try again.</source>
+            <translation>Il collegamento del documento al progetto è cambiato durante la preparazione del salvataggio. Riprova.</translation>
+        </message>
+        <message>
+            <source>The document has no save destination.</source>
+            <translation>Il documento non ha un percorso di salvataggio.</translation>
+        </message>
+        <message>
+            <source>The document line ending changed while preparing the save.</source>
+            <translation>Il formato dei fine riga è cambiato durante la preparazione del salvataggio.</translation>
+        </message>
+        <message>
+            <source>The destination changed while preparing the save. Please try again.</source>
+            <translation>Il file di destinazione è cambiato durante la preparazione del salvataggio. Riprova.</translation>
+        </message>
+        <message>
+            <source>The file was saved, but the document changed before the operation finished.</source>
+            <translation>Il file è stato salvato, ma il documento è cambiato prima della conclusione dell’operazione.</translation>
+        </message>
+
+    </context>
+    <context>
+        <name>EditorManager</name>
+        <message>
+            <source>The file is already open: '%1'.</source>
+            <translation>Il file è già aperto: '%1'.</translation>
+        </message>
+        <message>
+            <source>Open documents must be resolved on their owner thread.</source>
+            <translation>La ricerca dei documenti aperti deve essere eseguita nel contesto dell'editor.</translation>
+        </message>
+        <message>
+            <source>Invalid document path.</source>
+            <translation>Il percorso del documento non è valido.</translation>
+        </message>
+        <message>
+            <source>The requested path conflicts with an open document and its identity could not be uniquely verified: '%1'.</source>
+            <translation>Il percorso richiesto è in conflitto con un documento aperto e non è stato possibile verificarne l'identità in modo univoco: '%1'.</translation>
+        </message>
+    </context>
+    <context>
+        <name>DependencyScan</name>
+        <message>
+            <source>Autolink analysis exceeded its work or memory limit.</source>
+            <translation>L’analisi per il collegamento automatico ha superato il limite di elaborazione o memoria.</translation>
+        </message>
+        <message>
+            <source>Autolink analysis did not finish before its deadline.</source>
+            <translation>L’analisi per il collegamento automatico ha superato il tempo massimo.</translation>
+        </message>
+        <message>
+            <source>Autolink analysis received invalid limits or source information.</source>
+            <translation>I limiti o i dati del sorgente per il collegamento automatico non sono validi.</translation>
+        </message>
+        <message>
+            <source>Autolink analysis received an invalid predefined macro.</source>
+            <translation>Una macro predefinita per il collegamento automatico non è valida.</translation>
+        </message>
+        <message>
+            <source>Autolink analysis could not read all required source files.</source>
+            <translation>Impossibile leggere tutti i sorgenti richiesti dal collegamento automatico.</translation>
+        </message>
+        <message>
+            <source>Autolink analysis could not resolve %1 in '%2'.</source>
+            <translation>Il collegamento automatico non riesce a individuare %1 in «%2».</translation>
+        </message>
+        <message>
+            <source>Autolink analysis encountered an unmatched conditional directive in '%1'.</source>
+            <translation>L’analisi per il collegamento automatico ha trovato una direttiva condizionale senza corrispondenza in «%1».</translation>
+        </message>
+    </context>
+    <context>
+        <name>ParserConfiguration</name>
+        <message>
+            <source>An enabled parser requires a supported language.</source>
+            <translation>Per attivare l’analisi del codice occorre un linguaggio supportato.</translation>
+        </message>
+        <message>
+            <source>Invalid parser configuration limits.</source>
+            <translation>I limiti della configurazione dell’analisi del codice non sono validi.</translation>
+        </message>
+        <message>
+            <source>Parser configuration exceeds its item limit.</source>
+            <translation>La configurazione dell’analisi del codice contiene troppe voci.</translation>
+        </message>
+        <message>
+            <source>Invalid or excessive parser configuration text.</source>
+            <translation>Il testo della configurazione dell’analisi del codice non è valido o è troppo lungo.</translation>
+        </message>
+        <message>
+            <source>Parser configuration must be captured on the GUI owner thread.</source>
+            <translation>La configurazione dell’analisi del codice va acquisita dal thread dell’interfaccia.</translation>
+        </message>
+        <message>
+            <source>Parser configuration requires a fixed absolute working directory.</source>
+            <translation>L’analisi del codice richiede una directory di lavoro con percorso assoluto e fisso.</translation>
+        </message>
+        <message>
+            <source>Parser paths exceed the preparation budget or have no fixed absolute identity.</source>
+            <translation>I percorsi dell’analisi del codice superano i limiti oppure non hanno un’identità assoluta e stabile.</translation>
+        </message>
+        <message>
+            <source>Parser compiler options are malformed or exceed the preparation text or item budget.</source>
+            <translation>Le opzioni del compilatore per l’analisi del codice non sono valide o superano i limiti di lunghezza o numero.</translation>
+        </message>
+        <message>
+            <source>The configured compiler executable is unavailable.</source>
+            <translation>L’eseguibile del compilatore configurato non è disponibile.</translation>
+        </message>
+        <message>
+            <source>The configured compiler executable path is invalid.</source>
+            <translation>Il percorso dell’eseguibile del compilatore configurato non è valido.</translation>
+        </message>
+        <message>
+            <source>Parser compiler options exceed the preparation text budget.</source>
+            <translation>Le opzioni del compilatore per l’analisi del codice sono troppo lunghe.</translation>
+        </message>
+        <message>
+            <source>Parser assistance is unavailable because compiler arguments exceed the item budget.</source>
+            <translation>L’assistenza al codice non è disponibile perché gli argomenti del compilatore sono troppi.</translation>
+        </message>
+        <message>
+            <source>Parser assistance is unavailable because compiler arguments are invalid or exceed the text budget.</source>
+            <translation>L’assistenza al codice non è disponibile perché gli argomenti del compilatore non sono validi o sono troppo lunghi.</translation>
+        </message>
+        <message>
+            <source>Parser assistance is unavailable because compiler flag '%1' has a missing or invalid operand. Normal compilation keeps the configured options.</source>
+            <translation>L’assistenza al codice non è disponibile perché manca un argomento valido per l’opzione «%1». La compilazione mantiene le opzioni configurate.</translation>
+        </message>
+        <message>
+            <source>Parser assistance is unavailable because compiler flag '%1' may write files during discovery. Remove that flag from this context to enable assistance; normal compilation remains available.</source>
+            <translation>L’assistenza al codice non è disponibile perché l’opzione «%1» può scrivere file durante il rilevamento. Rimuovi l’opzione da questo contesto per attivare l’assistenza. La compilazione normale rimane disponibile.</translation>
+        </message>
+        <message>
+            <source>Invalid parser toolchain preparation limits.</source>
+            <translation>I limiti di preparazione della toolchain per l’analisi del codice non sono validi.</translation>
+        </message>
+        <message>
+            <source>Parser toolchain preparation deadline expired.</source>
+            <translation>La preparazione della toolchain per l’analisi del codice ha superato il tempo massimo.</translation>
+        </message>
+        <message>
+            <source>Invalid parser toolchain output limit.</source>
+            <translation>Il limite dell’output della toolchain per l’analisi del codice non è valido.</translation>
+        </message>
+        <message>
+            <source>Parser toolchain output could not be decoded.</source>
+            <translation>Impossibile decodificare l’output della toolchain per l’analisi del codice.</translation>
+        </message>
+        <message>
+            <source>The compiler did not provide a complete include search list.</source>
+            <translation>Il compilatore non ha fornito l’elenco completo dei percorsi di ricerca degli header.</translation>
+        </message>
+        <message>
+            <source>The compiler did not provide a complete C++ include search list.</source>
+            <translation>Il compilatore non ha fornito l’elenco completo dei percorsi di ricerca degli header C++.</translation>
+        </message>
+        <message>
+            <source>The compiler did not provide a complete predefined macro list.</source>
+            <translation>Il compilatore non ha fornito l’elenco completo delle macro predefinite.</translation>
         </message>
     </context>
 </TS>

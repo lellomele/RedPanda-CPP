@@ -19,6 +19,8 @@
 
 #include <QThread>
 #include <atomic>
+#include "filecompilerequest.h"
+#include "../operationresult.h"
 #include "../settings.h"
 #include "../common.h"
 #include "../parser/cppparser.h"
@@ -38,6 +40,7 @@ public:
         StdIn
     };
     Compiler(const QString& filename, bool onlyCheckSyntax);
+    explicit Compiler(Compilation::FileCompileRequest::Pointer request);
     Compiler(const Compiler&)=delete;
     Compiler& operator=(const Compiler&)=delete;
 
@@ -49,6 +52,10 @@ public:
 
     const PCppParser &parserForFile() const;
     void setParserForFile(const PCppParser &newParserForFile);
+    void setPreparationMailbox(std::shared_ptr<Compilation::PreparationMailbox> mailbox);
+    const Compilation::FileCompileRequest::Pointer &fileRequest() const { return mFileRequest; }
+    OperationResult taskOutcome() const { return mTaskOutcome; }
+    Compilation::ProcessOwnershipLevel processOwnershipLevel() const { return mProcessOwnershipLevel; }
 
 signals:
     void compileStarted();
@@ -56,6 +63,7 @@ signals:
     void compileOutput(const QString& msg);
     void compileIssue(PCompileIssue issue);
     void compileErrorOccured(const QString& reason);
+    void toolchainCapabilitiesAvailable(QString identity, bool supportNLS, bool supportCharset, bool compilerUTF8);
 public slots:
     void stopCompile();
 
@@ -92,6 +100,8 @@ protected:
     void runCommand(const QString& cmd, const QStringList& arguments, const QString& workingDir, const QByteArray& inputText=QByteArray(), const QString& outputFile=QString());
     QString escapeCommandForLog(const QString &cmd, const QStringList &arguments);
     const QMap<QString, QString> &macroVariables() const { return mMacroVariables; }
+    const Compilation::ConfigurationValues &configuration() const;
+    void validateGeneratedOutputPath(const QString &path) const;
 
 protected:
     bool mOnlyCheckSyntax;
@@ -111,10 +121,24 @@ protected:
     bool mSetLANG;
     PCppParser mParserForFile;
     bool mForceEnglishOutput;
+    bool mSuppressDebugInfo = false;
+    QHash<quintptr, QByteArray> mProjectSourceEncodings;
+    QByteArray mProjectSystemEncoding;
+    QByteArray mProjectConsoleEncoding;
+    QStringList mProtectedInputPaths;
 
 private:
+    Compiler(const QString &filename, bool onlyCheckSyntax, bool captureLegacyMacros);
     void writeQaProcessTrace(const char *stage, const QProcess *process = nullptr, int started = -1) const;
-    std::atomic_bool mStop{false};
+    const std::shared_ptr<std::atomic_bool> mStop = std::make_shared<std::atomic_bool>(false);
+    Compilation::FileCompileRequest::Pointer mFileRequest;
+    std::shared_ptr<Compilation::PreparationMailbox> mPreparationMailbox;
+    Compilation::FrozenConfiguration::Pointer mResolvedConfiguration;
+    Compilation::AutolinkResolution mResolvedAutolink;
+    OperationResult mTaskOutcome = OperationResult::cancelled();
+    Compilation::ProcessOwnershipLevel mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+    qint64 mCapturedDiagnosticBytes = 0;
+    QString mDiagnosticLineBuffer;
     QMap<QString, QString> mMacroVariables;
     QString mQaProcessTracePath;
     qint64 mQaTraceReference = 0;

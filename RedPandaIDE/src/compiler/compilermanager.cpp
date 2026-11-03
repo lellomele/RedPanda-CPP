@@ -39,6 +39,14 @@
 #include <algorithm>
 #include <QUuid>
 #include "projectcompiler.h"
+#include "compilationcapture.h"
+#include "../analysis/parserconfigurationcapture.h"
+#include <qt_utils/charsetinfo.h>
+#include "frozencompilearguments.h"
+#include <QTimer>
+#include <QPointer>
+#include <limits>
+#include <qsynedit/document.h>
 
 namespace {
 bool projectInputsReady(const std::shared_ptr<Project> &project, MainWindow *window, bool foreground)
@@ -133,6 +141,174 @@ bool CompilerManager::shutdown(int timeoutMilliseconds)
     return true;
 }
 
+Compilation::FileCompileRequest::Pointer CompilerManager::captureFileRequest(const QString &filename, FileType fileType,
+    const QByteArray &encoding, CppCompileType compileType, bool syntaxOnly, bool rebuild,
+    const QString &content, Project *project, Compilation::CompileIdentity identity, PAnalysisInputSnapshot &inputs)
+{
+    if (QThread::currentThread() != thread())
+        throw CompileError(tr("Compilation must be submitted on its owner thread."));
+    if (syntaxOnly && content.size() > 32LL * 1024 * 1024)
+        throw CompileError(tr("The source exceeds the background syntax-check size limit (32 Mi characters)."));
+    const auto set = project ? pSettings->compilerSets().getSet(project->options().compilerSet)
+                             : pSettings->compilerSets().defaultSet();
+    // Syntax-only consumes no linker flags or execution charset, so it must
+    // neither copy unused rules nor await an autolink dependency graph.
+    const bool autolinkUsed = !syntaxOnly && (fileType == FileType::CSource || fileType == FileType::CppSource);
+    auto captured = Compilation::captureCompilerConfiguration(set, project,
+        mMainWindow ? mMainWindow->macroVariables(false) : QMap<QString, QString>{}, autolinkUsed);
+    if (!captured.preparation.ready()) throw CompileError(captured.preparation.reason);
+    if (mNextCompileJobId == std::numeric_limits<quint64>::max())
+        throw CompileError(tr("The compilation job identifier space is exhausted."));
+    identity.jobId = ++mNextCompileJobId;
+    if (mMainWindow) {
+        const auto capturedInputs = mMainWindow->editorManager()->inputSnapshotProvider()();
+        if (!capturedInputs.succeeded()) throw CompileError(capturedInputs.error);
+        inputs = capturedInputs.snapshot;
+        if (const auto source = inputs->document(filename)) {
+            if ((identity.documentId && identity.documentId != source->id)
+                    || (identity.textRevision && identity.textRevision != source->revision))
+                throw CompileError(tr("The source revision changed before compilation was submitted."));
+            if (syntaxOnly) {
+                const auto *editor = mMainWindow->editorManager()->getOpenedEditor(filename);
+                const QString separator = editor ? editor->document()->lineBreak() : QStringLiteral("\n");
+                qsizetype position = 0;
+                const QStringView submitted{content};
+                for (qsizetype line = 0; line < source->lines.size(); ++line) {
+                    const auto &text = source->lines.at(line);
+                    if (position > content.size() || submitted.mid(position, text.size()) != QStringView{text})
+                        throw CompileError(tr("The captured source text does not match its document revision."));
+                    position += text.size();
+                    if (line + 1 < source->lines.size()) {
+                        if (submitted.mid(position, separator.size()) != QStringView{separator})
+                            throw CompileError(tr("The captured source text does not match its document revision."));
+                        position += separator.size();
+                    }
+                }
+                if (position != content.size())
+                    throw CompileError(tr("The captured source text does not match its document revision."));
+            }
+            identity.documentId = source->id; identity.textRevision = source->revision;
+        }
+    }
+    Compilation::FileCompileValues values;
+    values.identity = identity; values.filename = filename; values.fileType = fileType;
+    const auto argumentUse = fileType == FileType::CppSource || fileType == FileType::CCppHeader
+        ? Compilation::ArgumentUse::Cpp : Compilation::ArgumentUse::C;
+    values.unavailableToolchainMacros = Compilation::unavailableToolchainMacros(captured.values, argumentUse, syntaxOnly);
+    if (inputs)
+        for (auto it = inputs->documents().cbegin(); it != inputs->documents().cend(); ++it)
+            if (it.value()) values.openDocumentRevisions.insert(it.value()->id, it.value()->revision);
+    values.originalSourceEncoding = encoding;
+    values.sourceEncoding = syntaxOnly ? QByteArray(ENCODING_UTF8) : encoding;
+    values.compileType = compileType; values.syntaxOnly = syntaxOnly; values.rebuild = rebuild;
+    values.inputMode = syntaxOnly ? Compilation::FileInputMode::StandardInput : Compilation::FileInputMode::SavedDiskFile;
+    values.standardInput = content;
+    const QFileInfo disk(filename);
+    const auto registered = inputs ? inputs->document(filename) : PDocumentSnapshot{};
+    values.sourcePath = registered ? registered->absoluteFilename : disk.absoluteFilePath();
+    const QFileInfo acceptedFile(values.sourcePath);
+    values.workingDirectory = acceptedFile.absolutePath();
+    values.diskSize = acceptedFile.size(); values.diskModifiedMilliseconds = acceptedFile.lastModified().toMSecsSinceEpoch();
+    if (captured.values.autolink.rules.isEmpty()) {
+        // No dependency can contribute a flag when the accepted catalogue is empty.
+        captured.values.autolink.enabled = false;
+        captured.values.autolink.complete = true;
+    }
+    if (captured.values.autolink.enabled) {
+        Analysis::ParserConfigurationValues base;
+        base.language = argumentUse == Compilation::ArgumentUse::Cpp ? ParserLanguage::CPlusPlus : ParserLanguage::C;
+        if (captured.values.project) base.projectIncludePaths = captured.values.project->includeDirs;
+        values.dependencyEncodings = {QByteArrayLiteral("UTF-8")};
+        const auto addEncoding = [&](const QByteArray &codec) {
+            if (!codec.isEmpty() && values.dependencyEncodings.size() < 64 && !values.dependencyEncodings.contains(codec))
+                values.dependencyEncodings.append(codec);
+        };
+        addEncoding(captured.values.preferences.systemEncoding);
+        const auto locales = pCharsetInfoManager->findCharsetByLocale(pCharsetInfoManager->localeName());
+        for (const auto &locale : locales) addEncoding(locale->name);
+        const auto probe = Analysis::captureParserConfiguration(set.get(), std::move(base), values.workingDirectory,
+            captured.values.environment, values.dependencyEncodings.mid(0, 4));
+        values.dependencyProbe = probe.request;
+        values.dependencyPreparationError = probe.preparation.reason;
+    }
+    const auto capabilities = mCapabilityCache.constFind(captured.values.toolchain.identity);
+    if (capabilities != mCapabilityCache.cend()) {
+        captured.values.toolchain.supportNLS = capabilities->supportNLS;
+        captured.values.toolchain.supportConvertingCharset = capabilities->supportConvertingCharset;
+        captured.values.toolchain.compilerUsingUTF8 = capabilities->compilerUsingUTF8;
+        values.capabilitiesKnown = true;
+    }
+    values.configuration = Compilation::FrozenConfiguration::capture(captured.values);
+    return Compilation::FileCompileRequest::capture(values);
+}
+
+bool CompilerManager::diagnosticsAreCurrent(const Compilation::FileCompileRequest::Pointer &request) const
+{
+    if (!request || !request->values().identity.documentId || !mMainWindow) return true;
+    const auto &wanted = request->values();
+    auto *manager = mMainWindow->editorManager();
+    auto *editor = manager->getOpenedEditor(wanted.filename);
+    return manager->documentId(editor) == wanted.identity.documentId
+            && manager->documentRevision(editor) == wanted.identity.textRevision;
+}
+
+void CompilerManager::connectCapturedCompiler(Compiler *compiler, bool syntaxOnly)
+{
+    const QPointer<Compiler> source(compiler);
+    const auto request = compiler->fileRequest();
+    connect(compiler, &Compiler::finished, compiler, &QObject::deleteLater);
+    connect(compiler, &Compiler::compileFinished, this,
+        syntaxOnly ? &CompilerManager::onSyntaxCheckFinished : &CompilerManager::onCompileFinished);
+    connect(compiler, &Compiler::compileIssue, this,
+        syntaxOnly ? &CompilerManager::onSyntaxCheckIssue : &CompilerManager::onCompileIssue);
+    connect(compiler, &Compiler::toolchainCapabilitiesAvailable, this,
+        [this](const QString &identity, bool nls, bool charset, bool utf8) {
+            if (mCapabilityCache.size() >= 32 && !mCapabilityCache.contains(identity)) mCapabilityCache.clear();
+            mCapabilityCache.insert(identity, {nls, charset, utf8});
+        });
+    if (!mMainWindow) return;
+    connect(compiler, &Compiler::compileStarted, mMainWindow,
+        syntaxOnly ? &MainWindow::onSyntaxCheckStarted : &MainWindow::onCompileStarted);
+    if (!syntaxOnly) {
+        connect(compiler, &Compiler::compileStarted, mMainWindow, &MainWindow::clearToolsOutput);
+        connect(compiler, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
+    }
+    connect(compiler, &Compiler::compileIssue, this, [this, source, request](PCompileIssue issue) {
+        // Job execution retains its accepted input. Only editor hints are
+        // rejected when a newer document revision owns a diagnostic filename.
+        if (!source || !mMainWindow || !issue) return;
+        if (!request) { mMainWindow->onCompileIssue(issue); return; }
+        // The original diagnostic always remains available in the panel. Only
+        // editor hints require a matching accepted document/revision.
+        auto published = std::make_shared<CompileIssue>(*issue);
+        published->hintEligibility = DiagnosticHintEligibility::Suppressed;
+        if (diagnosticsAreCurrent(request)) {
+            auto *manager = mMainWindow->editorManager();
+            auto *editor = manager->getOpenedEditor(published->filename);
+            const auto id = manager->documentId(editor);
+            const auto accepted = request->values().openDocumentRevisions.constFind(id);
+            if (accepted != request->values().openDocumentRevisions.cend()
+                    && manager->documentRevision(editor) == accepted.value()) {
+                published->hintEligibility = DiagnosticHintEligibility::CapturedDocument;
+                published->diagnosticDocumentId = id;
+                published->diagnosticTextRevision = accepted.value();
+            }
+        }
+        mMainWindow->onCompileIssue(std::move(published));
+    });
+    connect(compiler, &Compiler::compileErrorOccured, this, [this, source, syntaxOnly](const QString &reason) {
+        if (!source || !mMainWindow || mMainWindow->isQuitting()) return;
+        if (syntaxOnly) {
+            // Automatic checks report recoverable preparation/process errors
+            // without interrupting typing or cancelling a foreground run task.
+            mMainWindow->statusBar()->showMessage(reason, 10000);
+            mMainWindow->logToolsOutput(tr("Syntax check could not finish: %1").arg(reason));
+        } else if (source == mCompiler) {
+            mMainWindow->onCompileErrorOccured(reason);
+        }
+    });
+}
+
 bool CompilerManager::compiling() const
 {
     QMutexLocker locker(&mCompileMutex);
@@ -151,47 +327,39 @@ bool CompilerManager::running() const
     return (mRunner!=nullptr && !mRunner->pausing());
 }
 
-void CompilerManager::compile(const QString& filename, FileType fileType, const QByteArray& encoding, bool rebuild, CppCompileType compileType)
+void CompilerManager::compile(const QString& filename, FileType fileType, const QByteArray& encoding,
+    bool rebuild, CppCompileType compileType, Compilation::CompileIdentity identity)
 {
-    if (!pSettings->compilerSets().defaultSet()) {
-        QMessageBox::critical(mMainWindow,
-                              tr("No compiler set"),
-                              tr("No compiler set is configured.")+tr("Can't start debugging."));
-        return;
-    }
-    {
-        QMutexLocker locker(&mCompileMutex);
-        if (mCompiler!=nullptr) {
-            return;
-        }
-        mCompileErrorCount = 0;
-        mCompileIssueCount = 0;
-        //deleted when thread finished
+    QMutexLocker locker(&mCompileMutex);
+    if (mCompiler) return;
+    std::unique_ptr<Compiler> candidate;
+    try {
+        PAnalysisInputSnapshot inputs;
+        const auto request = captureFileRequest(filename, fileType, encoding, compileType, false, rebuild, {}, nullptr, identity, inputs);
+        mCompileErrorCount = 0; mCompileIssueCount = 0;
+        mLastCompileOutcome = OperationResult::cancelled();
+        mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+        mCanContinueLastCompile = false;
 #ifdef ENABLE_SDCC
-        if (pSettings->compilerSets().defaultSet()->compilerType()==CompilerType::SDCC) {
-            mCompiler = new SDCCFileCompiler(filename,encoding,compileType,false);
-        } else
+        if (request->values().configuration->values().toolchain.compilerType == CompilerType::SDCC)
+            candidate = std::make_unique<SDCCFileCompiler>(request);
+        else
 #endif
-        if (fileType == FileType::NASM){
-            mCompiler = new NASMFileCompiler(filename);
-        } else  {
-            mCompiler = new FileCompiler(filename,encoding,fileType,compileType,false);
-        }
-        mCompiler->setParserForFile(getParserForFile(filename));
-        mCompiler->setRebuild(rebuild);
+        if (fileType == FileType::NASM) candidate = std::make_unique<NASMFileCompiler>(request);
+        else candidate = std::make_unique<FileCompiler>(request);
+        mCompiler = candidate.get();
         trackWorker(mCompiler);
-        connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
-        connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
-        connect(mCompiler, &Compiler::compileIssue, this, &CompilerManager::onCompileIssue);
-        if (mMainWindow) {
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::onCompileStarted);
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::clearToolsOutput);
-
-            connect(mCompiler, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
-            connect(mCompiler, &Compiler::compileIssue, mMainWindow, &MainWindow::onCompileIssue);
-            connect(mCompiler, &Compiler::compileErrorOccured, mMainWindow, &MainWindow::onCompileErrorOccured);
-        }
-        mCompiler->start();
+        connectCapturedCompiler(mCompiler, false);
+        candidate->start();
+        if (!candidate->isRunning() && !candidate->isFinished())
+            throw CompileError(tr("The compilation worker could not start."));
+        candidate.release();
+    } catch (const BaseError &error) {
+        mCompiler = nullptr; candidate.reset();
+        mLastCompileOutcome = OperationResult::failure(error.reason());
+        mCanContinueLastCompile = false;
+        locker.unlock();
+        QMessageBox::critical(mMainWindow, tr("Compilation could not start"), error.reason());
     }
 }
 
@@ -212,6 +380,9 @@ void CompilerManager::compileProject(std::shared_ptr<Project> project, bool rebu
         }
         mCompileErrorCount = 0;
         mCompileIssueCount = 0;
+        mLastCompileOutcome = OperationResult::cancelled();
+        mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+        mCanContinueLastCompile = false;
         //deleted when thread finished
         mCompiler = createProjectCompiler(project);
         mCompiler->setRebuild(rebuild);
@@ -249,6 +420,9 @@ void CompilerManager::cleanProject(std::shared_ptr<Project> project)
         }
         mCompileErrorCount = 0;
         mCompileIssueCount = 0;
+        mLastCompileOutcome = OperationResult::cancelled();
+        mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+        mCanContinueLastCompile = false;
         //deleted when thread finished
         ProjectCompiler* compiler = createProjectCompiler(project);
         compiler->setOnlyClean(true);
@@ -292,41 +466,38 @@ void CompilerManager::buildProjectMakefile(std::shared_ptr<Project> project)
     }
 }
 
-void CompilerManager::checkSyntax(const QString &filename, const QByteArray& encoding, const QString &content, std::shared_ptr<Project> project)
+void CompilerManager::checkSyntax(const QString &filename, const QByteArray& encoding, const QString &content,
+    std::shared_ptr<Project> project, Compilation::CompileIdentity identity)
 {
-    if (!projectInputsReady(project, mMainWindow, false))
-        return;
-    if (!pSettings->compilerSets().defaultSet()) {
-        QMessageBox::critical(mMainWindow,
-                              tr("No compiler set"),
-                              tr("No compiler set is configured.")+tr("Can't start debugging."));
-        return;
-    }
-    {
-        QMutexLocker locker(&mBackgroundSyntaxCheckMutex);
-        if (mBackgroundSyntaxChecker!=nullptr) {
-            return;
-        }
-
-        mSyntaxCheckErrorCount = 0;
-        mSyntaxCheckIssueCount = 0;
-
-        //deleted when thread finished
-        mBackgroundSyntaxChecker = new StdinCompiler(filename,encoding, content,true);
-        if (!project)
-            mBackgroundSyntaxChecker->setParserForFile(getParserForFile(filename));
-        mBackgroundSyntaxChecker->setProject(project);
+    // Stdin syntax checks use the captured source and project option values,
+    // not project-unit disk bindings or saved-file preconditions.
+    QMutexLocker locker(&mBackgroundSyntaxCheckMutex);
+    if (mBackgroundSyntaxChecker) return;
+    std::unique_ptr<Compiler> candidate;
+    try {
+        FileType fileType = getFileType(filename);
+        if (fileType == FileType::Other) fileType = FileType::CppSource;
+        PAnalysisInputSnapshot inputs;
+        const auto request = captureFileRequest(filename, fileType, encoding, CppCompileType::Normal,
+            true, false, content, project.get(), identity, inputs);
+        mSyntaxCheckErrorCount = 0; mSyntaxCheckIssueCount = 0;
+        mLastSyntaxCheckOutcome = OperationResult::cancelled();
+        mLastSyntaxCheckOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+        mLastSyntaxCompilerType = request->values().configuration->values().toolchain.compilerType;
+        candidate = std::make_unique<StdinCompiler>(request);
+        mBackgroundSyntaxChecker = candidate.get();
         trackWorker(mBackgroundSyntaxChecker);
-        connect(mBackgroundSyntaxChecker, &Compiler::finished, mBackgroundSyntaxChecker, &QThread::deleteLater);
-        connect(mBackgroundSyntaxChecker, &Compiler::compileIssue, this, &CompilerManager::onSyntaxCheckIssue);
-        connect(mBackgroundSyntaxChecker, &Compiler::compileFinished, this, &CompilerManager::onSyntaxCheckFinished);
-        if (mMainWindow) {
-            connect(mBackgroundSyntaxChecker, &Compiler::compileStarted, mMainWindow, &MainWindow::onSyntaxCheckStarted);
-            connect(mBackgroundSyntaxChecker, &Compiler::compileIssue, mMainWindow, &MainWindow::onCompileIssue);
-            connect(mBackgroundSyntaxChecker, &Compiler::compileErrorOccured, mMainWindow, &MainWindow::onCompileErrorOccured);
-            //connect(mBackgroundSyntaxChecker, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
-        }
-        mBackgroundSyntaxChecker->start();
+        connectCapturedCompiler(mBackgroundSyntaxChecker, true);
+        candidate->start();
+        if (!candidate->isRunning() && !candidate->isFinished())
+            throw CompileError(tr("The syntax-check worker could not start."));
+        candidate.release();
+    } catch (const BaseError &error) {
+        mBackgroundSyntaxChecker = nullptr; candidate.reset();
+        mLastSyntaxCheckOutcome = OperationResult::failure(error.reason());
+        locker.unlock();
+        if (mMainWindow) mMainWindow->statusBar()->showMessage(error.reason(), 10000);
+        emit compileFinished(filename, true);
     }
 }
 
@@ -548,6 +719,18 @@ void CompilerManager::onCompileFinished(const QString& filename)
     QMutexLocker locker(&mCompileMutex);
     if (sender() != mCompiler)
         return;
+    mLastCompileOutcome = mCompiler->taskOutcome();
+    mLastCompileOwnership = mCompiler->processOwnershipLevel();
+    mCanContinueLastCompile = mLastCompileOutcome.succeeded();
+    if (const auto request = mCompiler->fileRequest()) {
+        if (request->values().identity.documentId) {
+            auto *editor = mMainWindow ? mMainWindow->editorManager()->getOpenedEditor(request->values().filename) : nullptr;
+            mCanContinueLastCompile = mCanContinueLastCompile && editor
+                && mMainWindow->editorManager()->documentId(editor) == request->values().identity.documentId;
+        }
+    } else if (mCompiler->project()) {
+        mCanContinueLastCompile = mCanContinueLastCompile && mMainWindow && mMainWindow->project() == mCompiler->project();
+    }
     mCompiler=nullptr;
     emit compileFinished(filename, false);
 }
@@ -587,6 +770,8 @@ void CompilerManager::onSyntaxCheckFinished(const QString& filename)
     QMutexLocker locker(&mBackgroundSyntaxCheckMutex);
     if (sender() != mBackgroundSyntaxChecker)
         return;
+    mLastSyntaxCheckOutcome = mBackgroundSyntaxChecker->taskOutcome();
+    mLastSyntaxCheckOwnership = mBackgroundSyntaxChecker->processOwnershipLevel();
     mBackgroundSyntaxChecker=nullptr;
     emit compileFinished(filename, true);
 }
@@ -612,6 +797,7 @@ ProjectCompiler *CompilerManager::createProjectCompiler(std::shared_ptr<Project>
 
 PCppParser CompilerManager::getParserForFile(const QString &filename)
 {
+    if (!mMainWindow) return {};
     Editor* editor = mMainWindow->editorManager()->getOpenedEditor(filename);
     if (editor)
         return editor->parser();

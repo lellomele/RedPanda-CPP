@@ -4267,6 +4267,8 @@ void QSynEdit::doUndo()
                     keepGoing = true;
                 else {
                     keepGoing = (mOptions.testFlag(EditorOption::GroupUndo)
+                                 // Do not group across the last saved revision.
+                                 && !mUndoList->initialState()
                                  && (lastChange == item->changeReason())
                                  && (isGroupChange(item->changeReason())));
                 }
@@ -4565,6 +4567,7 @@ void QSynEdit::doRedo()
             keepGoing = true;
         else {
             keepGoing = (mOptions.testFlag(EditorOption::GroupUndo)
+                         && !mUndoList->initialState()
                          && (lastChange == item->changeReason())
                          && (isGroupChange(item->changeReason())));
         }

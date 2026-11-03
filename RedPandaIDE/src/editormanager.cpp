@@ -23,6 +23,7 @@
 #include "settings.h"
 #include "project.h"
 #include "systemconsts.h"
+#include "documentfilecontroller.h"
 #include "visithistorymanager.h"
 #include "debugger/debugger.h"
 #include "utils/parser.h"
@@ -44,13 +45,31 @@ EditorManager::EditorManager(QTabWidget* leftPageWidget,
     mPanel(panel),
     mUpdateCount(0)
 {
+    mDocumentFiles = std::make_unique<DocumentFileController>(*this, *pSystemConsts);
+}
 
+EditorManager::~EditorManager() = default;
+
+DocumentSaveAsResult EditorManager::saveDocument(Editor *editor, const DocumentSaveRequest &request)
+{
+    auto operation = *mDocumentFiles; // Its modal lifetime is independent of this owner.
+    return operation.save(editor, request);
+}
+
+UnitLocationCommitResult EditorManager::relinkProjectUnit(const std::shared_ptr<Project> &project,
+                                                         const std::shared_ptr<ProjectUnit> &unit, const QString &name)
+{
+    auto operation = *mDocumentFiles;
+    return operation.relink(project, unit, name);
 }
 
 Editor* EditorManager::newEditor(const QString& filename, const QByteArray& encoding,
                               FileType fileType, const QString& contextFile,
                               bool inProject, bool newFile,
                               QTabWidget* page) {
+    const auto occupied = resolveOpenedEditor(filename);
+    if (occupied.status != EditorPathStatus::NotOpen)
+        throw FileError(occupied.error.isEmpty() ? tr("The file is already open: '%1'.").arg(filename) : occupied.error);
     QTabWidget * parentPageControl = nullptr;
     if (page == nullptr)
         parentPageControl = getNewEditorPageControl();
@@ -63,6 +82,12 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
     // Transfer ownership only after the complete initialization succeeds.
     auto candidate = std::make_unique<Editor>(parentPageControl);
     Editor *e = candidate.get();
+    e->setSaveOperation([owner = QPointer<EditorManager>(this)](Editor *source, const DocumentSaveRequest &request) {
+        if (owner) return owner->saveDocument(source, request);
+        DocumentSaveAsResult result;
+        result.outcome = OperationResult::failure(QCoreApplication::translate("DocumentFileController", "The document manager is no longer available."));
+        return result;
+    });
     e->setEditorSettings(&pSettings->editor());
     e->setCodeCompletionSettings(&pSettings->codeCompletion());
     e->setColorManager(pMainWindow->colorManager());
@@ -79,8 +104,9 @@ Editor* EditorManager::newEditor(const QString& filename, const QByteArray& enco
                                          this, std::placeholders::_1));
     e->setGetReformatterFunc(std::bind(&EditorManager::createReformatterForEditor,
                                        this, std::placeholders::_1));
-    e->setGetMacroVarsFunc(std::bind(&MainWindow::macroVariables,
-                                     pMainWindow));
+    e->setGetMacroVarsFunc([window = QPointer<MainWindow>(pMainWindow)] {
+        return window ? window->macroVariables() : QMap<QString, QString>{};
+    });
     e->setGetCppParserFunc(std::bind(&EditorManager::createParserForEditor,
                                      this, std::placeholders::_1));
 #ifdef ENABLE_SDCC
@@ -209,10 +235,41 @@ void EditorManager::observeDocument(Editor *editor)
             [this, id](Editor *, const QString &, const QString &filename) {
         mDocumentStore->renamed(id, filename);
     });
-    connect(editor, &QObject::destroyed, this, [this, editor, id] {
-        mDocumentStore->remove(id);
-        mDocumentIds.remove(editor);
-    });
+    connect(editor, &QObject::destroyed, this, [this, editor] { forgetDocument(editor); });
+}
+
+void EditorManager::forgetDocument(Editor *editor)
+{
+    const DocumentId id = mDocumentIds.take(editor);
+    if (!id) return;
+    mDocumentStore->remove(id);
+    emit documentClosed(id);
+}
+
+DocumentId EditorManager::documentId(const Editor *editor) const
+{
+    if (QThread::currentThread() != thread() || !editor) return 0;
+    return mDocumentIds.value(const_cast<Editor *>(editor));
+}
+
+DocumentRevision EditorManager::documentRevision(const Editor *editor) const
+{
+    if (QThread::currentThread() != thread()) return 0;
+    return mDocumentStore->revisionFor(documentId(editor));
+}
+
+QString EditorManager::documentAbsolutePath(const Editor *editor) const
+{
+    if (QThread::currentThread() != thread()) return {};
+    return mDocumentStore->absolutePathFor(documentId(editor));
+}
+
+Editor *EditorManager::editorForDocument(DocumentId id) const
+{
+    if (QThread::currentThread() != thread() || !id) return nullptr;
+    for (auto it = mDocumentIds.cbegin(); it != mDocumentIds.cend(); ++it)
+        if (it.value() == id) return it.key();
+    return nullptr;
 }
 
 InputSnapshotProvider EditorManager::inputSnapshotProvider() const
@@ -342,7 +399,8 @@ void EditorManager::showLayout(LayoutShowType layout)
 
 void EditorManager::doRemoveEditor(Editor *e)
 {
-    mDocumentStore->remove(mDocumentIds.take(e));
+    const bool retireLater = mDocumentFiles->isSaving(documentId(e));
+    forgetDocument(e);
     QTabWidget* parentPage=findPageControlForEditor(e);
     if (parentPage) {
         int index = parentPage->indexOf(e);
@@ -351,8 +409,16 @@ void EditorManager::doRemoveEditor(Editor *e)
     pMainWindow->fileSystemWatcher()->removePath(e->filename());
     pMainWindow->caretList().removeEditor(e);
     pMainWindow->updateCaretActions();
-    e->setParent(nullptr);
-    delete e;
+    if (retireLater) {
+        // The save controller may still be dispatching an Editor signal or
+        // unwinding a nested dialog. Remove its authority now and let Qt
+        // destroy the retired view after the notification stack returns.
+        e->hide();
+        e->deleteLater();
+    } else {
+        e->setParent(nullptr);
+        delete e;
+    }
 }
 
 #ifdef ENABLE_SDCC
@@ -562,12 +628,8 @@ void EditorManager::onEditorFontSizeChangedByWheel(int newSize)
 
 void EditorManager::onEditorFileEncodingChanged(Editor *e)
 {
-    if (pMainWindow->project()) {
-        PProjectUnit unit = pMainWindow->project()->findUnit(e);
-        if (unit) {
-            unit->setRealEncoding(e->fileEncoding());
-        }
-    }
+    const DocumentId id = documentId(e);
+    if (id) emit documentEncodingChanged(id, e->fileEncoding());
 }
 
 QTabWidget *EditorManager::rightPageWidget() const
@@ -869,19 +931,7 @@ void EditorManager::applyColorSchemes(const QString& name)
 
 bool EditorManager::isFileOpened(const QString &fullfilepath) const
 {
-    QFileInfo fileInfo(fullfilepath);
-    QString filename = fileInfo.absoluteFilePath();
-    for (int i=0;i<mLeftPageWidget->count();i++) {
-        Editor* e = static_cast<Editor*>(mLeftPageWidget->widget(i));
-        if (e->filename().compare(filename, PATH_SENSITIVITY)==0 || e->filename().compare(fullfilepath, PATH_SENSITIVITY)==0)
-            return true;
-    }
-    for (int i=0;i<mRightPageWidget->count();i++) {
-        Editor* e = static_cast<Editor*>(mRightPageWidget->widget(i));
-        if (e->filename().compare(filename, PATH_SENSITIVITY)==0 || e->filename().compare(fullfilepath, PATH_SENSITIVITY)==0)
-            return true;
-    }
-    return false;
+    return resolveOpenedEditor(fullfilepath).status != EditorPathStatus::NotOpen;
 }
 
 bool EditorManager::hasFilename(const QString &filename) const
@@ -890,14 +940,14 @@ bool EditorManager::hasFilename(const QString &filename) const
         Editor* e = static_cast<Editor*>(mLeftPageWidget->widget(i));
         QFileInfo fileInfo(e->filename());
         QString name = fileInfo.fileName();
-        if (name.compare(filename, PATH_SENSITIVITY)==0 )
+        if (NativePathKey(name) == NativePathKey(filename))
             return true;
     }
     for (int i=0;i<mRightPageWidget->count();i++) {
         Editor* e = static_cast<Editor*>(mRightPageWidget->widget(i));
         QFileInfo fileInfo(e->filename());
         QString name = fileInfo.fileName();
-        if (name.compare(filename, PATH_SENSITIVITY)==0 )
+        if (NativePathKey(name) == NativePathKey(filename))
             return true;
     }
     return false;
@@ -1025,25 +1075,43 @@ void EditorManager::forceCloseEditor(Editor *editor)
 
 Editor* EditorManager::getOpenedEditor(const QString &filename) const
 {
-    if (filename.isEmpty())
-        return nullptr;
-    for (int i=0;i<mLeftPageWidget->count();i++) {
-        Editor* e = static_cast<Editor*>(mLeftPageWidget->widget(i));
-        if (!e)
+    return resolveOpenedEditor(filename).editor;
+}
+
+EditorPathResult EditorManager::resolveOpenedEditor(const QString &filename) const
+{
+    if (QThread::currentThread() != thread())
+        return {EditorPathStatus::Conflict, nullptr, tr("Open documents must be resolved on their owner thread.")};
+    if (filename.isEmpty()) return {};
+    const NativePathKey key(filename);
+    if (!key.valid()) return {EditorPathStatus::Conflict, nullptr, tr("Invalid document path.")};
+    Editor *exact = nullptr;
+    Editor *alias = nullptr;
+    bool conflicting = false;
+    for (auto it = mDocumentIds.cbegin(); it != mDocumentIds.cend(); ++it) {
+        auto *editor = const_cast<Editor *>(it.key());
+        const NativePathKey registered(editor->filename());
+        const QString absolute = mDocumentStore->absolutePathFor(it.value());
+        const NativePathKey stableAbsolute(absolute);
+        if (key.spelling() == registered.spelling() || key.spelling() == stableAbsolute.spelling()) {
+            if (exact && exact != editor) conflicting = true;
+            exact = editor;
             continue;
-        if (e->filename().compare(filename, PATH_SENSITIVITY)==0) {
-            return e;
         }
+        if (!(key == registered) && !(key == stableAbsolute)) continue;
+        const auto match = QDir::isAbsolutePath(key.spelling())
+                ? sameExistingFile(key.spelling(), absolute) : ExistingFileMatch::Unknown;
+        if (match == ExistingFileMatch::Same) {
+            if (alias && alias != editor) conflicting = true;
+            alias = editor;
+        } else conflicting = true;
     }
-    for (int i=0;i<mRightPageWidget->count();i++) {
-        Editor* e = static_cast<Editor*>(mRightPageWidget->widget(i));
-        if (!e)
-            continue;
-        if (e->filename().compare(filename, PATH_SENSITIVITY)==0) {
-            return e;
-        }
-    }
-    return nullptr;
+    if (exact && !conflicting) return {EditorPathStatus::Found, exact, {}};
+    if (conflicting || (exact && alias && exact != alias))
+        return {EditorPathStatus::Conflict, nullptr,
+            tr("The requested path conflicts with an open document and its identity could not be uniquely verified: '%1'.").arg(filename)};
+    if (alias) return {EditorPathStatus::Found, alias, {}};
+    return {};
 }
 
 bool EditorManager::getContentFromOpenedEditor(const QString &filename, QStringList &buffer) const
@@ -1097,7 +1165,7 @@ void EditorManager::updateLayout()
 
 MainWindow *EditorManager::mainWindow()
 {
-    return pMainWindow;
+    return qobject_cast<MainWindow *>(parent());
 }
 
 QTabWidget *EditorManager::findPageControlForEditor(Editor *e)

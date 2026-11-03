@@ -1,9 +1,20 @@
 
 # RedPandaIDE #
 
+add_library(redpanda_path_identity STATIC src/pathidentity.cpp)
+target_link_libraries(redpanda_path_identity PUBLIC Qt::Core)
+target_include_directories(redpanda_path_identity PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+add_library(redpanda_analysis_input STATIC src/analysis/sourceinput.cpp)
+target_link_libraries(redpanda_analysis_input PUBLIC Qt::Core redpanda_path_identity)
+target_include_directories(redpanda_analysis_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 add_executable(RedPandaIDE WIN32)
 
 target_qt_plain_cpp(RedPandaIDE
+    src/analysis/parserconfiguration
+    src/analysis/parserconfigurationcapture
+    src/analysis/parsertoolchainprobe
     src/analysis/semanticsnapshot
     src/autolinkmanager
     src/diagnostics
@@ -12,8 +23,11 @@ target_qt_plain_cpp(RedPandaIDE
     src/diagnosticcatalog
     src/sessionstore
     src/editorcloseplan
+    src/documentfilecontroller
     test/closeplanchecks
     test/documentstorechecks
+    test/documentfilechecks
+    test/compilerrequestchecks
     test/recoverychecks
     test/projectoperationchecks
     test/interfacechecks
@@ -354,6 +368,10 @@ add_dependencies(all-test-targets test-project-file-operations)
 add_executable(test-cppparser test/test-cppparser-main.cpp)
 
 target_qt_plain_cpp(test-cppparser
+    src/analysis/semanticmemory
+    src/analysis/semanticpublication
+    src/analysis/semanticpublicationbuilder
+    src/analysis/enginesemanticadapter
     src/analysis/semanticsnapshot
     src/parser/cppparser
     src/parser/cpppreprocessor
@@ -364,6 +382,7 @@ target_qt_plain_cpp(test-cppparser
 
 target_moc_classes(test-cppparser
     #test
+    test/test_semanticpublication
     test/test_semanticsnapshot
     test/test_cppparser
     test/test_cpppreprocessor
@@ -397,7 +416,7 @@ target_compile_definitions(test-cppparser PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-foreach(suite IN ITEMS preprocessor tokenizer parser semantic-snapshot)
+foreach(suite IN ITEMS preprocessor tokenizer parser semantic-snapshot semantic-publication)
     add_test(NAME test-cppparser-${suite} COMMAND test-cppparser --suite ${suite})
     set_tests_properties(test-cppparser-${suite} PROPERTIES TIMEOUT 120 LABELS "parser;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
@@ -657,7 +676,69 @@ add_dependencies(all-test-targets test-application-lifecycle)
 
 add_executable(test-compile-configuration test/test_compile_configuration.cpp)
 target_include_directories(test-compile-configuration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(test-compile-configuration PRIVATE Qt::Core Qt::Test)
+target_link_libraries(test-compile-configuration PRIVATE Qt::Core Qt::Test redpanda_path_identity)
 add_test(NAME test-compile-configuration COMMAND test-compile-configuration)
 set_tests_properties(test-compile-configuration PROPERTIES TIMEOUT 30 LABELS "compiler;unit")
 add_dependencies(all-test-targets test-compile-configuration)
+
+if(QT_VERSION_MAJOR GREATER_EQUAL 6)
+    add_executable(test-analysis-source-input test/test_analysis_source_input.cpp)
+    target_qt_plain_cpp(test-analysis-source-input src/analysis/sourceinput)
+    target_include_directories(test-analysis-source-input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test-analysis-source-input PRIVATE Qt::Core Qt::Test)
+    add_test(NAME test-analysis-source-input COMMAND test-analysis-source-input)
+    set_tests_properties(test-analysis-source-input PROPERTIES TIMEOUT 30 LABELS "parser;unit")
+    add_dependencies(all-test-targets test-analysis-source-input)
+endif()
+
+add_executable(test-path-identity test/test_path_identity.cpp)
+target_include_directories(test-path-identity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-path-identity PRIVATE Qt::Core Qt::Test redpanda_path_identity)
+add_test(NAME test-path-identity COMMAND test-path-identity)
+set_tests_properties(test-path-identity PROPERTIES TIMEOUT 30 LABELS "persistence;unit")
+add_dependencies(all-test-targets test-path-identity)
+
+# Isolated reclamation contract; runtime publication adapters are migrated separately.
+add_executable(test-semanticretirement test/test-semanticretirement-main.cpp)
+target_qt_plain_cpp(test-semanticretirement
+    src/analysis/semanticmemory src/analysis/semanticretirement
+    src/analysis/semanticpublication src/analysis/semanticpublicationbuilder)
+target_moc_classes(test-semanticretirement test/test_semanticretirement)
+target_include_directories(test-semanticretirement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-semanticretirement PRIVATE Qt::Core Qt::Widgets Qt::Test)
+add_test(NAME test-semanticretirement COMMAND test-semanticretirement)
+set_tests_properties(test-semanticretirement PROPERTIES TIMEOUT 30
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" LABELS "analysis;memory;lifecycle;unit")
+add_dependencies(all-test-targets test-semanticretirement)
+
+add_executable(test-frozen-compilation test/test_frozen_compilation.cpp
+    test/test_containedprocess.cpp src/utils/parsearg.cpp)
+target_include_directories(test-frozen-compilation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/libs/redpanda_qt_utils)
+target_link_libraries(test-frozen-compilation PRIVATE Qt::Core Qt::Test redpanda_path_identity)
+add_test(NAME test-frozen-compilation COMMAND test-frozen-compilation)
+set_tests_properties(test-frozen-compilation PROPERTIES TIMEOUT 30 LABELS "compiler;lifecycle;unit")
+add_dependencies(all-test-targets test-frozen-compilation)
+
+add_executable(test-containedprocess test/test-containedprocess-main.cpp test/test_containedprocess.cpp)
+target_include_directories(test-containedprocess PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-containedprocess PRIVATE Qt::Core Qt::Test)
+add_test(NAME test-containedprocess COMMAND test-containedprocess)
+set_tests_properties(test-containedprocess PROPERTIES TIMEOUT 30 LABELS "compiler;lifecycle;unit")
+add_dependencies(all-test-targets test-containedprocess)
+
+add_executable(test-autolink-native-budget test/test_autolink_native_budget.cpp)
+target_include_directories(test-autolink-native-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-autolink-native-budget PRIVATE Qt::Core Qt::Test redpanda_path_identity)
+add_test(NAME test-autolink-native-budget COMMAND test-autolink-native-budget)
+set_tests_properties(test-autolink-native-budget PROPERTIES TIMEOUT 30 LABELS "compiler;unit")
+add_dependencies(all-test-targets test-autolink-native-budget)
+
+foreach(consumer IN ITEMS RedPandaIDE test-editor test-cppparser test-project-file-operations test-analysis-source-input)
+    if(TARGET ${consumer})
+        target_link_libraries(${consumer} PRIVATE redpanda_path_identity)
+    endif()
+endforeach()
+foreach(consumer IN ITEMS RedPandaIDE test-editor test-cppparser)
+    target_link_libraries(${consumer} PRIVATE redpanda_analysis_input)
+endforeach()

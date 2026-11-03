@@ -15,6 +15,8 @@
 #include "compilerworkflowchecks.h"
 #include "closeplanchecks.h"
 #include "documentstorechecks.h"
+#include "documentfilechecks.h"
+#include "compilerrequestchecks.h"
 #include "recoverychecks.h"
 #include "projectoperationchecks.h"
 #include "src/utils/os.h"
@@ -111,6 +113,25 @@ private:
 static QString prefText(const char *source) { return QCoreApplication::translate("SettingsDialog", source); }
 static void waitForUi(int milliseconds = 150) { QEventLoop loop; QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit); loop.exec(); }
 int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &outputDirectory) {
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_COMPILER_WORKFLOW_ONLY")) {
+        QJsonArray compilerChecks;
+        int compilerFailures = 0;
+        const bool completionEnabled = pSettings->codeCompletion().enabled();
+        const bool autolinkEnabled = pSettings->editor().enableAutolink();
+        runCompilerWorkflowChecks(window, outputDirectory, [&](const QString &name, bool passed) {
+            compilerChecks.append(QJsonObject{{"name", name}, {"passed", passed}});
+            if (!passed) ++compilerFailures;
+        });
+        const auto bytes = QJsonDocument(QJsonObject{{"checks", compilerChecks}, {"failures", compilerFailures},
+            {"completionEnabled", completionEnabled}, {"autolinkEnabled", autolinkEnabled}}).toJson();
+        QFile report(QDir(outputDirectory).filePath("compiler-workflow-result.json"));
+        if (!report.open(QIODevice::WriteOnly) || report.write(bytes) != bytes.size()) return 2;
+        return compilerFailures || compilerChecks.isEmpty() ? 1 : 0;
+    }
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_COMPILER_REQUESTS"))
+        return runCompilerRequestChecks(window, outputDirectory);
+    if (qEnvironmentVariableIsSet("REDPANDA_QA_DOCUMENT_FILES"))
+        return runDocumentFileChecks(window, outputDirectory);
     if (qEnvironmentVariableIsSet("REDPANDA_QA_RECOVERY_CACHE_ONLY"))
         return runRecoveryChecks(window, recovery, outputDirectory);
     if (qEnvironmentVariableIsSet("REDPANDA_QA_DOCUMENT_STORE_ONLY"))

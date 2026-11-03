@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
+#include <QMap>
+#include "pathidentity.h"
 #include <QThread>
 #include <QStringList>
 #include <functional>
@@ -20,23 +22,44 @@ struct DocumentSnapshot {
     DocumentId id = 0;
     DocumentRevision revision = 0;
     QString filename;
+    QString absoluteFilename; // Registration/rename root, never a later process CWD.
     QStringList lines;
 };
 using PDocumentSnapshot = std::shared_ptr<const DocumentSnapshot>;
+enum class DocumentPathStatus { Found, NotOpen, Conflict };
+struct DocumentPathResult {
+    DocumentPathStatus status = DocumentPathStatus::NotOpen;
+    PDocumentSnapshot document;
+    QString error;
+};
 
 // This object is immutable once published. A job keeps its complete source view
 // even when a document is edited, renamed or closed while that job is running.
 class AnalysisInputSnapshot {
 public:
     static QString pathKey(const QString &filename) {
-        QString key = QDir::cleanPath(QDir::fromNativeSeparators(filename));
-#ifdef Q_OS_WIN
-        key = key.toCaseFolded();
-#endif
-        return key;
+        // Legacy lexical utility; not an identity/equivalence key.
+        return exactPathSpelling(filename);
+    }
+    DocumentPathResult resolveDocument(const QString &filename) const {
+        const NativePathKey key(filename);
+        if (!key.valid())
+            return {DocumentPathStatus::Conflict, {}, QCoreApplication::translate("DocumentStore", "Invalid document path.")};
+        const auto entry = mByPath.constFind(key);
+        if (entry == mByPath.cend()) return {};
+        if (entry->spellings.contains(key.spelling()))
+            return {DocumentPathStatus::Found, entry->document, {}};
+        // Relative aliasing has no stable filesystem root after capture. Exact
+        // registered relative spellings remain valid; other aliases fail closed.
+        const auto match = QDir::isAbsolutePath(key.spelling())
+                ? sameExistingFile(key.spelling(), entry->identityPath) : ExistingFileMatch::Unknown;
+        if (match == ExistingFileMatch::Same) return {DocumentPathStatus::Found, entry->document, {}};
+        if (match == ExistingFileMatch::Different) return {};
+        return {DocumentPathStatus::Conflict, {}, QCoreApplication::translate("DocumentStore",
+                    "The identity of an open document path alias could not be verified: %1").arg(filename)};
     }
     PDocumentSnapshot document(const QString &filename) const {
-        return mByPath.value(pathKey(filename));
+        return resolveDocument(filename).document;
     }
     bool read(const QString &filename, QStringList &lines) const {
         const auto source = document(filename);
@@ -49,8 +72,9 @@ public:
     quint64 generation() const { return mGeneration; }
 private:
     friend class DocumentStore;
+    struct PathEntry { PDocumentSnapshot document; QString identityPath; QStringList spellings; };
     quint64 mGeneration = 0;
-    QHash<QString, PDocumentSnapshot> mByPath;
+    QMap<NativePathKey, PathEntry> mByPath;
     QHash<DocumentId, PDocumentSnapshot> mDocuments;
 };
 using PAnalysisInputSnapshot = std::shared_ptr<const AnalysisInputSnapshot>;
@@ -152,26 +176,25 @@ public:
         auto candidate = std::make_shared<AnalysisInputSnapshot>();
         candidate->mGeneration = mGeneration;
         for (auto it = mEntries.begin(); it != mEntries.end(); ++it) {
-            if (it->dirty || !it->snapshot) {
-                QStringList lines;
-                if (!it->reader || !it->reader(lines))
-                    return {InputCaptureStatus::DocumentUnavailable, {}, message("An open document could not be captured: %1").arg(it->filename)};
-                auto document = std::make_shared<DocumentSnapshot>();
-                document->id = it.key();
-                document->revision = it->revision;
-                document->filename = it->filename;
-                document->lines = std::move(lines);
-                it->snapshot = std::move(document);
-                it->dirty = false;
-            }
-            const auto source = it->snapshot;
+            const auto source = materialize(it.key(), *it);
+            if (!source)
+                return {InputCaptureStatus::DocumentUnavailable, {}, message("An open document could not be captured: %1").arg(it->filename)};
             const QStringList aliases{it->filename, it->absoluteFilename};
             for (const QString &alias : aliases) {
-                const QString key = AnalysisInputSnapshot::pathKey(alias);
-                const auto existing = candidate->mByPath.value(key);
-                if (existing && existing->id != source->id)
-                    return {InputCaptureStatus::ConflictingPath, {}, message("Several open documents have the same path: %1").arg(alias)};
-                candidate->mByPath.insert(key, source);
+                const NativePathKey key(alias);
+                if (!key.valid())
+                    return {InputCaptureStatus::DocumentUnavailable, {}, message("Invalid document path.")};
+                auto existing = candidate->mByPath.find(key);
+                if (existing != candidate->mByPath.end()) {
+                    if (existing->document->id != source->id) {
+                        const auto match = sameExistingFile(it->absoluteFilename, existing->identityPath);
+                        const QString reason = match == ExistingFileMatch::Different
+                            ? message("Distinct files share an unsupported case-sensitive path namespace: %1").arg(alias)
+                            : message("Several open documents have the same or unverifiable path: %1").arg(alias);
+                        return {InputCaptureStatus::ConflictingPath, {}, reason};
+                    }
+                    if (!existing->spellings.contains(key.spelling())) existing->spellings.append(key.spelling());
+                } else candidate->mByPath.insert(key, {source, it->absoluteFilename, {key.spelling()}});
             }
             candidate->mDocuments.insert(source->id, source);
         }
@@ -179,8 +202,20 @@ public:
         return {InputCaptureStatus::Captured, mPublished, {}};
     }
     PDocumentSnapshot snapshotFor(DocumentId id) {
-        const auto result = capture();
-        return result.succeeded() ? result.snapshot->documents().value(id) : PDocumentSnapshot{};
+        if (!onOwnerThread())
+            return {};
+        const auto entry = mEntries.find(id);
+        return entry == mEntries.end() || entry->changing ? PDocumentSnapshot{} : materialize(id, *entry);
+    }
+    DocumentRevision revisionFor(DocumentId id) const {
+        if (!onOwnerThread()) return 0;
+        const auto entry = mEntries.constFind(id);
+        return entry == mEntries.cend() || entry->changing ? 0 : entry->revision;
+    }
+    QString absolutePathFor(DocumentId id) const {
+        if (!onOwnerThread()) return {};
+        const auto entry = mEntries.constFind(id);
+        return entry == mEntries.cend() ? QString{} : entry->absoluteFilename;
     }
     bool onOwnerThread() const { return QThread::currentThread() == mOwner; }
 private:
@@ -193,6 +228,22 @@ private:
         bool changing = false;
         PDocumentSnapshot snapshot;
     };
+    static PDocumentSnapshot materialize(DocumentId id, Entry &entry) {
+        if (entry.dirty || !entry.snapshot) {
+            QStringList lines;
+            if (!entry.reader || !entry.reader(lines))
+                return {};
+            auto document = std::make_shared<DocumentSnapshot>();
+            document->id = id;
+            document->revision = entry.revision;
+            document->filename = entry.filename;
+            document->absoluteFilename = entry.absoluteFilename;
+            document->lines = std::move(lines);
+            entry.snapshot = std::move(document);
+            entry.dirty = false;
+        }
+        return entry.snapshot;
+    }
     static QString message(const char *text) { return QCoreApplication::translate("DocumentStore", text); }
     void invalidate() { ++mGeneration; mPublished.reset(); }
     QThread *const mOwner;

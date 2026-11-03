@@ -2,6 +2,7 @@
 #include "src/parser/cpppreprocessor.h"
 #include "qt_utils/utils.h"
 #include <QTest>
+#include <QTemporaryDir>
 
 TestCppPreprocessor::TestCppPreprocessor(QObject *parent):
     QObject{parent}
@@ -320,4 +321,73 @@ QStringList TestCppPreprocessor::filterIncludes(const QStringList &text)
             result.append(s);
     }
     return result;
+}
+
+
+namespace {
+bool writeFixture(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+}
+}
+
+void TestCppPreprocessor::test_dependency_scan_uses_active_directives()
+{
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    const auto root = files.filePath("main.cpp");
+    const auto bridge = files.filePath("bridge.h");
+    const auto leaf = files.filePath("leaf.h");
+    const auto missing = files.filePath("missing.h");
+    QVERIFY(writeFixture(root, R"test(
+#define BRIDGE "bridge.h"
+const char *text = R"delim(
+#include "raw-string-is-not-an-include.h"
+)delim";
+#if __has_include(BRIDGE)
+#include BRIDGE
+#endif
+#if __has_include("missing.h")
+#include "disabled-include.h"
+#endif
+)test"));
+    QVERIFY(writeFixture(bridge, "#ifndef BRIDGE_H\n#define BRIDGE_H\n#include \"leaf.h\"\n#endif\n"));
+    QVERIFY(writeFixture(leaf, "// leaf\n"));
+    CppPreprocessor::DependencyRequest request;
+    request.root = root;
+    request.readPolicy.workingDirectory = files.path();
+    const auto result = CppPreprocessor::scanDependencies(request);
+    QVERIFY2(result.complete(), qPrintable(result.error));
+    QCOMPARE(result.directIncludes.value(root), QStringList{bridge});
+    QCOMPARE(result.directIncludes.value(bridge), QStringList{leaf});
+    QCOMPARE(result.reads.size(), 3);
+    QVERIFY(result.reads.contains(leaf));
+    QVERIFY(result.probes.contains(missing));
+}
+
+void TestCppPreprocessor::test_dependency_scan_rejects_incomplete_results()
+{
+    QTemporaryDir files;
+    QVERIFY(files.isValid());
+    CppPreprocessor::DependencyRequest request;
+    request.root = files.filePath("main.cpp");
+    request.readPolicy.workingDirectory = files.path();
+    QVERIFY(writeFixture(request.root, "#include \"bridge.h\"\n"));
+    QVERIFY(writeFixture(files.filePath("bridge.h"), "#include \"leaf.h\"\n"));
+    QVERIFY(writeFixture(files.filePath("leaf.h"), "// leaf\n"));
+    request.limits.edges = 1;
+    const auto limited = CppPreprocessor::scanDependencies(request);
+    QCOMPARE(limited.status, CppPreprocessor::DependencyStatus::LimitExceeded);
+    QVERIFY(limited.directIncludes.isEmpty());
+    request.limits = {};
+    request.cancelled = std::make_shared<const std::atomic_bool>(true);
+    const auto cancelled = CppPreprocessor::scanDependencies(request);
+    QCOMPARE(cancelled.status, CppPreprocessor::DependencyStatus::Cancelled);
+    QVERIFY(cancelled.directIncludes.isEmpty());
+    request.cancelled.reset();
+    QVERIFY(QFile::remove(files.filePath("leaf.h")));
+    const auto missing = CppPreprocessor::scanDependencies(request);
+    QCOMPARE(missing.status, CppPreprocessor::DependencyStatus::UnresolvedInclude);
+    QVERIFY(missing.directIncludes.isEmpty());
 }

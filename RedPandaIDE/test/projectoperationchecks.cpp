@@ -132,6 +132,7 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
     caseEditor = window.editorManager()->newEditor(caseSourcePath, ENCODING_UTF8,
                                                    FileType::CppSource, QString(), false, false);
     if (!caseUnit || !caseEditor) return 18;
+    if (!project->associateEditorToUnit(caseEditor, caseUnit).succeeded()) return 32;
     caseEditor->setContent("struct CaseOpenUnsaved {};\n");
     caseEditor->setModified(true);
     const auto caseResult = project->renameUnitFile(caseUnit, caseTargetPath);
@@ -143,6 +144,7 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
 
     targetEditor = window.editorManager()->newEditor(targetPath, ENCODING_UTF8, FileType::CppSource, QString(), false, false);
     if (!targetEditor) return 6;
+    if (!project->associateEditorToUnit(targetEditor, target).succeeded()) return 33;
     targetEditor->setContent("struct UnsavedTarget {};\n"); targetEditor->setModified(true);
     const QByteArray sourceBefore = read(renamedPath), targetBefore = read(targetPath);
     int replacementQuestions = 0, saveCancellations = 0;
@@ -175,6 +177,7 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
     removalEditor = window.editorManager()->newEditor(removalPath, ENCODING_UTF8,
                                                        FileType::CppSource, QString(), false, false);
     if (!removalUnit || !removalEditor) return 20;
+    if (!project->associateEditorToUnit(removalEditor, removalUnit).succeeded()) return 34;
     removalEditor->setInProject(true, false);
     removalEditor->setContent("struct RemovalUnsaved {};\n"); removalEditor->setModified(true);
     const auto answerRemoval = [&](QMessageBox::StandardButton choice, const std::function<OperationResult()> &operation,
@@ -254,6 +257,8 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
         FileType::CppSource, QString(), false, false);
     relocationEditors << externalSourceEditor << externalTargetEditor;
     if (!externalSourceUnit || !externalTargetUnit || !externalSourceEditor || !externalTargetEditor) return 25;
+    if (!project->associateEditorToUnit(externalSourceEditor, externalSourceUnit).succeeded() ||
+            !project->associateEditorToUnit(externalTargetEditor, externalTargetUnit).succeeded()) return 35;
     externalSourceEditor->setInProject(true, false);
     externalTargetEditor->setInProject(true, false);
     externalSourceEditor->setContent("struct ExternalSourceUnsaved {};\n"); externalSourceEditor->setModified(true);
@@ -284,6 +289,7 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
         FileType::CppSource, QString(), false, false);
     relocationEditors << soloSourceEditor << soloTargetEditor;
     if (!soloUnit || !soloSourceEditor || !soloTargetEditor) return 28;
+    if (!project->associateEditorToUnit(soloSourceEditor, soloUnit).succeeded()) return 36;
     soloSourceEditor->setInProject(true, false);
     soloSourceEditor->setContent("struct SoloSourceUnsaved {};\n"); soloSourceEditor->setModified(true);
     soloTargetEditor->setContent("struct SoloTargetUnsaved {};\n"); soloTargetEditor->setModified(true);
@@ -326,7 +332,7 @@ int runProjectOperationChecks(MainWindow &window, const QString &outputDirectory
           !restoredProject->findUnit(externalSourceEditor) &&
           restoredProject->validateBuildInputs().status == OperationStatus::Conflict &&
           !restoredProject->validateBuildInputs().error.isEmpty() &&
-          restoredProject->unitEditor(restoredTarget) == externalTargetEditor &&
+          !restoredProject->unitEditor(restoredTarget) && restoredTarget->documentId() == 0 &&
           restoredResolved->relocation().state == ProjectUnit::RelocationState::Resolved);
     if (!restoredProject) return 31;
     auto *compilerManager = window.findChild<CompilerManager *>();

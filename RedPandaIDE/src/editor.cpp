@@ -271,163 +271,38 @@ void Editor::saveFile(QString filename, bool notifyEncodingChange) {
 
 void Editor::convertToEncoding(const QByteArray &encoding)
 {
-    if (readOnly() || mEditorEncoding == encoding)
+    if (readOnly() || mEditorEncoding == encoding || encoding.isEmpty())
         return;
-    const QByteArray previousEncoding = mEditorEncoding;
-    mEditorEncoding = encoding;
-    // save() writes even an otherwise unmodified document. Do not clear undo
-    // history or manufacture a modified state just to perform a conversion.
-    if (!save()) {
-        mEditorEncoding = previousEncoding;
-        return;
-    }
-    emit editorEncodingChanged(this);
+    const auto mode = mIsNew ? DocumentSaveMode::ChoosePath : DocumentSaveMode::CurrentPath;
+    saveOperation({mode, {}, encoding, true});
 }
 
-bool Editor::save(bool force, bool doReparse) {
-    if (this->mIsNew && !force) {
-        return saveAs("", doReparse);
-    }    
-    try {
-        if (mEditorSettings->autoFormatWhenSaved()) {
-            reformat(false);
-        } else if (mEditorSettings->removeTrailingSpacesWhenSaved()) {
-            trimTrailingSpaces();
-        }
-        // must emit fileSaving/fileSaved signal out of saveFile(),
-        // to let fileSystemWatcher's addPath/removePath() invoked out of the saveFile().
-        // If not, fileSystemWatcher would generate fileChanged signal when saving files.
-        if (mFileSystemWatcher)
-            mFileSystemWatcher->removePath(mFilename);
-        emit fileSaving(this, mFilename);
-        saveFile(mFilename);
-        emit fileSaved(this, mFilename);
-        if (mFileSystemWatcher)
-            mFileSystemWatcher->addPath(mFilename);
-        setModified(false);
-        mIsNew = false;
-        setStatusChanged(QSynedit::StatusChange::Custom0);
-    } catch (FileError& exception) {
-        if (mFileSystemWatcher)
-            mFileSystemWatcher->addPath(mFilename);
-        QMessageBox::critical(parentWidget(),tr("Save Error"), exception.reason());
-        emit fileSaveError(this, mFilename, exception.reason());
-        return false;
-    }
-
-    if (doReparse && isVisible()) {
-        reparse();
-        if (mEditorSettings->syntaxCheckWhenSave())
-            checkSyntaxInBack();
-        reparseTodo();
-    }
-
-    return true;
+bool Editor::save(bool force, bool doReparse)
+{
+    const auto mode = mIsNew && !force ? DocumentSaveMode::ChoosePath : DocumentSaveMode::CurrentPath;
+    return saveOperation({mode, {}, {}, doReparse}).outcome.succeeded();
 }
 
-bool Editor::saveAs(const QString &name, bool doCheckSyntax){
-    QString newName = name;
-    QString oldName = mFilename;
-    if (name.isEmpty()) {
-        QString selectedFileFilter;
-        QString defaultExt;
-        defaultExt=QFileInfo(oldName).suffix();
-        if (defaultExt.isEmpty()) {
-            if (mEditorSettings->defaultFileCpp()) {
-                selectedFileFilter = pSystemConsts->defaultCPPFileFilter();
-                defaultExt = "cpp";
-            } else {
-                selectedFileFilter = pSystemConsts->defaultCFileFilter();
-                defaultExt = "c";
-            }
-        } else {
-            selectedFileFilter = pSystemConsts->fileFilterFor(defaultExt);
-        }
-        QFileDialog dialog(this,tr("Save As"),extractFilePath(mFilename),
-                           pSystemConsts->defaultFileFilters().join(";;"));
-        dialog.selectNameFilter(selectedFileFilter);
-        //dialog.setDefaultSuffix(defaultExt);
-        dialog.selectFile(mFilename);
-        dialog.setFileMode(QFileDialog::AnyFile);
-        dialog.setAcceptMode(QFileDialog::AcceptSave);
+bool Editor::saveAs(const QString &name, bool doCheckSyntax)
+{
+    // Legacy callers may close only after complete success. A committed text
+    // file followed by failed project persistence is an explicit partial result.
+    return saveAsOperation(name, doCheckSyntax).outcome.succeeded();
+}
 
-        if (dialog.exec()!=QFileDialog::Accepted) {
-            return false;
-        }
-        QStringList selectedFiles=dialog.selectedFiles();
-        newName = selectedFiles.first();
-        QFileInfo fileInfo(newName);
-        if (fileInfo.suffix().isEmpty()) {
-            QString filter = dialog.selectedNameFilter();
-            if (!filter.contains("*.*")) {
-                int pos = filter.indexOf("*.");
-                if (pos>=0) {
-                    QString suffix;
-                    pos+=2;
-                    while (pos<filter.length()) {
-                        if (filter[pos] == ';' || filter[pos] ==' ' || filter[pos] == ')')
-                                    break;
-                        suffix+=filter[pos];
-                        pos++;
-                    }
-                    newName += "." + suffix;
-                }
-            }
-        }
-    }
+DocumentSaveAsResult Editor::saveAsOperation(const QString &name, bool doCheckSyntax)
+{
+    return saveOperation({DocumentSaveMode::ChoosePath, name, {}, doCheckSyntax});
+}
 
-    Editor *alreadyOpened = mGetOpennedEditorFunc ? mGetOpennedEditorFunc(newName) : nullptr;
-    if (alreadyOpened && alreadyOpened != this) {
-        QMessageBox::critical(parentWidget(),tr("Error"),
-                                      tr("File %1 already opened!").arg(newName));
-        return false;
-    }
-    // Write and commit the candidate first. Failed Save As must not rename the
-    // editor, invalidate its parser, or detach the original file watcher.
-    const QByteArray previousFileEncoding = mFileEncoding;
-    try {
-        if (mEditorSettings->autoFormatWhenSaved()) {
-            reformat(false);
-        } else if (mEditorSettings->removeTrailingSpacesWhenSaved()) {
-            trimTrailingSpaces();
-        }
-        emit fileSaving(this, newName);
-        saveFile(newName, false);
-    } catch (FileError& exception) {
-        QMessageBox::critical(parentWidget(), tr("Save Error"), exception.reason());
-        emit fileSaveError(this, newName, exception.reason());
-        return false;
-    }
-
-    clearSyntaxIssues();
-    if (mCodeCompletionEnabled && mParser && !inProject())
-        mParser->invalidateFile(oldName);
-    setFilename(newName);
-    mIsNew = false;
-    setFileType(getFileType(mFilename), false);
-    if (!syntaxer() || syntaxer()->language() != QSynedit::ProgrammingLanguage::CPP)
-        mSyntaxIssues.clear();
-    if (mFileSystemWatcher) {
-        mFileSystemWatcher->removePath(oldName);
-        mFileSystemWatcher->addPath(newName);
-    }
-    setModified(false);
-    if (!shouldOpenInReadonly())
-        setReadOnly(false);
-    if (name.isEmpty())
-        QDir::setCurrent(extractFileDir(newName));
-    setStatusChanged(QSynedit::StatusChange::Custom0);
-    if (previousFileEncoding != mFileEncoding)
-        emit fileEncodingChanged(this);
-    emit fileSaveAsed(this, oldName, newName);
-    emit fileSaved(this, newName);
-    setCppParser();
-    reparse();
-    if (doCheckSyntax && mEditorSettings->syntaxCheckWhenSave())
-        checkSyntaxInBack();
-    reparseTodo();
-    initAutoBackup();
-    return true;
+DocumentSaveAsResult Editor::saveOperation(const DocumentSaveRequest &request)
+{
+    // A modal operation may close this view. The copied delegate remains valid.
+    const auto operation = mSaveOperation;
+    if (operation) return operation(this, request);
+    DocumentSaveAsResult result;
+    result.outcome = OperationResult::failure(tr("The document is not available for saving. Reopen the file and try again."));
+    return result;
 }
 
 void Editor::rename(const QString &newName)

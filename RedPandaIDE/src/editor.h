@@ -28,6 +28,7 @@
 #include "widgets/headercompletionpopup.h"
 #include "compiler/compilerinfo.h"
 #include "reformatter/basereformatter.h"
+#include "documentfileoperation.h"
 
 #define USER_CODE_IN_INSERT_POS "%INSERT%"
 #define USER_CODE_IN_REPL_POS_BEGIN "%REPL_BEGIN%"
@@ -68,6 +69,7 @@ using GetCppParserFunc = std::function<PCppParser (Editor *)>;
 class Editor : public QSynedit::QSynEdit
 {
     Q_OBJECT
+    friend class DocumentFileController;
 public:
     enum class LastSymbolType {
         Identifier,
@@ -168,6 +170,10 @@ public:
     void saveFile(QString filename, bool notifyEncodingChange = true);
     bool save(bool force=false, bool doRreparse=true);
     bool saveAs(const QString& name="", bool doCheckSyntax = true);
+    using SaveOperation = std::function<DocumentSaveAsResult(Editor *, const DocumentSaveRequest &)>;
+    void setSaveOperation(SaveOperation operation) { mSaveOperation = std::move(operation); }
+    DocumentSaveAsResult saveOperation(const DocumentSaveRequest &request);
+    DocumentSaveAsResult saveAsOperation(const QString &name = QString(), bool doCheckSyntax = true);
     void rename(const QString& newName);
     void setFilename(const QString& newName);
     QString caption();
@@ -514,6 +520,7 @@ private:
     CodeSnippetsManager *mCodeSnippetsManager;
 
     GetOpennedEditorFunc mGetOpennedEditorFunc;
+    SaveOperation mSaveOperation;
     GetFileStreamFunc mGetFileStreamFunc;
     CanShowEvalTipFunc mCanShowEvalTipFunc;
     RequestEvalTipFunc mRequestEvalTipFunc;

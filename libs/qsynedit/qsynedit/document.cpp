@@ -192,6 +192,12 @@ bool Document::getAppendNewLineAtEOF() const
     return mAppendNewLineAtEOF;
 }
 
+bool Document::appendNewLineAtEOF() const
+{
+    QMutexLocker locker(&mMutex);
+    return mAppendNewLineAtEOF;
+}
+
 void Document::setAppendNewLineAtEOF(bool appendNewLineAtEOF)
 {
     QMutexLocker locker(&mMutex);
@@ -794,6 +800,13 @@ void Document::saveToFile(QFileDevice &file, const QByteArray &encoding,
                           QByteArray &realEncoding) const
 {
     QMutexLocker locker(&mMutex);
+    writeText(file, content(), lineBreak(), mAppendNewLineAtEOF, encoding, realEncoding);
+}
+
+void Document::writeText(QFileDevice &file, const QStringList &lines,
+                         const QString &separator, bool appendFinalSeparator,
+                         const QByteArray &encoding, QByteArray &realEncoding)
+{
     if (encoding == ENCODING_AUTO_DETECT)
         throw FileError(tr("Can't load codec '%1'!").arg(QString::fromLatin1(encoding)));
     QByteArray detectedEncoding = encoding;
@@ -828,10 +841,10 @@ void Document::saveToFile(QFileDevice &file, const QByteArray &encoding,
     if (!bom.isEmpty() && file.write(bom) != bom.size())
         throw FileError(tr("Failed to write file: %1").arg(file.fileName()));
     bool allAscii = true;
-    for (int i = 0; i < mLines.count(); ++i) {
-        QString text = mLines[i]->lineText();
-        if (i + 1 < mLines.count() || mAppendNewLineAtEOF)
-            text += lineBreak();
+    for (qsizetype i = 0; i < lines.size(); ++i) {
+        QString text = lines.at(i);
+        if (i + 1 < lines.size() || appendFinalSeparator)
+            text += separator;
         auto [ok, data] = encoder.encode(text);
         if (ok && !unicodeCodec) {
             // ICU codecs can replace unrepresentable characters without

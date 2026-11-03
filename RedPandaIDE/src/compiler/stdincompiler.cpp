@@ -15,16 +15,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "stdincompiler.h"
+#include "frozencompilearguments.h"
 #include "compilermanager.h"
 #include "../utils/file.h"
 #include <QFile>
 #include <QFileInfo>
 
-StdinCompiler::StdinCompiler(const QString &filename,const QByteArray& encoding, const QString& content, bool onlyCheckSyntax):
-    Compiler(filename, onlyCheckSyntax),
-    mContent(content),
-    mEncoding(encoding)
+StdinCompiler::StdinCompiler(Compilation::FileCompileRequest::Pointer request):
+    Compiler(request), mContent(request->values().standardInput), mEncoding(request->values().sourceEncoding)
 {
+    if (request->values().inputMode != Compilation::FileInputMode::StandardInput || mEncoding != ENCODING_UTF8)
+        throw CompileError(tr("An in-memory source request requires captured UTF-8 transport."));
 }
 
 bool StdinCompiler::prepareForCompile()
@@ -35,13 +36,13 @@ bool StdinCompiler::prepareForCompile()
         log(tr("Compiling..."));
     log("------------------");
     log(tr("- Filename: %1").arg(mFilename));
-    log(tr("- Compiler Set Name: %1").arg(compilerSet()->name()));
+    log(tr("- Compiler Set Name: %1").arg(configuration().toolchain.name));
     log("");
-    FileType fileType = getFileType(mFilename);
+    FileType fileType = fileRequest()->values().fileType;
     if (fileType == FileType::Other)
         fileType = FileType::CppSource;
     QString strFileType;
-    if (mEncoding!=ENCODING_ASCII) {
+    if (!mOnlyCheckSyntax && mEncoding!=ENCODING_ASCII) {
         mArguments += getCharsetArgument(mEncoding,fileType, mOnlyCheckSyntax);
     }
     switch(fileType) {
@@ -51,7 +52,7 @@ bool StdinCompiler::prepareForCompile()
         mArguments += getCIncludeArguments();
         mArguments += getProjectIncludeArguments();
         strFileType = "C";
-        mCompiler = compilerSet()->CCompiler();
+        mCompiler = configuration().toolchain.cCompiler;
         break;
     case FileType::GAS:
         mArguments += {"-x", "assembler", "-"};
@@ -59,7 +60,7 @@ bool StdinCompiler::prepareForCompile()
         mArguments += getCIncludeArguments();
         mArguments += getProjectIncludeArguments();
         strFileType = "GAS";
-        mCompiler = compilerSet()->CCompiler();
+        mCompiler = configuration().toolchain.cCompiler;
         break;
     case FileType::CppSource:
     case FileType::CCppHeader:
@@ -68,7 +69,7 @@ bool StdinCompiler::prepareForCompile()
         mArguments += getCppIncludeArguments();
         mArguments += getProjectIncludeArguments();
         strFileType = "C++";
-        mCompiler = compilerSet()->cppCompiler();
+        mCompiler = configuration().toolchain.cppCompiler;
         break;
     default:
         //throw CompileError(tr("Can't find the compiler for file %1").arg(mFilename));
@@ -76,6 +77,13 @@ bool StdinCompiler::prepareForCompile()
     }
     if (!mOnlyCheckSyntax)
         mArguments += getLibraryArguments(fileType);
+    if (configuration().toolchain.compilerType == CompilerType::GCC
+            || configuration().toolchain.compilerType == CompilerType::Clang) {
+        // The transport is captured UTF-8, independent of the original disk
+        // encoding. Apply this after custom flags so an ANSI file preference
+        // cannot reinterpret already decoded editor text during syntax checks.
+        mArguments.append(QStringLiteral("-finput-charset=UTF-8"));
+    }
 
     if (!fileExists(mCompiler)) {
         if (!mOnlyCheckSyntax)
@@ -89,21 +97,21 @@ bool StdinCompiler::prepareForCompile()
     log(tr("%1 Compiler: %2").arg(strFileType, mCompiler));
     QString command = escapeCommandForLog(mCompiler, mArguments);
     log(tr("Command: %1").arg(command));
-    mDirectory = extractFileDir(mFilename);
+    mDirectory = fileRequest()->values().workingDirectory;
     return true;
 }
 
 QByteArray StdinCompiler::pipedText()
 {
-    if (mEncoding == ENCODING_ASCII)
-        return mContent.toLatin1();
-
-    TextEncoder encoder(mEncoding);
-    if (encoder.isValid()) {
-        return encoder.encodeUnchecked(mContent);
-    } else {
-        return mContent.toLocal8Bit();
-    }
+    // The original file encoding is metadata. QString content has already been
+    // decoded, and the accepted request fixes a UTF-8 compiler input stream.
+    TextEncoder encoder(ENCODING_UTF8);
+    if (!encoder.isValid())
+        throw CompileError(tr("The captured source encoding is not available."));
+    const auto encoded = encoder.encode(mContent);
+    if (!encoded.first)
+        throw CompileError(tr("The source contains characters that cannot be represented in the captured encoding."));
+    return encoded.second;
 }
 
 bool StdinCompiler::prepareForRebuild()

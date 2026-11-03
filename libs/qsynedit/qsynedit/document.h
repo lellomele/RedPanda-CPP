@@ -508,6 +508,9 @@ public:
     // For atomic replacement, pass QSaveFile with direct-write fallback disabled
     // and check commit() only after this method returns successfully.
     void saveToFile(QFileDevice& file, const QByteArray& encoding, QByteArray& realEncoding) const;
+    static void writeText(QFileDevice &file, const QStringList &lines,
+                          const QString &separator, bool appendFinalSeparator,
+                          const QByteArray &encoding, QByteArray &realEncoding);
 
     QString glyph(int line, int glyphIdx) const;
     QString glyphAt(int line, int charPos) const;
@@ -598,6 +601,7 @@ public:
     int xposToGlyphStartChar(int line, const QString newStr, int xpos) const;
 
     bool getAppendNewLineAtEOF() const;
+    bool appendNewLineAtEOF() const;
     void setAppendNewLineAtEOF(bool appendNewLineAtEOF);
 
     NewlineType getNewlineType() const;

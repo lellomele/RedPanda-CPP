@@ -3,6 +3,7 @@
 #define PROJECTFILEOPERATIONS_H
 
 #include "operationresult.h"
+#include "pathidentity.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
@@ -96,13 +97,7 @@ public:
         if (!QFileInfo(mSource).isFile())
             return OperationResult::failure(message("Cannot rename missing project file '%1'.").arg(mSource));
         const QFileInfo sourceInfo(mSource), targetInfo(mTarget);
-        const bool sameResource = targetInfo.exists() && sourceInfo.canonicalFilePath().compare(targetInfo.canonicalFilePath(),
-#ifdef Q_OS_WIN
-                Qt::CaseInsensitive
-#else
-                Qt::CaseSensitive
-#endif
-                ) == 0;
+        const bool sameResource = targetInfo.exists() && sameExistingFile(mSource, mTarget) == ExistingFileMatch::Same;
         if (targetInfo.exists() && !sameResource && !mReplaceExisting)
             return OperationResult::conflict(message("File '%1' already exists.").arg(mTarget));
         if (targetInfo.exists() && !sameResource && !targetInfo.isFile())

@@ -25,6 +25,7 @@ int runDocumentStoreChecks(MainWindow &window, const QString &outputDirectory)
     if (!temporary.isValid())
         return 2;
     QJsonArray checks;
+    QJsonObject pathAliasFacts;
     int failures = 0;
     const auto check = [&](const char *name, bool passed) {
         checks.append(QJsonObject{{"name", name}, {"passed", passed}});
@@ -212,9 +213,42 @@ int runDocumentStoreChecks(MainWindow &window, const QString &outputDirectory)
           && beforeCaseRename && afterCaseRename && beforeCaseRename->id == afterCaseRename->id
           && afterCaseRename->revision > beforeCaseRename->revision && sourceMatches(loaded));
     auto *right = create(temporary.filePath("RightPane.cpp"), true, manager->rightPageWidget());
-    check("Both panes recognize Windows case-insensitive paths", right
-          && manager->getOpenedEditor(right->filename().toUpper()) == right
-          && manager->isFileOpened(right->filename().toUpper()) && manager->getOpenedEditor(casePath.toLower()) == loaded);
+    if (!right) return 6;
+    right->setContent("int right_unsaved_value;\n"); right->setModified(true);
+    const QString rightAlias = right->filename().toUpper();
+    const auto rightBefore = manager->snapshotFor(right);
+    const auto virtualLookup = manager->resolveOpenedEditor(rightAlias);
+    const auto virtualInputs = provider();
+    const auto virtualSource = virtualInputs.succeeded() ? virtualInputs.snapshot->resolveDocument(rightAlias) : DocumentPathResult{};
+    const bool virtualExists = QFileInfo::exists(right->filename());
+    check("A missing virtual path alias is an explicit conflict and cannot select another document", !virtualExists
+          && virtualLookup.status == EditorPathStatus::Conflict && !virtualLookup.editor
+          && virtualSource.status == DocumentPathStatus::Conflict && !virtualSource.document
+          && manager->getOpenedEditor(right->filename()) == right && rightBefore && sourceMatches(right));
+    // Native case equivalence alone cannot prove an alias for a file that does
+    // not exist. Materialize the fixture, retaining the open unsaved text, so
+    // both positive pane lookups are backed by the same native file identity.
+    const bool rightFileWritten = write(right->filename(), "int right_stale_disk_value;\n");
+    const auto rightLookup = manager->resolveOpenedEditor(rightAlias);
+    const auto leftLookup = manager->resolveOpenedEditor(casePath.toLower());
+    const auto existingInputs = provider();
+    const auto rightSource = existingInputs.succeeded() ? existingInputs.snapshot->resolveDocument(rightAlias) : DocumentPathResult{};
+    const auto rightAfter = manager->snapshotFor(right);
+    const auto rightNativeMatch = sameExistingFile(right->filename(), rightAlias);
+    pathAliasFacts = {{"virtualFileExisted", virtualExists}, {"virtualManagerStatus", int(virtualLookup.status)},
+        {"virtualSnapshotStatus", int(virtualSource.status)}, {"virtualDiagnostic", virtualLookup.error},
+        {"rightFileWritten", rightFileWritten}, {"rightAliasExists", QFileInfo::exists(rightAlias)},
+        {"rightNativeMatch", int(rightNativeMatch)}, {"rightManagerStatus", int(rightLookup.status)},
+        {"leftManagerStatus", int(leftLookup.status)}, {"rightSnapshotStatus", int(rightSource.status)},
+        {"rightDocumentId", qint64(manager->documentId(right))},
+        {"rightAliasDocumentId", qint64(rightSource.document ? rightSource.document->id : 0)}};
+    check("Both panes recognize Windows case-insensitive paths", rightFileWritten
+          && rightNativeMatch == ExistingFileMatch::Same && rightLookup.editor == right
+          && manager->getOpenedEditor(rightAlias) == right && manager->isFileOpened(rightAlias) && leftLookup.editor == loaded
+          && rightSource.document && rightBefore && rightAfter && rightSource.document->id == rightBefore->id
+          && rightAfter->id == rightBefore->id && rightAfter->revision == rightBefore->revision
+          && rightSource.document->lines.join('\n').contains("right_unsaved_value")
+          && !rightSource.document->lines.join('\n').contains("right_stale_disk_value") && right->modified());
 #endif
     const auto retained = manager->snapshotFor(loaded);
     const QString reopenPath = loaded->filename();
@@ -229,7 +263,8 @@ int runDocumentStoreChecks(MainWindow &window, const QString &outputDirectory)
 
     QFile output(QDir(outputDirectory).filePath("document-store-result.json"));
     const QByteArray bytes = QJsonDocument(QJsonObject{{"failures", failures}, {"checks", checks},
-        {"changingCalls", changingCalls}, {"committedCalls", committedCalls}, {"statusCalls", statusCalls}}).toJson();
+        {"changingCalls", changingCalls}, {"committedCalls", committedCalls}, {"statusCalls", statusCalls},
+        {"pathAliasFacts", pathAliasFacts}}).toJson();
     if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size())
         return 5;
     return failures == 0 ? 0 : 1;

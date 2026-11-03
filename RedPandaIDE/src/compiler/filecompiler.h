@@ -23,10 +23,7 @@ class FileCompiler : public Compiler
 {
     Q_OBJECT
 public:
-    FileCompiler(const QString& filename, const QByteArray& encoding,
-                 FileType fileType,
-                 CppCompileType compileType,
-                 bool onlyCheckSyntax);
+    explicit FileCompiler(Compilation::FileCompileRequest::Pointer request);
     FileCompiler(const FileCompiler&)=delete;
     FileCompiler& operator=(const FileCompiler&)=delete;
 

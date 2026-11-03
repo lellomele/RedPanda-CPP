@@ -18,9 +18,11 @@
 #define CPPPREPROCESSOR_H
 
 #include <QObject>
+#include <QDeadlineTimer>
 #include <QTextStream>
 #include "parserutils.h"
 #include "../documentstore.h"
+#include "../analysis/sourceinput.h"
 
 // Observes a source read for diagnostics/tests; never supplies text and must
 // not call GUI objects. The parser copies it into each accepted job.
@@ -44,8 +46,10 @@ using PDefineArgToken = std::shared_ptr<DefineArgToken>;
 struct ParsedFile {
     int index; // 0-based for programming convenience
     QString fileName; // Record filename, but not used now
+    QString sourcePath; // Qualified source root used by the immutable read session.
     QStringList buffer; // do not concat them all
     int branches; //branch levels;
+    qsizetype entryBranches = 0;
     PParsedFileInfo fileInfo; // info of this file
 };
 
@@ -65,6 +69,37 @@ class CppPreprocessor
     };
     typedef qlonglong NumberType;
 public:
+    enum class DependencyStatus { Complete, Cancelled, TimedOut, LimitExceeded, InputUnavailable, UnresolvedInclude };
+    struct DependencyLimits {
+        qint64 workUnits = 128LL * 1024 * 1024;
+        qint64 macroUnits = 16LL * 1024 * 1024;
+        qsizetype directives = 256 * 1024;
+        qsizetype edges = 64 * 1024;
+        int includeDepth = 128;
+        int milliseconds = 10000;
+    };
+    struct DependencyRequest {
+        QString root;
+        QStringList includePaths;
+        QStringList projectIncludePaths;
+        QStringList hardDefines;
+        AnalysisInput::ReadPolicy readPolicy;
+        std::shared_ptr<const std::atomic_bool> cancelled;
+        DependencyLimits limits;
+    };
+    struct DependencyResult {
+        DependencyStatus status = DependencyStatus::InputUnavailable;
+        QString error;
+        QMap<QString, QStringList> directIncludes;
+        QHash<QString, AnalysisInput::SourceVersion> reads;
+        QHash<QString, AnalysisInput::PathPresence> probes;
+        qint64 workUnits = 0;
+        bool complete() const { return status == DependencyStatus::Complete; }
+    };
+    // A fresh private instance using disk input only. The result follows the
+    // IDE's include semantics; it is not a prediction of every compiler
+    // preprocessor extension or a filesystem snapshot.
+    static DependencyResult scanDependencies(const DependencyRequest &request);
 
     explicit CppPreprocessor();
     CppPreprocessor(const CppPreprocessor&)=delete;
@@ -139,6 +174,7 @@ public:
     const QList<QString> &projectIncludePathList() const { return mProjectIncludePathList; }
     void setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream) { mOnGetFileStream = newOnGetFileStream; }
     void setInputSnapshot(PAnalysisInputSnapshot snapshot) { mInputSnapshot = std::move(snapshot); }
+    void setSourceReadSession(std::shared_ptr<AnalysisInput::SourceReadSession> session) { mSourceReadSession = std::move(session); }
     void setSourceReadObserver(SourceReadObserver observer) { mSourceReadObserver = std::move(observer); }
 
     static QList<PDefineArgToken> tokenizeValue(const QString& value);
@@ -150,6 +186,23 @@ public:
     QString expandMacrosInConditioningExpression(QString line) const;
 
 private:
+    struct DependencyControl {
+        const DependencyRequest &request;
+        QDeadlineTimer deadline;
+        qint64 work = 0;
+        qint64 macroUnits = 0;
+        qsizetype directives = 0;
+        qsizetype edges = 0;
+        int expressionDepth = 0;
+        int expansionDepth = 0;
+    };
+    void dependencyWork(qint64 units) const;
+    void dependencyExpansion(qint64 size, qint64 copyCost = 0) const;
+    using WorkCheckpoint = std::function<void(qint64)>;
+    static QList<PDefineArgToken> tokenizeValue(const QString& value, const WorkCheckpoint &checkpoint);
+    static void combineLinesEndingWithBackslash(QStringList& text, const WorkCheckpoint &checkpoint);
+    static void replaceCommentsBySpaceChar(QStringList& text, const WorkCheckpoint &checkpoint, bool directivesOnly);
+    DependencyControl *mDependency = nullptr;
 
     enum class BranchResult {
         isTrue,   /* This branch is true */
@@ -193,7 +246,7 @@ private:
     PParsedFile getInclude(int index) const {
         return mIncludeStack[index];
     }
-    void openInclude(QString fileName);
+    void openInclude(QString fileName, bool documentRoot = false);
     void closeInclude();
 
     // branch stuff
@@ -210,7 +263,7 @@ private:
                 || (getCurrentBranch()!=BranchResult::isTrue && value != BranchResult::isTrue);
     }
     void setCurrentBranch(BranchResult value){
-        if (!sameResultWithCurrentBranch(value)) {
+        if (!mDependency && !sameResultWithCurrentBranch(value)) {
             mCurrentFileInfo->insertBranch(mIndex+1,value==BranchResult::isTrue);
         }
         mBranchResults.append(value);
@@ -220,7 +273,7 @@ private:
         if (mBranchResults.size()>0) {
             mBranchResults.pop_back();
         }
-        if (!sameResultWithCurrentBranch(value)) {
+        if (!mDependency && !sameResultWithCurrentBranch(value)) {
             mCurrentFileInfo->insertBranch(mIndex,getCurrentBranch()==BranchResult::isTrue);
         }
     }
@@ -336,13 +389,14 @@ private:
 
     bool mParseSystem;
     bool mParseLocal;
-    bool mSupportCPP23;
+    bool mSupportCPP23 = false;
 
     bool mStopForParserReset;
     bool mFileOnlyIncludeOnce;
 
     GetFileStreamFunc mOnGetFileStream;
     PAnalysisInputSnapshot mInputSnapshot;
+    std::shared_ptr<AnalysisInput::SourceReadSession> mSourceReadSession;
     SourceReadObserver mSourceReadObserver;
 };
 

@@ -62,20 +62,46 @@ oltre ai limiti di 256 documenti e 128 MiB serializzati. Il rifiuto del candidat
 non sostituisce l'ultima copia confermata; la lettura delle copie precedenti
 mantiene compatibilità con i limiti già supportati.
 
-Gli input immutabili P2, da soli, non garantiscono la freschezza dell'indice
-semantico: restano P3 la revisione delle dipendenze e dei risultati. Il rilascio
-degli oggetti nel thread proprietario richiede che il coordinatore mantenga vivo
-l'event loop fino all'arresto dei servizi: deleteLater non sostituisce quel gate.
+La seconda integrazione associa le unità del progetto ai DocumentId della sessione
+e riunisce «Salva con nome» e ricollegamento dei file in un controller dell'interfaccia.
+I piani verificano identità, revisione e opzioni attraverso le finestre di dialogo.
+Testo e metadati del progetto hanno conferme distinte: un commit parziale viene
+segnalato e conserva il buffer corrente. Il confronto nativo Windows distingue
+nomi Unicode che Qt considerava equivalenti. Gli spazi di nomi ambigui nelle
+cartelle sensibili alle maiuscole vengono rifiutati senza sovrascrivere unità o
+documenti; gli alias virtuali non verificabili rimangono conflitti.
 
-Il builder semantico, i valori della configurazione di compilazione, lo scrittore
-controllato dei file generati e il nucleo lifecycle hanno test integrati ma non
-sostituiscono ancora i rispettivi adattatori runtime. Prima della pubblicazione
-dei risultati servono budget complessivi della cache e condivisione dei sottografi
-fra file: un limite per file non è un limite di memoria dell'applicazione.
-Le chiavi di selezione possono avere più corrispondenze; non sono identità
-univoche. Restano inoltre l'associazione per identità dei documenti di progetto,
-la riconciliazione di «Salva con nome» e il controller grafico per ricollegare
-un file in conflitto. Sono lavori aperti, non garanzie già implementate.
+Le richieste di analisi acquisiscono cartella di lavoro e codifiche come valori.
+Il worker registra versioni effettivamente lette e ricerche di header assenti,
+controlla i limiti prima di decodificare o creare le righe e verifica le versioni
+osservate alla fine. Il percorso assoluto originale del documento vale anche
+durante l'analisi preliminare delle dipendenze. Una dipendenza cambiata comporta
+una ricostruzione asincrona conservativa della cache. Questa conferma delle
+letture non certifica ancora configurazione mutabile e intento corrente della
+GUI: configurazione immutabile, pubblicazione e consumatori restano P3/P4.
+
+Compilazione di file singoli e controllo sintattico in memoria usano valori
+congelati. I suggerimenti diagnostici verificano DocumentId e revisione acquisiti,
+anche per gli header aperti; il pannello conserva i messaggi originali. Su Windows
+l'albero dei processi entra in un Job nativo atomicamente all'avvio: il task
+termina solo dopo la conferma del kernel che tutti i discendenti sono usciti.
+Restano la preparazione Project/SDCCProject e l'arresto asincrono globale.
+Questa garanzia sugli alberi di processi non viene attribuita agli altri sistemi.
+
+Rappresentazione semantica condivisa, contabilità aggregata delle allocazioni e
+unico worker di rilascio hanno test isolati, ma non pubblicano ancora i risultati
+runtime. Gli oggetti trattenuti restano contabilizzati fino alla distruzione.
+Il limite non riguarda la memoria RSS del processo, il motore mutabile o tutte
+le generazioni di input accettate. Le chiavi di selezione possono essere ambigue.
+
+Nuove prove dell'audit hanno confermato due blocchi del salvataggio ordinario:
+una modifica da una notifica successiva al salvataggio può risultare pulita senza
+essere stata scritta; la chiusura dell'editor da una notifica precedente alla
+scrittura può causare un accesso a memoria non valida. Salvataggio ordinario,
+«Salva con nome» e conversione della codifica devono seguire lo stesso contratto
+prima del rilascio. La suite corrente superata non risolve queste prove separate.
+Il coordinatore deve inoltre mantenere vivo l'event loop fino alla conferma di
+arresto di ogni servizio: deleteLater e coda vuota non bastano.
 
 Adattatore temporaneo: EditorClosePlan confronta attualmente copie del testo nel
 controller al momento della chiusura. La verifica passerà a identità/revisione

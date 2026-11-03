@@ -25,10 +25,19 @@
 #include "utils.h"
 #include "editor.h"
 #include "documentstore.h"
+#include "unitlocationplan.h"
 #include "reformatter/astyleformatter.h"
 
 class MainWindow;
 class Project;
+class ProjectUnit;
+class DocumentFileController;
+enum class EditorPathStatus { Found, NotOpen, Conflict };
+struct EditorPathResult {
+    EditorPathStatus status = EditorPathStatus::NotOpen;
+    Editor *editor = nullptr;
+    QString error;
+};
 enum class EditorCloseDecision { Ask, DiscardConfirmed };
 class EditorManager : public QObject
 {
@@ -44,6 +53,7 @@ public:
                         QTabWidget* rightPageWidget,
                         QSplitter* splitter,
                         QWidget* panel, QObject* parent = nullptr);
+    ~EditorManager() override;
 
     Editor* newEditor(const QString& filename, const QByteArray& encoding,
                       FileType fileType, const QString& contextFile,
@@ -61,6 +71,13 @@ public:
     void bindParserInput(const PCppParser &parser);
     InputSnapshotProvider inputSnapshotProvider() const;
     PDocumentSnapshot snapshotFor(Editor *editor);
+    DocumentId documentId(const Editor *editor) const;
+    DocumentRevision documentRevision(const Editor *editor) const;
+    QString documentAbsolutePath(const Editor *editor) const;
+    Editor *editorForDocument(DocumentId id) const;
+    DocumentSaveAsResult saveDocument(Editor *editor, const DocumentSaveRequest &request);
+    UnitLocationCommitResult relinkProjectUnit(const std::shared_ptr<Project> &project,
+                                               const std::shared_ptr<ProjectUnit> &unit, const QString &name = QString());
 
     bool swapEditor(Editor* editor);
     void activeEditor(Editor *e, bool focus);
@@ -78,6 +95,7 @@ public:
     void forceCloseEditor(Editor* editor);
 
     Editor* getOpenedEditor(const QString &filename) const;
+    EditorPathResult resolveOpenedEditor(const QString &filename) const;
 
     bool getContentFromOpenedEditor(const QString& filename, QStringList& buffer) const;
 
@@ -121,6 +139,8 @@ public:
     std::unique_ptr<BaseReformatter> createReformatterForEditor(Editor *);
 
 signals:
+    void documentClosed(DocumentId id);
+    void documentEncodingChanged(DocumentId id, const QByteArray &encoding);
     void editorClosed();
     void editorOpenned();
 private:
@@ -132,6 +152,7 @@ private:
     void showLayout(LayoutShowType layout);
     void doRemoveEditor(Editor* e);
     void observeDocument(Editor *editor);
+    void forgetDocument(Editor *editor);
 #ifdef ENABLE_SDCC
     CompilerType getCompilerTypeForEditor(const Editor *e) const;
 #endif
@@ -166,6 +187,7 @@ private:
     mutable QRecursiveMutex mMutex;
     std::shared_ptr<DocumentStore> mDocumentStore = std::make_shared<DocumentStore>();
     QHash<Editor *, DocumentId> mDocumentIds;
+    std::unique_ptr<DocumentFileController> mDocumentFiles;
     QList<std::weak_ptr<CppParser>> mKnownParsers;
 };
 

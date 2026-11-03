@@ -18,6 +18,7 @@
 #include "parserutils.h"
 #include "qsynedit/syntaxer/cpp.h"
 #include <qt_utils/utils.h>
+#include <qt_utils/charsetinfo.h>
 #include <QApplication>
 #include <QDate>
 #include <QHash>
@@ -106,18 +107,22 @@ CppParser::~CppParser()
 
 void CppParser::setFileOnlyIncludeOnce(bool includeOnce)
 {
+    QMutexLocker locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.setFileOnlyIncludeOnce(includeOnce);
 }
 
 void CppParser::addHardDefineByLine(const QString &line)
 {
     QMutexLocker  locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.addHardDefineByLine(line.trimmed());
 }
 
 void CppParser::addIncludePath(const QString &value)
 {
     QMutexLocker  locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.addIncludePath(value);
 }
 
@@ -133,18 +138,21 @@ void CppParser::removeProjectFile(const QString &value)
 void CppParser::addProjectIncludePath(const QString &value)
 {
     QMutexLocker  locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.addProjectIncludePath(value);
 }
 
 void CppParser::clearIncludePaths()
 {
     QMutexLocker  locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.clearIncludePaths();
 }
 
 void CppParser::clearProjectIncludePaths()
 {
     QMutexLocker  locker(&mMutex);
+    ++mSourceConfigGeneration;
     mPreprocessor.clearProjectIncludePaths();
 }
 
@@ -844,7 +852,7 @@ PStatement CppParser::findTypeDef(const PStatement &statement, const QString &fi
 bool CppParser::freeze()
 {
     QMutexLocker locker(&mMutex);
-    if (mParsing || mSyncParseReserved)
+    if (mParsing || mSyncParseReserved || (mSourceJobReport && !mSourceJobReport->complete()))
         return false;
     mLockCount++;
     return true;
@@ -853,7 +861,7 @@ bool CppParser::freeze()
 bool CppParser::freeze(const QString &serialId)
 {
     QMutexLocker locker(&mMutex);
-    if (mParsing || mSyncParseReserved)
+    if (mParsing || mSyncParseReserved || (mSourceJobReport && !mSourceJobReport->complete()))
         return false;
     if (mSerialId!=serialId)
         return false;
@@ -868,7 +876,7 @@ bool CppParser::freezeStable()
     auto release = finally([this] { mMutex.unlock(); });
     if (!mEnabled || mParsing || mSyncParseReserved || mPendingReset ||
         mResetWorkerActive || mPendingWorkerActive || mPendingDispatchScheduled ||
-        mPendingFileList || !mPendingParseFileCommands.isEmpty())
+        mPendingFileList || !mPendingParseFileCommands.isEmpty() || (mSourceJobReport && !mSourceJobReport->complete()))
         return false;
     ++mLockCount;
     return true;
@@ -1066,7 +1074,8 @@ bool CppParser::isSystemHeaderFile(const QString &fileName) const
 
 bool CppParser::parseFile(const QString &fileName, bool inProject,
                           const QString& contextFilename, bool onlyIfNotParsed, bool updateView,
-                          bool consumeSyncReservation, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver)
+                          bool consumeSyncReservation, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver,
+                          AnalysisInput::SourceReadRequestPtr sourceRequest)
 {
     {
         QMutexLocker locker(&mMutex);
@@ -1081,12 +1090,12 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
                 return false;
             }
         } else if (mParsing || mLockCount > 0 || mPendingReset || mResetWorkerActive || mSyncParseReserved) {
-            queueOlderParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver});
+            queueOlderParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver, sourceRequest});
             return false;
         }
         mParsing = true;
         mActiveParseFileCommand = std::make_unique<ParseFileCommand>(
-            ParseFileCommand{fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver});
+            ParseFileCommand{fileName, inProject, contextFilename, onlyIfNotParsed, updateView, inputs, readObserver, sourceRequest});
         mPreprocessor.setInputSnapshot(inputs);
         mPreprocessor.setSourceReadObserver(std::move(readObserver));
         updateSerialId();
@@ -1096,6 +1105,7 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
     }
     {
         auto action = finally([&,this]{
+            if (mSourceSession) finishSourceJob();
             QMutexLocker locker(&mMutex);
             mActiveParseFileCommand.reset();
             mPreprocessor.setInputSnapshot({});
@@ -1107,9 +1117,24 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
                 emit parseFinished(mFilesScannedCount,0);
             schedulePendingParseCommands();
         });
+        beginSourceJob(sourceRequest);
         QString fName = fileName;
-        if (onlyIfNotParsed && mPreprocessor.fileScanned(fName))
+        if (onlyIfNotParsed && !mSourceJobRebuild && mPreprocessor.fileScanned(fName))
             return false;
+
+        if (mSourceJobRebuild) {
+            QSet<QString> roots = mSourceRoots;
+            roots.insert(fileName);
+            if (!contextFilename.isEmpty()) roots.insert(contextFilename);
+            if (inProject) roots.unite(mProjectFiles);
+            const auto files = sortFilesByIncludeRelations(roots);
+            mFilesToScanCount = files.size(); mFilesScannedCount = 0;
+            for (const auto &file : files) {
+                ++mFilesScannedCount;
+                emit progress(file, mFilesToScanCount, mFilesScannedCount);
+                if (!mPreprocessor.fileScanned(file)) internalParse(file);
+            }
+        } else
 
         if (inProject) {
             QSet<QString> filesToReparsed = calculateFilesToBeReparsed(fileName);
@@ -1140,10 +1165,11 @@ bool CppParser::parseFile(const QString &fileName, bool inProject,
             }
         }
     }
-    return true;
+    return !sourceRequest || (sourceJobReport() && sourceJobReport()->complete());
 }
 
-void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver)
+void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, SourceReadObserver readObserver,
+                              AnalysisInput::SourceReadRequestPtr sourceRequest)
 {
     QSet<QString> filesToScan;
     {
@@ -1157,6 +1183,7 @@ void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, So
             if (!alreadyPending) {
                 mPendingFileListInputs = inputs;
                 mPendingFileListReadObserver = readObserver;
+                mPendingFileListSourceRequest = sourceRequest;
             }
             return;
         }
@@ -1166,6 +1193,7 @@ void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, So
         mActiveFileListUpdateView = updateView;
         mActiveFileListInputs = inputs;
         mActiveFileListReadObserver = readObserver;
+        mActiveFileListSourceRequest = sourceRequest;
         mPreprocessor.setInputSnapshot(inputs);
         mPreprocessor.setSourceReadObserver(std::move(readObserver));
         mActiveFileListNames = mFilesToScan;
@@ -1177,11 +1205,13 @@ void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, So
     }
     {
         auto action = finally([&,this]{
+            if (mSourceSession) finishSourceJob();
             QMutexLocker locker(&mMutex);
             mActiveFileList = false;
             mActiveFileListNames.clear();
             mActiveFileListInputs.reset();
             mActiveFileListReadObserver = {};
+            mActiveFileListSourceRequest.reset();
             mPreprocessor.setInputSnapshot({});
             mPreprocessor.setSourceReadObserver({});
             mParsing = false;
@@ -1191,6 +1221,8 @@ void CppParser::parseFileList(bool updateView, PAnalysisInputSnapshot inputs, So
                 emit parseFinished(mFilesScannedCount,0);
             schedulePendingParseCommands();
         });
+        beginSourceJob(sourceRequest);
+        if (mSourceJobRebuild) filesToScan.unite(mSourceRoots);
         // Support stopping of parsing when files closes unexpectedly
         mFilesScannedCount = 0;
         mFilesToScanCount = filesToScan.count();
@@ -1243,6 +1275,131 @@ void CppParser::parseHardDefinesInternal()
     }
 }
 
+void CppParser::clearEngineResultsPreservingConfig()
+{
+    mUniqId = 0;
+    mIsSystemHeader = false; mIsHeader = false; mIsProjectFile = false;
+    mFilesScannedCount = 0; mFilesToScanCount = 0;
+    internalClear();
+    mStatementList.clear(); mNamespaces.clear(); mInlineNamespaces.clear(); mClassInheritances.clear();
+    mPreprocessor.clearParsedResultsPreservingConfig(); mTokenizer.clear();
+    mIsSystemHeader = true;
+    const auto restoreHeader = finally([this] { mIsSystemHeader = false; });
+    parseHardDefinesInternal();
+    mSourceCacheCertified = false;
+}
+
+CppParser::SourceJobReportPtr CppParser::sourceJobReport() const
+{
+    QMutexLocker locker(&mMutex);
+    return mSourceJobReport;
+}
+
+AnalysisInput::SourceReadRequestPtr CppParser::captureSourceRequest(PAnalysisInputSnapshot inputs) const
+{
+    if (!inputs) return {}; // Explicit legacy engine fixtures; no production GUI callback.
+    auto request = std::make_shared<AnalysisInput::SourceReadRequest>();
+    request->documents = std::move(inputs);
+    request->policy.workingDirectory = QDir::currentPath();
+    if (pCharsetInfoManager) {
+        const auto add = [&](const QByteArray &encoding) {
+            if (!encoding.isEmpty() && !request->policy.encodings.contains(encoding)) request->policy.encodings.append(encoding);
+        };
+        add(pCharsetInfoManager->getDefaultSystemEncoding());
+        const auto candidates = pCharsetInfoManager->findCharsetByLocale(pCharsetInfoManager->localeName());
+        for (const auto &charset : candidates) add(charset->name);
+    }
+    return request;
+}
+
+void CppParser::beginSourceJob(const AnalysisInput::SourceReadRequestPtr &request)
+{
+    mSourceJobRebuild = false;
+    mActiveSourceRequest = request;
+    if (!request) { mSourceCacheCertified = false; return; }
+    mSourceSession = std::make_shared<AnalysisInput::SourceReadSession>(request->documents, request->policy);
+    mPreprocessor.setSourceReadSession(mSourceSession);
+    SourceJobReportPtr previous;
+    {
+        QMutexLocker locker(&mMutex);
+        mActiveSourceConfigGeneration = mSourceConfigGeneration;
+        previous = mSourceJobReport;
+    }
+    bool changed = !mSourceCacheCertified || !previous || !previous->complete()
+        || mCompletedSourceConfigGeneration != mActiveSourceConfigGeneration
+        || previous->workingDirectory != request->policy.workingDirectory;
+    // A closed non-project editor is no longer a root owned by this service.
+    // Keep project roots even when their corresponding editor is closed.
+    QSet<QString> allowed = mProjectFiles;
+    for (const auto &document : request->documents->documents()) {
+        allowed.insert(document->filename);
+        allowed.insert(document->absoluteFilename);
+    }
+    QSet<QString> retainedRoots = mSourceRoots;
+    retainedRoots.intersect(allowed);
+    changed |= retainedRoots != mSourceRoots;
+    mSourceRoots = std::move(retainedRoots);
+    if (!changed) {
+        for (const auto &version : previous->reads) {
+            const auto current = mSourceSession->read(version.path);
+            if (!current.ready() || !AnalysisInput::SourceReadSession::sameVersion(version, current.source->version)) {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) for (auto it = previous->probes.cbegin(); it != previous->probes.cend(); ++it) {
+            if (mSourceSession->probe(it.key()).presence != it.value()) { changed = true; break; }
+        }
+    }
+    if (changed) {
+        // Until per-entry provenance and the semantic touch closure are proven,
+        // reset the whole engine cache when any certified dependency changes.
+        // This is asynchronous writer work; it never waits for GUI readers.
+        clearEngineResultsPreservingConfig();
+        mSourceJobRebuild = true;
+        // Failed validation of a removed/changed obsolete root must not poison
+        // the actual manifest for the fresh rebuild that follows.
+        mSourceSession = std::make_shared<AnalysisInput::SourceReadSession>(request->documents, request->policy);
+        mPreprocessor.setSourceReadSession(mSourceSession);
+    }
+}
+
+bool CppParser::finishSourceJob(bool verifiedNoChange)
+{
+    auto result = std::make_shared<SourceJobReport>();
+    result->job = ++mSourceJobSequence;
+    result->inputGeneration = mActiveSourceRequest->documents->generation();
+    result->workingDirectory = mActiveSourceRequest->policy.workingDirectory;
+    result->reads = mSourceSession->actualReads();
+    result->probes = mSourceSession->pathProbes();
+    const bool validated = mSourceSession->validateObservedVersions(&result->error);
+    if (!validated) {
+        const auto outcomes = mSourceSession->outcomes();
+        for (auto it = outcomes.cbegin(); it != outcomes.cend(); ++it) {
+            if (!it->ready()) {
+                result->error = QStringLiteral("Analysis source could not be read: %1 (%2)").arg(it.key(), it->error).left(2048);
+                break;
+            }
+        }
+    }
+    {
+        QMutexLocker locker(&mMutex);
+        if (!mEnabled || mStopForReset) result->outcome = SourceJobReport::Outcome::Stopped;
+        else if (mActiveSourceConfigGeneration != mSourceConfigGeneration) {
+            result->outcome = SourceJobReport::Outcome::UnverifiedCache;
+            result->error = QStringLiteral("The analysis configuration changed during processing.");
+        } else if (!validated) result->outcome = SourceJobReport::Outcome::InputFailed;
+        else result->outcome = verifiedNoChange ? SourceJobReport::Outcome::VerifiedNoChange : SourceJobReport::Outcome::Complete;
+        mSourceCacheCertified = result->complete();
+        if (mSourceCacheCertified) mCompletedSourceConfigGeneration = mActiveSourceConfigGeneration;
+        mSourceJobReport = result;
+    }
+    mPreprocessor.setSourceReadSession({});
+    mSourceSession.reset();
+    mActiveSourceRequest.reset();
+    return result->complete();
+}
+
 void CppParser::runParsedResultsReset()
 {
     {
@@ -1270,22 +1427,7 @@ void CppParser::runParsedResultsReset()
 
     // Same parsed-state reset as resetParser(), but preserve compiler options,
     // include order, hard defines and queued work. No GUI or GCC calls here.
-    mUniqId = 0;
-    mIsSystemHeader = false;
-    mIsHeader = false;
-    mIsProjectFile = false;
-    mFilesScannedCount = 0;
-    mFilesToScanCount = 0;
-    internalClear();
-    mStatementList.clear();
-    mNamespaces.clear();
-    mInlineNamespaces.clear();
-    mClassInheritances.clear();
-    mPreprocessor.clearParsedResultsPreservingConfig();
-    mTokenizer.clear();
-    mIsSystemHeader = true;
-    const auto restoreHeader = finally([this] { mIsSystemHeader = false; });
-    parseHardDefinesInternal();
+    clearEngineResultsPreservingConfig();
 }
 
 bool CppParser::parsing() const
@@ -1349,6 +1491,10 @@ void CppParser::resetParser()
         mClassInheritances.clear();
         mPreprocessor.clear();
         mTokenizer.clear();
+        mSourceCacheCertified = false;
+        mSourceRoots.clear();
+        mSourceJobReport.reset();
+        ++mSourceConfigGeneration;
     }
 }
 
@@ -4750,6 +4896,7 @@ void CppParser::internalParse(const QString &fileName)
     // Let the preprocessor augment the include records
     mPreprocessor.setScanOptions(true, true);
     mPreprocessor.preprocess(fileName);
+    if (mSourceSession) mSourceRoots.insert(fileName);
 
     QStringList preprocessResult = mPreprocessor.result();
 #ifdef PARSER_DEBUG_LOG
@@ -7086,8 +7233,10 @@ CppParser::ParseResult CppParser::parseFileBlocking(PCppParser parser, const QSt
         observer = parser->mSourceReadObserver;
     }
     if (parser->parseFile(fileName, inProject, contextFilename, onlyIfNotParsed, updateView, true,
-                          source.snapshot, observer))
+                          source.snapshot, observer, parser->captureSourceRequest(source.snapshot)))
         return ParseResult::Parsed;
+    if (const auto result = parser->sourceJobReport(); source.snapshot && result && !result->complete())
+        return ParseResult::SourceFailed;
     if (!parser->enabled())
         return ParseResult::Disabled;
     return onlyIfNotParsed && parser->fileScanned(fileName)
@@ -7112,7 +7261,9 @@ ParserLanguage CppParser::language() const
 
 void CppParser::setLanguage(ParserLanguage newLanguage)
 {
+    QMutexLocker locker(&mMutex);
     if (mLanguage != newLanguage) {
+        ++mSourceConfigGeneration;
         mLanguage = newLanguage;
         mCppKeywords = CppKeywords;
         mCppTypeKeywords = CppTypeKeywords;
@@ -7211,6 +7362,7 @@ void CppParser::setEnabled(bool newEnabled)
             mPendingFileList = false;
             mPendingFileListUpdateView = false;
             mPendingFileListInputs.reset();
+            mPendingFileListSourceRequest.reset();
             mPendingFileListReadObserver = {};
             mPendingReset = false;
         }
@@ -7230,7 +7382,8 @@ CppFileParserThread::CppFileParserThread(
         bool updateView,
         QObject *parent,
         PAnalysisInputSnapshot inputs,
-        SourceReadObserver readObserver):QThread{parent},
+        SourceReadObserver readObserver,
+        AnalysisInput::SourceReadRequestPtr sourceRequest):QThread{parent},
     mParser{parser},
     mFileName{fileName},
     mInProject{inProject},
@@ -7238,7 +7391,8 @@ CppFileParserThread::CppFileParserThread(
     mOnlyIfNotParsed{onlyIfNotParsed},
     mUpdateView{updateView},
     mInputs(std::move(inputs)),
-    mReadObserver(std::move(readObserver))
+    mReadObserver(std::move(readObserver)),
+    mSourceRequest(std::move(sourceRequest))
 {
     if (mParser) {
         const bool captureCurrentContext = !mInputs;
@@ -7250,6 +7404,7 @@ CppFileParserThread::CppFileParserThread(
                 emit mParser->inputSnapshotUnavailable(captured.error);
         }
         QMutexLocker locker(&mParser->mMutex);
+        if (!mSourceRequest) mSourceRequest = mParser->captureSourceRequest(mInputs);
         mParser->mAsyncOwner = mParser;
         if (captureCurrentContext && !mReadObserver)
             mReadObserver = mParser->mSourceReadObserver;
@@ -7266,14 +7421,14 @@ void CppFileParserThread::run()
 {
     if (mParser && mInputsAvailable) {
         if (mParser->parseFile(mFileName,mInProject,mContextFilename,mOnlyIfNotParsed,mUpdateView,
-                               false, mInputs, mReadObserver)) {
+                               false, mInputs, mReadObserver, mSourceRequest)) {
             CppParser::PParseFileCommand command;
             while ( (command = mParser->retrievePendingParseFileCommand()) != nullptr) {
                 if (!mParser->parseFile(command->fileName,
                                    command->inProject,
                                    command->contextFilename,
                                    command->onlyIfNotParsed,
-                                   command->updateView, false, command->inputs, command->readObserver))
+                                   command->updateView, false, command->inputs, command->readObserver, command->sourceRequest))
                     break;
             }
         }
@@ -7283,12 +7438,14 @@ void CppFileParserThread::run()
 CppFileListParserThread::CppFileListParserThread(PCppParser parser,
                                                  bool updateView, QObject *parent,
                                                  PAnalysisInputSnapshot inputs,
-                                                 SourceReadObserver readObserver):
+                                                 SourceReadObserver readObserver,
+                                                 AnalysisInput::SourceReadRequestPtr sourceRequest):
     QThread(parent),
     mParser(parser),
     mUpdateView(updateView),
     mInputs(std::move(inputs)),
-    mReadObserver(std::move(readObserver))
+    mReadObserver(std::move(readObserver)),
+    mSourceRequest(std::move(sourceRequest))
 {
     const bool captureCurrentContext = !mInputs;
     if (mParser && captureCurrentContext) {
@@ -7302,6 +7459,7 @@ CppFileListParserThread::CppFileListParserThread(PCppParser parser,
         QMutexLocker locker(&mParser->mMutex);
         mReadObserver = mParser->mSourceReadObserver;
     }
+    if (mParser && !mSourceRequest) mSourceRequest = mParser->captureSourceRequest(mInputs);
     connect(this,&QThread::finished,
             this,&QObject::deleteLater);
 }
@@ -7309,7 +7467,7 @@ CppFileListParserThread::CppFileListParserThread(PCppParser parser,
 void CppFileListParserThread::run()
 {
     if (mParser && mInputsAvailable) {
-        mParser->parseFileList(mUpdateView, mInputs, mReadObserver);
+        mParser->parseFileList(mUpdateView, mInputs, mReadObserver, mSourceRequest);
     }
 }
 
@@ -7359,6 +7517,7 @@ void CppParser::resetParsedResultsNonBlocking(PCppParser parser)
                 parser->mPendingFileList = true;
                 parser->mPendingFileListUpdateView = true;
                 parser->mPendingFileListInputs = source.snapshot;
+                parser->mPendingFileListSourceRequest = parser->captureSourceRequest(source.snapshot);
                 parser->mPendingFileListReadObserver = parser->mSourceReadObserver;
             }
             // Results produced by the current parse will be discarded by the
@@ -7372,6 +7531,8 @@ void CppParser::resetParsedResultsNonBlocking(PCppParser parser)
                 parser->mPendingFileListUpdateView |= parser->mActiveFileListUpdateView;
                 if (!parser->mPendingFileListInputs)
                     parser->mPendingFileListInputs = parser->mActiveFileListInputs;
+                if (!parser->mPendingFileListSourceRequest)
+                    parser->mPendingFileListSourceRequest = parser->mActiveFileListSourceRequest;
                 if (!parser->mPendingFileListReadObserver)
                     parser->mPendingFileListReadObserver = parser->mActiveFileListReadObserver;
             }
@@ -7406,7 +7567,7 @@ CppParser::RequestResult CppParser::parseFileNonBlocking(PCppParser parser, cons
             return RequestResult::Disabled;
         parser->mAsyncOwner = parser;
         parser->queueParseFileCommand({fileName, inProject, contextFilename, onlyIfNotParsed, updateView,
-                                       source.snapshot, parser->mSourceReadObserver});
+                                       source.snapshot, parser->mSourceReadObserver, parser->captureSourceRequest(source.snapshot)});
     }
     parser->schedulePendingParseCommands();
     return RequestResult::Accepted;
@@ -7437,6 +7598,7 @@ CppParser::RequestResult CppParser::parseFileListNonBlocking(PCppParser parser, 
         parser->mPendingFileList = true;
         parser->mPendingFileListUpdateView |= updateView;
         parser->mPendingFileListInputs = source.snapshot;
+        parser->mPendingFileListSourceRequest = parser->captureSourceRequest(source.snapshot);
         parser->mPendingFileListReadObserver = parser->mSourceReadObserver;
     }
     parser->schedulePendingParseCommands();
@@ -7504,16 +7666,17 @@ void CppParser::startPendingParseCommands()
         worker = new CppParsedResultsResetThread(parser);
     } else if (mPendingFileList) {
         worker = new CppFileListParserThread(parser, mPendingFileListUpdateView, nullptr,
-                                              mPendingFileListInputs, mPendingFileListReadObserver);
+                                              mPendingFileListInputs, mPendingFileListReadObserver, mPendingFileListSourceRequest);
         mPendingFileList = false;
         mPendingFileListUpdateView = false;
         mPendingFileListInputs.reset();
+        mPendingFileListSourceRequest.reset();
         mPendingFileListReadObserver = {};
     } else if (!mPendingParseFileCommands.isEmpty()) {
         const auto command = mPendingParseFileCommands.takeFirst();
         worker = new CppFileParserThread(parser, command.fileName, command.inProject,
                                         command.contextFilename, command.onlyIfNotParsed,
-                                        command.updateView, nullptr, command.inputs, command.readObserver);
+                                        command.updateView, nullptr, command.inputs, command.readObserver, command.sourceRequest);
     } else {
         return;
     }

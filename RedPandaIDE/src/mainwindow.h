@@ -232,7 +232,7 @@ public:
 
     static CompileSuccessionTaskType runTypeToCompileSuccessionTaskType(RunType runType);
 
-    QMap<QString, QString> macroVariables();
+    QMap<QString, QString> macroVariables(bool allowToolchainDiscovery = true);
 
 public slots:
     void logToolsOutput(const QString& msg);
@@ -435,6 +435,7 @@ private slots:
     void onProjectSwitchCustomViewMode();
     void onProjectSwitchFileSystemViewMode();
     void onProjectRemoveFolder();
+    void onProjectRelinkFile();
     void onProjectRenameFolder();
     void onProjectAddFolder();
     void onProjectRenameUnit();

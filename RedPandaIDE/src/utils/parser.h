@@ -17,8 +17,20 @@
 #ifndef UTILS_PARSER_H
 #define UTILS_PARSER_H
 #include <memory>
+#include <QString>
+#include <QtGlobal>
+namespace Analysis { struct ParserConfigurationValues; }
+enum class ParserConfigurationSubmissionStatus { Accepted, Rejected };
+struct ParserConfigurationSubmission {
+    ParserConfigurationSubmissionStatus status;
+    quint64 ticket;
+    QString diagnostic;
+};
 
 class CppParser;
+ParserConfigurationSubmission configureCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex,
+    Analysis::ParserConfigurationValues base, const QString &workingDirectory);
+void connectParserUi(const std::shared_ptr<CppParser> &parser);
 void resetCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex=-1);
 
 #endif // UTILS_PARSER_H

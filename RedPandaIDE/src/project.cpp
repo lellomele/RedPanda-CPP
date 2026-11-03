@@ -124,7 +124,10 @@ std::shared_ptr<Project> Project::load(const QString &filename, EditorManager *e
                                      deleteProjectOnOwnerThread);
     project->open();
     project->mModified = false;
-    resetCppParser(project->mParser, project->mOptions.compilerSet);
+    connectParserUi(project->mParser);
+    const auto submitted = configureCppParser(project->mParser, project->mOptions.compilerSet,
+        project->parserConfigurationValues(), project->directory());
+    Q_UNUSED(submitted)
     return project;
 }
 
@@ -145,7 +148,10 @@ std::shared_ptr<Project> Project::create(
     project->mParser->setEnabled(false);
     if (!project->assignTemplate(pTemplate,useCpp))
         return std::shared_ptr<Project>();
-    resetCppParser(project->mParser, project->mOptions.compilerSet);
+    connectParserUi(project->mParser);
+    const auto submitted = configureCppParser(project->mParser, project->mOptions.compilerSet,
+        project->parserConfigurationValues(), project->directory());
+    Q_UNUSED(submitted)
 
     project->mModified = true;
     const auto result = ProjectFileOperations::saveIni(project->mFilename, ini);
@@ -719,18 +725,19 @@ OperationResult Project::removeFolder(PProjectModelNode node)
     return OperationResult::success();
 }
 
+Analysis::ParserConfigurationValues Project::parserConfigurationValues() const
+{
+    auto values = mParser->requestedConfigurationValues();
+    values.projectFiles.clear(); values.projectIncludePaths = mOptions.includeDirs;
+    for (const auto &unit : mUnits)
+        if (isCFile(unit->fileName()) || isHFile(unit->fileName())) values.projectFiles.insert(unit->fileName());
+    return values;
+}
+
 void Project::resetParserProjectFiles()
 {
-    mParser->clearProjectFiles();
-    mParser->clearProjectIncludePaths();
-    foreach (const PProjectUnit& unit, mUnits) {
-        if (isCFile(unit->fileName())
-                || isHFile(unit->fileName()))
-            mParser->addProjectFile(unit->fileName(),true);
-    }
-    foreach (const QString& s, mOptions.includeDirs) {
-        mParser->addProjectIncludePath(s);
-    }
+    const auto submitted = configureCppParser(mParser, mOptions.compilerSet, parserConfigurationValues(), directory());
+    Q_UNUSED(submitted)
 }
 
 OperationResult Project::saveMetadata()

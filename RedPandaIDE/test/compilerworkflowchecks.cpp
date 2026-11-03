@@ -12,6 +12,8 @@
 #include "src/diagnosticcatalog.h"
 #include "src/project.h"
 #include <memory>
+#include <atomic>
+#include <QDateTime>
 #include <QApplication>
 #include <QEventLoop>
 #include <QElapsedTimer>
@@ -270,13 +272,49 @@ int main(int argc, char **argv) {
         QObject runScope;
         const auto errorConnection = QObject::connect(runner.get(), &Runner::runErrorOccurred, &runScope,
             [&](const QString &reason) { runError = reason; });
-        QElapsedTimer runnerTimer; runnerTimer.start();
+        struct ThreadTiming {
+            QElapsedTimer elapsed;
+            std::atomic<qint64> started{-1};
+            std::atomic<qint64> finished{-1};
+        };
+        const auto timing = std::make_shared<ThreadTiming>();
+        auto &runnerTimer = timing->elapsed;
+        runnerTimer.start();
+        const auto launchUtc = QDateTime::currentMSecsSinceEpoch();
+        const auto startedConnection = QObject::connect(runner.get(), &QThread::started, &runScope,
+            [timing] { timing->started.store(timing->elapsed.elapsed(), std::memory_order_release); }, Qt::DirectConnection);
+        const auto finishedConnection = QObject::connect(runner.get(), &QThread::finished, &runScope,
+            [timing] { timing->finished.store(timing->elapsed.elapsed(), std::memory_order_release); }, Qt::DirectConnection);
+        QTimer heartbeat;
+        heartbeat.setTimerType(Qt::PreciseTimer);
+        qint64 lastTick = 0, worstGap = 0;
+        QObject::connect(&heartbeat, &QTimer::timeout, &runScope, [&] {
+            const auto now = runnerTimer.elapsed();
+            worstGap = qMax(worstGap, now - lastTick);
+            lastTick = now;
+        });
+        heartbeat.start(50);
         runner->start();
-        const auto completed = joinRunner(runner, 8000);
+        // A fresh executable can be held by the OS before main. Keep that
+        // bounded startup phase distinct from the short post-marker exit.
+        const bool reachedMarker = waitUntil([&] {
+            return QFileInfo(marker).size() >= payload.size() || runner->isFinished();
+        }, 15000) && readBytes(marker) == payload;
+        if (!reachedMarker) runner->stop();
+        const auto completed = joinRunner(runner, 3000);
+        heartbeat.stop();
+        QObject::disconnect(startedConnection);
+        QObject::disconnect(finishedConnection);
+        const QFileInfo markerInfo(marker);
         workflowTrace.append(QJsonObject{{"phase", "runner"}, {"finished", completed.finished},
-            {"withinDeadline", completed.withinDeadline}, {"error", runError},
-            {"markerHex", QString::fromLatin1(readBytes(marker).toHex())}, {"milliseconds", double(runnerTimer.elapsed())}});
-        record("production ExecutableRunner completes without a visible console", completed.finished && completed.withinDeadline && runError.isEmpty() && readBytes(marker) == payload);
+            {"withinDeadline", completed.withinDeadline}, {"reachedMarker", reachedMarker}, {"error", runError},
+            {"markerHex", QString::fromLatin1(readBytes(marker).toHex())}, {"milliseconds", double(runnerTimer.elapsed())},
+            {"threadStartedMs", double(timing->started.load(std::memory_order_acquire))},
+            {"threadFinishedMs", double(timing->finished.load(std::memory_order_acquire))},
+            {"markerWrittenMs", double(markerInfo.exists() ? markerInfo.lastModified().toMSecsSinceEpoch() - launchUtc : -1)},
+            {"largestGuiHeartbeatGapMs", double(qMax(worstGap, runnerTimer.elapsed() - lastTick))}});
+        record("production ExecutableRunner completes without a visible console",
+               reachedMarker && completed.finished && completed.withinDeadline && runError.isEmpty() && readBytes(marker) == payload);
         QObject::disconnect(errorConnection);
         if (!completed.finished) return;
         // Runner has no public exit-code result. Verify that separately for the
@@ -351,8 +389,15 @@ int main(int argc, char **argv) {
         qputenv("PATH", (QDir(systemRoot).filePath("System32") + ';' + systemRoot).toUtf8());
         pSettings->executor().setRedirectInput(false);
         const QString pathMarker = directory.filePath("path-result.txt");
+        QElapsedTimer managedTimer;
+        managedTimer.start();
+        const auto launchUtc = QDateTime::currentMSecsSinceEpoch();
         manager->run(pathExecutable, "path-result.txt", directory.path(), {compilerInfo.absolutePath()});
-        const bool ran = waitUntil([&] { return !manager->running(); }, 8000);
+        const bool started = waitUntil([&] {
+            return QFileInfo(pathMarker).size() > 0 || !manager->running();
+        }, 15000) && QFileInfo(pathMarker).size() > 0;
+        const auto afterMarkerMs = managedTimer.elapsed();
+        const bool ran = started && waitUntil([&] { return !manager->running(); }, 3000);
         if (!ran) {
             manager->stopRun();
             if (!waitUntil([&] { return !manager->running(); }, 5000)) retainFixtureState = true;
@@ -363,10 +408,14 @@ int main(int argc, char **argv) {
         const auto hasPath = [&](const QString &path) {
             return paths.contains(QDir::cleanPath(QDir::fromNativeSeparators(path)), Qt::CaseInsensitive);
         };
-        workflowTrace.append(QJsonObject{{"phase", "manager-run-path"}, {"completed", ran},
+        const QFileInfo markerInfo(pathMarker);
+        workflowTrace.append(QJsonObject{{"phase", "manager-run-path"}, {"completed", ran}, {"reachedMarker", started},
+            {"markerWrittenMs", double(markerInfo.exists() ? markerInfo.lastModified().toMSecsSinceEpoch() - launchUtc : -1)},
+            {"markerObservedMs", double(afterMarkerMs)}, {"milliseconds", double(managedTimer.elapsed())},
             {"observedPath", QString::fromLocal8Bit(readBytes(pathMarker))}});
-        record("managed run retains the compiler runtime path", ran && !paths.isEmpty() && hasPath(compilerInfo.absolutePath()));
-        record("managed run excludes IDE app and private library paths", ran && !paths.isEmpty()
+        record("managed runner reaches its marker and acknowledges exit", ran);
+        record("managed run retains the compiler runtime path", !paths.isEmpty() && hasPath(compilerInfo.absolutePath()));
+        record("managed run excludes IDE app and private library paths", !paths.isEmpty()
                && !hasPath(pSettings->dirs().appDir()) && !hasPath(pSettings->dirs().appLibexecDir()));
         if (retainFixtureState) return;
     }

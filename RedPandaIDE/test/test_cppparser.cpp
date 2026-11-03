@@ -433,6 +433,7 @@ void TestCppParser::test_reparse_replaces_obsolete_symbols()
     QVERIFY(mParser->findStatement("Holder::first"));
     contents = QStringList{"struct Holder { double second; };", "int after = 2;"};
     mParser->invalidateFile("incremental-edit.cpp");
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 5000);
     CppParser::parseFileBlocking(mParser, "incremental-edit.cpp", false, "");
     QVERIFY(!mParser->findStatement("before"));
     QVERIFY(!mParser->findStatement("Holder::first"));
@@ -894,9 +895,10 @@ void TestCppParser::test_reset_barrier_preserves_configuration_only()
     QVERIFY(writeUtf8(second + QStringLiteral("/choice.h"), "int config_header_second = 2;\n"));
     mParser->addIncludePath(first);
     mParser->addIncludePath(second);
-    const auto includeOrder = mParser->mPreprocessor.includePathList();
     mParser->addHardDefineByLine(QStringLiteral("#define RESET_KEEP_HARD 73"));
     mParser->parseHardDefines();
+    QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 5000);
+    const auto includeOrder = mParser->appliedConfiguration()->includePaths;
     const QString oldFile = QDir::fromNativeSeparators(dir.filePath("before.cpp"));
     const QString newFile = QDir::fromNativeSeparators(dir.filePath("after.cpp"));
     mParser->setOnGetFileStream([](const QString &filename, QStringList &lines) {
@@ -981,7 +983,7 @@ void TestCppParser::test_reset_after_dispatch_before_parse_preserves_request()
         CppParser::parseFileNonBlocking(mParser, QStringLiteral("selected-before-reset.cpp"),
                                         false, QString());
         mParser->startPendingParseCommands();
-        dispatched = mParser->mPendingWorkerActive;
+        dispatched = mParser->mWriterReserved;
         CppParser::resetParsedResultsNonBlocking(mParser);
     }
     QVERIFY2(dispatched, "The file worker was not dispatched while the mutex was held");
@@ -1237,73 +1239,54 @@ void TestCppParser::test_reset_barrier_reports_synchronous_parse_busy()
 void TestCppParser::test_sync_reservation_reset_excludes_parse()
 {
     init_parser();
-    mParser->setEnabled(true);
     auto parser = mParser;
-    auto entered = std::make_shared<QSemaphore>();
-    auto resume = std::make_shared<QSemaphore>();
-    auto reads = std::make_shared<std::atomic<int>>(0);
-    parser->setOnGetFileStream([reads](const QString &, QStringList &lines) {
-        ++*reads;
-        lines = {QStringLiteral("int reset_reservation_symbol;")};
-        return true;
-    });
-    const auto connection = QObject::connect(parser.get(), &CppParser::onBusy, parser.get(), [entered, resume] {
-        entered->release();
-        resume->acquire();
-    }, Qt::DirectConnection);
+    const auto original = parser->appliedConfigurationTicket();
     {
         QMutexLocker locker(&parser->mMutex);
         parser->mSyncParseReserved = true;
     }
-    std::thread reset([parser] { parser->resetParser(); });
-    struct ReleaseAndJoin {
-        std::shared_ptr<QSemaphore> resume;
-        std::thread &thread;
-        QMetaObject::Connection connection;
-        ~ReleaseAndJoin() {
-            QObject::disconnect(connection);
-            resume->release();
-            if (thread.joinable()) thread.join();
-        }
-    } cleanup{resume, reset, connection};
-    QVERIFY2(entered->tryAcquire(1, 5000), "Reset did not enter while the reservation was held");
-    const bool parsed = parser->parseFile(QStringLiteral("reset_reservation.cpp"), false,
-                                          QString(), false, false, true);
-    QVERIFY(!parsed);
-    QCOMPARE(reads->load(), 0);
+    parser->resetParser();
+    QCoreApplication::processEvents();
+    const auto during = CppParser::parseFileBlocking(parser, "reset_reservation.cpp", false, {});
+    const auto appliedDuring = parser->appliedConfigurationTicket();
     {
         QMutexLocker locker(&parser->mMutex);
-        QVERIFY(parser->mParsing);
-        QVERIFY(!parser->mSyncParseReserved);
+        parser->mSyncParseReserved = false;
     }
+    parser->schedulePendingParseCommands();
+    QCOMPARE(during, CppParser::ParseResult::Busy);
+    QCOMPARE(appliedDuring, original);
+    QTRY_VERIFY_WITH_TIMEOUT(!parser->hasPendingWork(), 5000);
+    QVERIFY(parser->appliedConfigurationTicket() > original);
 }
 
-// Hard defines currently run before a reserved parse, but under the same mutex.
 void TestCppParser::test_sync_reservation_hard_defines_serialize()
 {
     init_parser();
-    mParser->setEnabled(true);
     auto parser = mParser;
-    parser->addHardDefineByLine(QStringLiteral("#define RESERVED_HARD_DEFINE 1"));
+    {
+        QMutexLocker locker(&parser->mMutex);
+        parser->mSyncParseReserved = true;
+    }
+    parser->addHardDefineByLine("#define RESERVED_HARD_DEFINE 1");
+    parser->parseHardDefines();
+    QCoreApplication::processEvents();
+    const bool parsedTooSoon = bool(parser->findStatement("RESERVED_HARD_DEFINE"));
+    {
+        QMutexLocker locker(&parser->mMutex);
+        parser->mSyncParseReserved = false;
+    }
+    parser->schedulePendingParseCommands();
+    QVERIFY(!parsedTooSoon);
+    QTRY_VERIFY_WITH_TIMEOUT(!parser->hasPendingWork(), 5000);
+    QVERIFY(parser->findStatement("RESERVED_HARD_DEFINE"));
     parser->setOnGetFileStream([](const QString &, QStringList &lines) {
         lines = {QStringLiteral("int after_reserved_define;")};
         return true;
     });
-    {
-        QMutexLocker locker(&parser->mMutex);
-        parser->mSyncParseReserved = true;
-    }
-    std::thread defines([parser] { parser->parseHardDefines(); });
-    defines.join();
-    QVERIFY(parser->findStatement(QStringLiteral("RESERVED_HARD_DEFINE")));
-    {
-        QMutexLocker locker(&parser->mMutex);
-        QVERIFY(parser->mSyncParseReserved);
-        QVERIFY(!parser->mParsing);
-    }
-    QVERIFY(parser->parseFile(QStringLiteral("hard_define_reservation.cpp"), false,
-                              QString(), false, false, true));
-    QVERIFY(parser->findStatement(QStringLiteral("after_reserved_define")));
+    QCOMPARE(CppParser::parseFileBlocking(parser, "hard_define_reservation.cpp", false, {}),
+             CppParser::ParseResult::Parsed);
+    QVERIFY(parser->findStatement("after_reserved_define"));
 }
 
 void TestCppParser::test_document_store_lazy_immutable_revisions()
@@ -1443,12 +1426,12 @@ void TestCppParser::test_snapshot_requests_coalesce_latest_revision()
     ScopedParserFreeze frozen(mParser);
     QVERIFY(frozen.acquire());
     QVERIFY(CppParser::parseFileNonBlocking(mParser, path, false, {}) == CppParser::RequestResult::Accepted);
-    const auto older = mParser->mPendingParseFileCommands.first().inputs;
+    const auto older = mParser->mAnalysisQueue.first().file.inputs;
     lines = {QStringLiteral("int latest_request;")};
     QVERIFY(store->changed(id));
     QVERIFY(CppParser::parseFileNonBlocking(mParser, path, false, {}) == CppParser::RequestResult::Accepted);
-    QCOMPARE(mParser->mPendingParseFileCommands.size(), 1);
-    QCOMPARE(mParser->mPendingParseFileCommands.first().inputs->document(path)->revision, DocumentRevision(2));
+    QCOMPARE(mParser->mAnalysisQueue.size(), 1);
+    QCOMPARE(mParser->mAnalysisQueue.first().file.inputs->document(path)->revision, DocumentRevision(2));
     QCOMPARE(older->document(path)->lines.first(), QStringLiteral("int older_request;"));
     frozen.releaseOne();
     QTRY_VERIFY_WITH_TIMEOUT(!mParser->hasPendingWork(), 10000);

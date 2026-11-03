@@ -539,12 +539,13 @@ void Editor::keyPressEvent(QKeyEvent *event)
                     insertStrings.append("");
                     sLine = lineText().mid(caretX()).trimmed();
                     if (sLine=="*/") {
-                        PStatement function;
-                        if (mParser)
-                            function = mParser->findFunctionAt(mFilename,caretY()+1);
+                        const auto parser = mParser;
+                        const bool frozen = parser && parser->freeze();
+                        const auto release = finally([parser, frozen] { if (frozen) parser->unFreeze(); });
+                        const PStatement function = frozen ? parser->findFunctionAt(mFilename, caretY() + 1) : PStatement{};
                         if (function) {
                             bool isVoid = (function->type  == "void");
-                            QStringList params = mParser->getFunctionParameterNames(function);
+                            QStringList params = parser->getFunctionParameterNames(function);
                             insertStrings.append(QString(" * @brief ")+USER_CODE_IN_INSERT_POS);
                             if (!params.isEmpty())
                                 insertStrings.append(" * ");

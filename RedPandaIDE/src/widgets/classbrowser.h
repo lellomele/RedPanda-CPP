@@ -93,6 +93,7 @@ private:
     QMetaObject::Connection mParseFinishedConnection;
     QMetaObject::Connection mCacheResetStartedConnection;
     QMetaObject::Connection mCacheResetFinishedConnection;
+    QMetaObject::Connection mConfigurationStateConnection;
     bool mParsingInProgress = false;
     quint64 mParserGeneration = 0;
     bool mRefreshPending = false;

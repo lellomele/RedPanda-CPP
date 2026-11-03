@@ -3542,7 +3542,6 @@ void MainWindow::scanActiveProject(bool parse)
 
     //UpdateClassBrowsing;
     if (parse) {
-        resetCppParser(mProject->cppParser(), mProject->options().compilerSet);
         mProject->resetParserProjectFiles();
         CppParser::parseFileListNonBlocking(mProject->cppParser());
     } else {
@@ -6147,8 +6146,13 @@ void MainWindow::closeEvent(QCloseEvent *event) {
                     tr("New documents were opened while closing. They remain open."));
                 return;
             }
-            for (const auto &parser : shutdownParsers)
-                parser->setEnabled(false);
+            mShutdownParsers = std::move(shutdownParsers);
+            for (const auto &parser : mShutdownParsers) {
+                connect(parser.get(), &CppParser::analysisStopped, this, [this] {
+                    if (mQuitting && !mHandlingCloseEvent) close();
+                }, Qt::QueuedConnection);
+                parser->stopScheduling();
+            }
         //    if (!mShouldRemoveAllSettings && pSettings->editor().autoLoadLastFiles()) {
         //        if (mProject) {
         //            closeProject(false);
@@ -6171,11 +6175,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             shutdownPrepared = true;
             this->hide();
         }
-        //wait for all parsers finished.
-        if (mParsingCount>0)
+        const bool analysisStopped = std::all_of(mShutdownParsers.cbegin(), mShutdownParsers.cend(),
+            [](const auto &parser) { return parser->analysisQuiesced(); });
+        if (mParsingCount > 0 || !analysisStopped)
             event->ignore();
-        else
+        else {
+            mShutdownParsers.clear();
             event->accept();
+        }
 
         return;
     } catch (const BaseError &error) {

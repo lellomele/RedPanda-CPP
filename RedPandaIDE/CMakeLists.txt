@@ -382,6 +382,7 @@ target_qt_plain_cpp(test-cppparser
 
 target_moc_classes(test-cppparser
     #test
+    test/test_parser_configuration_queue
     test/test_semanticpublication
     test/test_semanticsnapshot
     test/test_cppparser
@@ -416,12 +417,22 @@ target_compile_definitions(test-cppparser PRIVATE
     ARCH_X86_64=1
     ARCH_X86=1)
 
-foreach(suite IN ITEMS preprocessor tokenizer parser semantic-snapshot semantic-publication)
+foreach(suite IN ITEMS preprocessor tokenizer parser parser-configuration-queue semantic-snapshot semantic-publication)
     add_test(NAME test-cppparser-${suite} COMMAND test-cppparser --suite ${suite})
     set_tests_properties(test-cppparser-${suite} PROPERTIES TIMEOUT 120 LABELS "parser;functional" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
 
 add_dependencies(all-test-targets test-cppparser)
+
+foreach(parser_consumer IN ITEMS RedPandaIDE test-editor test-cppparser)
+    target_sources(${parser_consumer} PRIVATE src/parser/cppparserconfiguration.cpp)
+endforeach()
+foreach(parser_test IN ITEMS test-editor test-cppparser)
+    target_sources(${parser_test} PRIVATE
+        src/analysis/parserconfiguration.cpp
+        src/analysis/parsertoolchainprobe.cpp)
+endforeach()
+target_sources(test-cppparser PRIVATE src/utils/parsearg.cpp)
 
 #####################
 # Platform-specific #

@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "editorcolorschemewidget.h"
+#include "../analysis/parserconfiguration.h"
 #include "ui_editorcolorschemewidget.h"
 #include "../settings.h"
 #include "../mainwindow.h"
@@ -85,7 +86,7 @@ EditorColorSchemeWidget::EditorColorSchemeWidget(ColorManager *colorManager, con
     ui->editDemo->setFileType(FileType::CppSource);
     PCppParser parser = std::make_shared<CppParser>();
     parser->setSharedByFiles(false);
-    parser->setLanguage(ui->editDemo->calcParserLanguage());
+
     const auto demoDocuments = std::make_shared<DocumentStore>();
     const QPointer<Editor> demoEditor(ui->editDemo);
     const DocumentId demoId = demoDocuments->add(ui->editDemo->filename(), [demoEditor](QStringList &lines) {
@@ -99,8 +100,10 @@ EditorColorSchemeWidget::EditorColorSchemeWidget(ColorManager *colorManager, con
     connect(ui->editDemo->document().get(), &QSynedit::Document::contentCommitted, parser.get(),
             [demoDocuments, demoId] { demoDocuments->commitChange(demoId); });
     parser->setInputSnapshotProvider([demoDocuments] { return demoDocuments->capture(); });
-    resetCppParser(parser);
-    parser->setEnabled(true);
+    Analysis::ParserConfigurationValues configuration; configuration.language = ui->editDemo->calcParserLanguage();
+    connectParserUi(parser);
+    const auto submitted = configureCppParser(parser, -1, std::move(configuration), QDir::currentPath());
+    Q_UNUSED(submitted)
     ui->editDemo->setCppParser(parser);
     ui->editDemo->replaceContent(
             "#include <iostream>\n"

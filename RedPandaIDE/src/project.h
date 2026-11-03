@@ -28,6 +28,7 @@
 #include "operationresult.h"
 #include "documentstore.h"
 #include "unitlocationplan.h"
+#include "analysis/parserconfiguration.h"
 
 class Project;
 class Editor;
@@ -267,6 +268,7 @@ public:
     OperationResult removeUnit(PProjectUnit& unit, bool doClose, bool removeFile = false,
                                const TrashFile &trashFile = {});
     OperationResult removeFolder(PProjectModelNode node);
+    Analysis::ParserConfigurationValues parserConfigurationValues() const;
     void resetParserProjectFiles();
     void saveAll(); // save [Project] and  all [UnitX]
     void saveLayout(); // save all [UnitX]

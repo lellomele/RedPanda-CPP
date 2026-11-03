@@ -173,3 +173,30 @@ ritardo intermittente resta in analisi.
 La coda di configurazione del parser ha superato dieci casi isolati.
 L’integrazione nell’IDE e il passaggio di Struttura ai dati immutabili restano
 da qualificare. Questa build usa Qt 6.11.2 su Windows x64 e ha il suffisso alpha.
+
+## Configurazione e arresto coordinato del parser
+
+L’IDE invia rilevamento del compilatore, applicazione della configurazione,
+analisi, invalidazione e reset tramite una sola coda di scrittura per parser.
+Ogni analisi mantiene il riferimento alla propria configurazione. Quando
+arriva una configurazione più recente, il reset già richiesto viene riproposto
+con l’elenco aggiornato delle unità di progetto. La ricerca degli header
+acquisisce percorsi immutabili prima di accedere al filesystem. Le letture
+residue del motore mutabile sono protette mentre il worker scrive.
+
+In chiusura la finestra mantiene in vita ogni parser, interrompe le nuove
+richieste e attende in modo asincrono la conferma del worker registrato.
+Il lettore delle sorgenti osserva l’annullamento dell’attività in corso.
+L’arresto degli altri servizi e il completamento del ciclo di vita
+dell’applicazione restano verifiche necessarie prima della release.
+
+CTest ha superato 49 gruppi su 49 in 146,35 secondi. Le prove del runner
+misurano fino a 15 secondi per il primo output del programma di prova e
+fino a tre per la conferma dell’uscita successiva. Sono limiti delle prove.
+I limiti dell’IDE sono rimasti invariati e il percorso della toolchain
+osservato dal programma viene controllato separatamente.
+La stessa build ha superato 1.619 controlli Windows nativi in inglese e 1.968
+in italiano, tutti eseguiti. In un’esecuzione inglese il programma ha prodotto
+il primo output dopo 6,540 secondi e il worker ha concluso un millisecondo
+dopo. Il maggior intervallo misurato fra due aggiornamenti della GUI è stato
+di 51 ms.

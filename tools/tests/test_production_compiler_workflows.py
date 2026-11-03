@@ -12,6 +12,7 @@ REQUIRED = {
     'valid C++ emits a warning and creates its executable',
     'production warning reaches the panel with original GCC text',
     'managed-run no-console fixture builds with real GCC',
+    'managed runner reaches its marker and acknowledges exit',
     'syntax error completes as a recoverable compile result',
     'error retains original GCC message in the panel',
     'panel and editor tooltip carry the same production diagnostic',

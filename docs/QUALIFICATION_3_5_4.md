@@ -160,3 +160,29 @@ The exact source of the intermittent delay is still under investigation.
 The parser configuration queue passed ten isolated cases. Integration with the
 live IDE and migration of Structure to immutable data remain separate gates.
 This build used Qt 6.11.2 on Windows x64 and retains the alpha version suffix.
+
+## Parser configuration and coordinated stop
+
+The IDE submits compiler discovery, configuration application, parsing,
+invalidation and cache resets through one writer queue per parser. A parse
+retains its configuration ticket. Configuration supersession carries the
+requested reset into the new configuration so changed project membership
+still gets a full rescan. Header lookup obtains immutable include paths before
+checking the filesystem. Reads of the remaining mutable engine are guarded
+while its writer is active.
+
+The window keeps a strong reference to each parser during shutdown, stops
+new scheduling and waits asynchronously for the tracked worker acknowledgement.
+The source reader observes the active job's cancellation token. The window
+can still need other services to stop, and the full application lifecycle
+migration remains a release gate.
+
+CTest passed 49 of 49 groups in 146.35 seconds. The runner fixtures now
+measure up to 15 seconds to produce their first marker and up to three seconds
+for the ensuing exit acknowledgement. Those are fixture bounds. The IDE's
+runtime limits were unchanged, and the observed compiler runtime path remains
+a separate assertion.
+The same candidate passed 1,619 native Windows checks in English and 1,968 in
+Italian, with no skips. In one English run the process marker arrived after
+6.540 seconds and the worker completed one millisecond later. The longest
+measured GUI heartbeat gap during that run was 51 ms.

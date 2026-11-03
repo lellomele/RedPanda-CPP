@@ -73,6 +73,7 @@
 #include <QMessageBox>
 #include <QEventLoop>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QSemaphore>
 #include <thread>
 #include <atomic>
@@ -1060,8 +1061,8 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         }
     }
     {
-        // resetParser uses the parser's busy state but does not emit
-        // parseFinished. Attach during onBusy to reproduce that race exactly.
+        // Configuration preparation and application are writer commands.
+        // Neither should require a parseFinished signal to clear the indicator.
         auto *view = window.findChild<QTreeView *>("classBrowser");
         auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
         auto *indicator = window.findChild<QLabel *>("structureUpdateIndicator");
@@ -1070,22 +1071,29 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             const QString originalFile = model->currentFile();
             const ProjectClassBrowserType originalType = model->classBrowserType();
             auto parser = std::make_shared<CppParser>();
-            bool observedReset = false;
-            const auto resetConnection = QObject::connect(parser.get(), &CppParser::onBusy, &window, [&] {
-                model->beginUpdate();
-                model->setParser(parser);
-                model->setCurrentFile(QStringLiteral("reset_indicator.cpp"));
-                model->endUpdate();
-                observedReset = model->parsingInProgress() && !indicator->isHidden();
-            }, Qt::DirectConnection);
-            parser->resetParser();
-            // The parser destructor also resets it; do not reattach a parser
-            // while its last shared owner is being destroyed.
-            QObject::disconnect(resetConnection);
+            int completedParses = 0;
+            const auto observation = QObject::connect(parser.get(), &CppParser::parseFinished, &window,
+                [&](int, int) { ++completedParses; });
+            model->beginUpdate();
+            model->setParser(parser);
+            model->setCurrentFile(QStringLiteral("reset_indicator.cpp"));
+            model->endUpdate();
+            const auto ticket = parser->beginConfigurationPreparation();
+            waitForUi(50);
+            const bool observedReset = ticket && model->parsingInProgress() && !indicator->isHidden();
             check("Reset fixture observes the structure indicator during parser maintenance", observedReset);
-            waitForUi(1500);
+            auto values = parser->requestedConfigurationValues();
+            values.includeOnce = !values.includeOnce;
+            const bool accepted = parser->completeConfigurationPreparation(ticket, Analysis::ParserConfiguration::create(std::move(values)));
+            QElapsedTimer deadline;
+            deadline.start();
+            while (parser->hasPendingWork() && deadline.elapsed() < 3000)
+                waitForUi(10);
+            waitForUi(50);
+            QObject::disconnect(observation);
             check("Structure indicator clears after parser maintenance without parseFinished",
-                  !parser->parsing() && !model->parsingInProgress() && indicator->isHidden());
+                  accepted && parser->appliedConfigurationTicket() == ticket && completedParses == 0 &&
+                  !parser->hasPendingWork() && !model->parsingInProgress() && indicator->isHidden());
             model->beginUpdate();
             model->setParser(originalParser);
             model->setClassBrowserType(originalType);

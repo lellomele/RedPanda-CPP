@@ -12737,5 +12737,34 @@ Le impostazioni di compilazione e codifica di questo file nel progetto saranno c
             <source>The compiler did not provide a complete predefined macro list.</source>
             <translation>Il compilatore non ha fornito l’elenco completo delle macro predefinite.</translation>
         </message>
+        <message>
+            <source>Parser configuration must be submitted on its owner thread.</source>
+            <translation>La configurazione del parser va inviata dal suo thread proprietario.</translation>
+        </message>
+        <message>
+            <source>The parser service is retiring and cannot accept configuration.</source>
+            <translation>Il servizio di analisi è in arresto e non può accettare la configurazione.</translation>
+        </message>
+        <message>
+            <source>Parser configuration preparation could not be submitted.</source>
+            <translation>Impossibile avviare la preparazione della configurazione del parser.</translation>
+        </message>
+        <message>
+            <source>The analysis configuration is unavailable.</source>
+            <translation>La configurazione dell’analisi del codice non è disponibile.</translation>
+        </message>
+        <message>
+            <source>The analysis worker could not start.</source>
+            <translation>Impossibile avviare il processo di analisi del codice.</translation>
+        </message>
+        <message>
+            <source>Analysis configuration preparation was cancelled.</source>
+            <translation>La preparazione della configurazione dell’analisi è stata annullata.</translation>
+        </message>
+        <message>
+            <source>The analysis configuration could not be applied.</source>
+            <translation>Impossibile applicare la configurazione dell’analisi del codice.</translation>
+        </message>
+
     </context>
 </TS>

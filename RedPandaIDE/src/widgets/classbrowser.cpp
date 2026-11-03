@@ -219,6 +219,7 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
     disconnect(mParseFinishedConnection);
     disconnect(mCacheResetStartedConnection);
     disconnect(mCacheResetFinishedConnection);
+    disconnect(mConfigurationStateConnection);
     ++mParserGeneration;
     mRetryScheduled = false;
     mRetryAttempts = 0;
@@ -239,6 +240,16 @@ void ClassBrowserModel::setParser(const PCppParser &newCppParser)
                     return; // queued notification from an obsolete parser
                 mRetryAttempts = 0;
                 fillStatements();
+                updateParsingState();
+            }, Qt::QueuedConnection);
+        mConfigurationStateConnection = connect(mParser.get(), &CppParser::configurationStateChanged,
+            this, [this, generation](quint64 ticket, CppParser::ConfigurationState state) {
+                if (generation != mParserGeneration || !mParser || ticket != mParser->configurationTicket())
+                    return;
+                if (state == CppParser::ConfigurationState::Ready) {
+                    mRetryAttempts = 0;
+                    fillStatements();
+                }
                 updateParsingState();
             }, Qt::QueuedConnection);
         mCacheResetStartedConnection = connect(mParser.get(), &CppParser::cacheResetStarted,

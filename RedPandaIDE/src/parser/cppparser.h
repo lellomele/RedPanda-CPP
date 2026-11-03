@@ -25,11 +25,17 @@
 #include "cpptokenizer.h"
 #include "cpppreprocessor.h"
 #include "../documentstore.h"
+#include "../analysis/parserconfiguration.h"
+#include <QPointer>
+#include <atomic>
+#include <optional>
+
+namespace Analysis { class ParserToolchainProbeRequest; }
 
 class CppParser;
 using PCppParser = std::shared_ptr<CppParser>;
 
-class CppParser : public QObject
+class CppParser : public QObject, public std::enable_shared_from_this<CppParser>
 {
     Q_OBJECT
 public:
@@ -42,6 +48,8 @@ public:
         PAnalysisInputSnapshot inputs;
         SourceReadObserver readObserver;
         AnalysisInput::SourceReadRequestPtr sourceRequest;
+        quint64 configurationTicket = 0;
+        quint64 requestId = 0;
     };
     using PParseFileCommand = std::unique_ptr<ParseFileCommand>;
 
@@ -50,6 +58,25 @@ public:
     CppParser& operator=(const CppParser&)=delete;
 
     ~CppParser();
+
+    enum class ConfigurationState { Ready, Preparing, QueuedForApply, Applying, Failed, Superseded, Retired };
+    Q_ENUM(ConfigurationState)
+    quint64 beginConfigurationPreparation();
+    bool prepareConfigurationAsync(quint64 ticket,
+        std::shared_ptr<const Analysis::ParserToolchainProbeRequest> request);
+    bool completeConfigurationPreparation(quint64 ticket, Analysis::PParserConfiguration configuration);
+    bool failConfigurationPreparation(quint64 ticket, const QString &reason);
+    quint64 submitConfiguration(Analysis::PParserConfiguration configuration);
+    Analysis::ParserConfigurationValues requestedConfigurationValues() const;
+    Analysis::PParserConfiguration appliedConfiguration() const;
+    quint64 configurationTicket() const;
+    quint64 appliedConfigurationTicket() const;
+    ConfigurationState configurationState() const;
+    QString configurationError() const;
+    int trackedAnalysisWorkerCount() const;
+    void stopScheduling();
+    bool analysisQuiesced() const;
+    bool resumeScheduling();
 
     void setFileOnlyIncludeOnce(bool includeOnce);
     void addHardDefineByLine(const QString& line);
@@ -143,7 +170,7 @@ public:
     bool enabled() const;
     void setEnabled(bool newEnabled);
 
-    const QSet<QString> &filesToScan() const;
+    QSet<QString> filesToScan() const;
     void setFilesToScan(const QSet<QString> &newFilesToScan);
 
     void setOnGetFileStream(const GetFileStreamFunc &newOnGetFileStream);
@@ -158,6 +185,8 @@ public:
         QHash<QString, AnalysisInput::SourceVersion> reads;
         QHash<QString, AnalysisInput::PathPresence> probes;
         QString error;
+        quint64 configurationTicket = 0;
+        QByteArray configurationDigest;
         bool complete() const { return outcome == Outcome::Complete || outcome == Outcome::VerifiedNoChange; }
     };
     using SourceJobReportPtr = std::shared_ptr<const SourceJobReport>;
@@ -167,15 +196,13 @@ public:
 
     const QString &serialId() const;
 
-    const QSet<QString>& includePaths();
-    const QSet<QString>& projectIncludePaths();
 
     const StatementModel &statementList() const;
 
     ParserLanguage language() const;
     void setLanguage(ParserLanguage newLanguage);
 
-    const QSet<QString> &projectFiles() const;
+    QSet<QString> projectFiles() const;
 
     QList<QString> namespaces();
 
@@ -196,8 +223,8 @@ public:
     bool sharedByFiles() const;
     void setSharedByFiles(bool newSharedByFiles);
 
-    enum class ParseResult { Parsed, Busy, Disabled, NotParsed, InputUnavailable, SourceFailed };
-    enum class RequestResult { Accepted, QueuedForOwner, Disabled, InputUnavailable };
+    enum class ParseResult { Parsed, Busy, Disabled, NotParsed, InputUnavailable, SourceFailed, ConfigurationPending };
+    enum class RequestResult { Accepted, QueuedForOwner, Disabled, InputUnavailable, ConfigurationUnavailable, SchedulingStopped };
     static ParseResult parseFileBlocking(
         PCppParser parser,
         const QString &fileName,
@@ -223,6 +250,12 @@ public:
 
 
 signals:
+    void configurationStateChanged(quint64 ticket, CppParser::ConfigurationState state);
+    void configurationReady(quint64 ticket, const QByteArray &digest);
+    void configurationFailed(quint64 ticket, const QString &reason);
+    void analysisStopped();
+    void configurationApplying(quint64 ticket);
+    void analysisRequestSuperseded(quint64 ticket);
     void inputSnapshotUnavailable(const QString &reason);
     void progress(const QString& fileName, int total, int current);
     void onBusy();
@@ -233,22 +266,22 @@ signals:
 private:
     void parseHardDefinesInternal();
     void runParsedResultsReset();
+    void runInvalidateFiles(const QSet<QString> &paths);
     bool parseFile(const QString& fileName, bool inProject,
                    const QString& contextFilename,
                    bool onlyIfNotParsed = false, bool updateView = true,
                    bool consumeSyncReservation = false,
                    PAnalysisInputSnapshot inputs = {},
                    SourceReadObserver readObserver = {},
-                   AnalysisInput::SourceReadRequestPtr sourceRequest = {}
+                   AnalysisInput::SourceReadRequestPtr sourceRequest = {}, quint64 configurationTicket = 0
                    );
     void parseFileList(bool updateView = true, PAnalysisInputSnapshot inputs = {}, SourceReadObserver readObserver = {},
-                       AnalysisInput::SourceReadRequestPtr sourceRequest = {});
+                       AnalysisInput::SourceReadRequestPtr sourceRequest = {}, quint64 configurationTicket = 0);
     InputCaptureResult captureInputSnapshot() const;
     AnalysisInput::SourceReadRequestPtr captureSourceRequest(PAnalysisInputSnapshot inputs) const;
     void beginSourceJob(const AnalysisInput::SourceReadRequestPtr &request);
     bool finishSourceJob(bool verifiedNoChange = false);
     void clearEngineResultsPreservingConfig();
-    PParseFileCommand retrievePendingParseFileCommand();
 
     PStatement addInheritedStatement(
             const PStatement& derived,
@@ -804,7 +837,7 @@ private:
     QHash<QString,PStatementList> mNamespaces;  // namespace and the statements in its scope
     QList<PClassInheritanceInfo> mClassInheritances;
     QSet<QString> mInlineNamespaces;
-    bool mStopForReset;
+    std::atomic_bool mStopForReset{false};
 #ifdef QT_DEBUG
     int mLastIndex;
 #endif
@@ -812,25 +845,52 @@ private:
     QMap<QString,KeywordType> mCppKeywords;
     QSet<QString> mCppTypeKeywords;
 
-    // One pending request per file, preserving requests for other editors.
-    QList<ParseFileCommand> mPendingParseFileCommands;
+    struct FileListCommand {
+        bool updateView = false;
+        PAnalysisInputSnapshot inputs;
+        SourceReadObserver readObserver;
+        AnalysisInput::SourceReadRequestPtr sourceRequest;
+        QSet<QString> roots;
+    };
+    enum class AnalysisCommandKind { ParseFile, ParseFileList, ResetParsedResults, InvalidateFiles, PrepareConfiguration, ApplyConfiguration };
+    struct AnalysisCommand {
+        AnalysisCommandKind kind = AnalysisCommandKind::ParseFile;
+        quint64 id = 0;
+        quint64 ticket = 0;
+        ParseFileCommand file;
+        FileListCommand files;
+        QSet<QString> invalidatedFiles;
+        Analysis::PParserConfiguration configuration;
+        std::shared_ptr<const Analysis::ParserToolchainProbeRequest> probe;
+        std::shared_ptr<std::atomic_bool> cancelled = std::make_shared<std::atomic_bool>(false);
+    };
+    QList<AnalysisCommand> mAnalysisQueue;
+    std::optional<AnalysisCommand> mActiveAnalysisCommand;
+    QPointer<QThread> mActiveAnalysisWorker;
+    bool mWriterReserved = false;
+    bool mSchedulingStopped = false;
+    quint64 mNextAnalysisRequest = 0;
+    Analysis::ParserConfigurationValues mRequestedConfigurationValues;
+    Analysis::PParserConfiguration mAppliedConfiguration;
+    QByteArray mAppliedConfigurationDigest;
+    quint64 mRequestedConfigurationTicket = 1;
+    quint64 mAppliedConfigurationTicket = 1;
+    ConfigurationState mConfigurationState = ConfigurationState::Ready;
+    QString mConfigurationError;
+    bool mRequestedBuilderDirty = false;
+    bool mConfigurationSealScheduled = false;
+    bool mResetAfterConfiguration = false;
+    QSet<QString> mRequestedFilesToScan;
+    std::shared_ptr<const Analysis::ParserToolchainProbeRequest> mRequestedProbeTemplate;
     PParseFileCommand mActiveParseFileCommand;
     bool mActiveFileList = false;
     bool mActiveFileListUpdateView = false;
     PAnalysisInputSnapshot mActiveFileListInputs;
-    PAnalysisInputSnapshot mPendingFileListInputs;
     AnalysisInput::SourceReadRequestPtr mActiveFileListSourceRequest;
-    AnalysisInput::SourceReadRequestPtr mPendingFileListSourceRequest;
     SourceReadObserver mActiveFileListReadObserver;
-    SourceReadObserver mPendingFileListReadObserver;
     QSet<QString> mActiveFileListNames;
     std::weak_ptr<CppParser> mAsyncOwner;
     bool mPendingDispatchScheduled = false;
-    bool mPendingWorkerActive = false;
-    bool mPendingFileList = false;
-    bool mPendingFileListUpdateView = false;
-    bool mPendingReset = false;
-    bool mResetWorkerActive = false;
     bool mSyncParseReserved = false;
     InputSnapshotProvider mInputSnapshotProvider;
     SourceReadObserver mSourceReadObserver;
@@ -841,6 +901,8 @@ private:
     quint64 mSourceConfigGeneration = 0;
     quint64 mActiveSourceConfigGeneration = 0;
     quint64 mCompletedSourceConfigGeneration = 0;
+    quint64 mActiveSourceConfigurationTicket = 1;
+    QByteArray mActiveSourceConfigurationDigest;
     bool mSourceCacheCertified = false;
     bool mSourceJobRebuild = false;
     QSet<QString> mSourceRoots;
@@ -848,11 +910,27 @@ private:
     void queueOlderParseFileCommand(const ParseFileCommand &command);
     void schedulePendingParseCommands();
     void startPendingParseCommands();
+    void queueFileListCommand(FileListCommand command, quint64 ticket, bool older = false);
+    bool queuedReset() const;
+    bool activeReset() const;
+    bool onControlOwner() const;
+    void changedRequestedConfiguration(const std::function<void(Analysis::ParserConfigurationValues &)> &change);
+    void sealRequestedConfiguration();
+    bool applyConfigurationValue(quint64 ticket, const Analysis::PParserConfiguration &configuration,
+                                 QString &error);
+    void runConfigurationCommand(const AnalysisCommand &command, Analysis::PParserConfiguration &result,
+                                 QString &error, bool &cancelled);
+    void finishAnalysisWorker(quint64 requestId, QThread *worker,
+                              Analysis::PParserConfiguration prepared = {}, QString error = {}, bool cancelled = false);
+    bool applyReadyConfigurationForBlockingFixture();
+    void clearEngineConfiguration();
 
     friend class TestCppParser; // Regression coverage of private expression tokenization.
     friend class CppFileListParserThread;
     friend class CppFileParserThread;
     friend class CppParsedResultsResetThread;
+    friend class CppConfigurationThread;
+    friend class TestParserConfigurationQueue;
 
 };
 
@@ -869,7 +947,7 @@ public:
             QObject *parent = nullptr,
             PAnalysisInputSnapshot inputs = {},
             SourceReadObserver readObserver = {},
-            AnalysisInput::SourceReadRequestPtr sourceRequest = {});
+            AnalysisInput::SourceReadRequestPtr sourceRequest = {}, quint64 configurationTicket = 0);
     ~CppFileParserThread();
 private:
     PCppParser mParser;
@@ -883,6 +961,7 @@ private:
     SourceReadObserver mReadObserver;
     AnalysisInput::SourceReadRequestPtr mSourceRequest;
     bool mInputsAvailable = true;
+    quint64 mConfigurationTicket = 0;
 
     // QThread interface
 protected:
@@ -899,7 +978,7 @@ public:
             QObject *parent = nullptr,
             PAnalysisInputSnapshot inputs = {},
             SourceReadObserver readObserver = {},
-            AnalysisInput::SourceReadRequestPtr sourceRequest = {});
+            AnalysisInput::SourceReadRequestPtr sourceRequest = {}, quint64 configurationTicket = 0);
 private:
     PCppParser mParser;
     bool mUpdateView;
@@ -907,6 +986,7 @@ private:
     SourceReadObserver mReadObserver;
     AnalysisInput::SourceReadRequestPtr mSourceRequest;
     bool mInputsAvailable = true;
+    quint64 mConfigurationTicket = 0;
     // QThread interface
 protected:
     void run() override;
@@ -914,11 +994,12 @@ protected:
 
 class CppParsedResultsResetThread: public QThread {
 public:
-    explicit CppParsedResultsResetThread(PCppParser parser);
+    explicit CppParsedResultsResetThread(PCppParser parser, QSet<QString> invalidatedFiles = {});
 protected:
     void run() override;
 private:
     PCppParser mParser;
+    const QSet<QString> mInvalidatedFiles;
 };
 
 #endif // CPPPARSER_H

@@ -932,6 +932,7 @@ private:
     SearchDialog *mSearchDialog;
     bool mQuitting;
     bool mHandlingCloseEvent = false;
+    QList<PCppParser> mShutdownParsers;
     bool mOpeningFiles;
     bool mOpeningProject;
     bool mClosingProject;

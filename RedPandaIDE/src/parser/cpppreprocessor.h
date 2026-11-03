@@ -391,7 +391,7 @@ private:
     bool mParseLocal;
     bool mSupportCPP23 = false;
 
-    bool mStopForParserReset;
+    std::atomic_bool mStopForParserReset{false};
     bool mFileOnlyIncludeOnce;
 
     GetFileStreamFunc mOnGetFileStream;

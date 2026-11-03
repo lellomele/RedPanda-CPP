@@ -21,90 +21,64 @@
 #include "../settings.h"
 #include "../mainwindow.h"
 
+
+#include "../analysis/parserconfigurationcapture.h"
+#include "qt_utils/charsetinfo.h"
+#include <QDir>
+#include <QThread>
+#include <QProcessEnvironment>
+
+ParserConfigurationSubmission configureCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex,
+    Analysis::ParserConfigurationValues base, const QString &workingDirectory)
+{
+    if (!parser || QThread::currentThread() != parser->thread())
+        return {ParserConfigurationSubmissionStatus::Rejected, 0,
+            QCoreApplication::translate("ParserConfiguration", "Parser configuration must be submitted on its owner thread.")};
+    const auto ticket = parser->beginConfigurationPreparation();
+    if (!ticket)
+        return {ParserConfigurationSubmissionStatus::Rejected, 0,
+            QCoreApplication::translate("ParserConfiguration", "The parser service is retiring and cannot accept configuration.")};
+    base.enabled = true;
+    base.includeOnce = pSettings->codeCompletion().includedHeaderFileOnlyParseOnce();
+    if (compilerSetIndex < 0) compilerSetIndex = pSettings->compilerSets().defaultIndex();
+    const auto compiler = pSettings->compilerSets().getSet(compilerSetIndex);
+    QList<QByteArray> encodings{QByteArrayLiteral("UTF-8")};
+    if (pCharsetInfoManager) {
+        const auto system = pCharsetInfoManager->getDefaultSystemEncoding();
+        if (!system.isEmpty() && !encodings.contains(system)) encodings.append(system);
+    }
+    const auto captured = Analysis::captureParserConfiguration(compiler.get(), std::move(base),
+        workingDirectory, QProcessEnvironment::systemEnvironment(), std::move(encodings));
+    if (!captured.preparation.ready() || !captured.request) {
+        parser->failConfigurationPreparation(ticket, captured.preparation.reason);
+        return {ParserConfigurationSubmissionStatus::Rejected, ticket, captured.preparation.reason};
+    }
+    if (!parser->prepareConfigurationAsync(ticket, captured.request)) {
+        const auto reason = QCoreApplication::translate("ParserConfiguration", "Parser configuration preparation could not be submitted.");
+        parser->failConfigurationPreparation(ticket, reason);
+        return {ParserConfigurationSubmissionStatus::Rejected, ticket, reason};
+    }
+    return {ParserConfigurationSubmissionStatus::Accepted, ticket, {}};
+}
+
+void connectParserUi(const std::shared_ptr<CppParser> &parser)
+{
+    if (!parser || !pMainWindow) return;
+    QObject::connect(parser.get(), &CppParser::parseStarted, pMainWindow, &MainWindow::onParseStarted, Qt::UniqueConnection);
+    QObject::connect(parser.get(), &CppParser::progress, pMainWindow, &MainWindow::onParserProgress, Qt::UniqueConnection);
+    QObject::connect(parser.get(), &CppParser::parseFinished, pMainWindow, &MainWindow::onParseFinished, Qt::UniqueConnection);
+    QObject::connect(parser.get(), &CppParser::cacheResetStarted, pMainWindow, &MainWindow::onParseStarted, Qt::UniqueConnection);
+    QObject::connect(parser.get(), &CppParser::cacheResetFinished, pMainWindow, &MainWindow::onCacheResetFinished, Qt::UniqueConnection);
+    QObject::connect(parser.get(), &CppParser::inputSnapshotUnavailable, pMainWindow, &MainWindow::onAnalysisInputUnavailable, Qt::UniqueConnection);
+}
+
 void resetCppParser(std::shared_ptr<CppParser> parser, int compilerSetIndex)
 {
-    if (!parser)
-        return;
-    // Configure parser
-    parser->resetParser();
-    parser->setEnabled(true);
-    parser->setFileOnlyIncludeOnce(pSettings->codeCompletion().includedHeaderFileOnlyParseOnce());
-
-    // Set options depending on the current compiler set
-    if (compilerSetIndex<0) {
-        compilerSetIndex=pSettings->compilerSets().defaultIndex();
-    }
-    PCompilerSet compilerSet = pSettings->compilerSets().getSet(compilerSetIndex);
-#ifdef ENABLE_SDCC
-    if (compilerSet && compilerSet->compilerType()==CompilerType::SDCC)
-        parser->setLanguage(ParserLanguage::SDCC);
-#endif
-    parser->clearIncludePaths();
-    bool isCpp = parser->language()==ParserLanguage::CPlusPlus;
-    if (compilerSet) {
-        if (isCpp) {
-            foreach  (const QString& file,compilerSet->CppIncludeDirs()) {
-                parser->addIncludePath(file);
-            }
-        }
-        foreach  (const QString& file,compilerSet->CIncludeDirs()) {
-            parser->addIncludePath(file);
-        }
-        if (isCpp) {
-            foreach  (const QString& file,compilerSet->defaultCppIncludeDirs()) {
-                parser->addIncludePath(file);
-            }
-        }
-        foreach  (const QString& file,compilerSet->defaultCIncludeDirs()) {
-            parser->addIncludePath(file);
-        }
-        // Set defines
-        foreach (const QString &define, compilerSet->defines(parser->language()==ParserLanguage::CPlusPlus)) {
-            parser->addHardDefineByLine(define);
-        }
-//        // add a Red Pand C++ 's own macro
-//        parser->addHardDefineByLine("#define EGE_FOR_AUTO_CODE_COMPLETETION_ONLY");
-        // add C/C++ default macro
-        parser->addHardDefineByLine("#define __FILE__  1");
-        parser->addHardDefineByLine("#define __LINE__  1");
-        parser->addHardDefineByLine("#define __DATE__  1");
-        parser->addHardDefineByLine("#define __TIME__  1");
-    }
-    parser->parseHardDefines();
-    pMainWindow->disconnect(parser.get(),
-                            &CppParser::parseStarted,
-                            pMainWindow,
-                            &MainWindow::onParseStarted);
-    pMainWindow->disconnect(parser.get(),
-                            &CppParser::progress,
-                            pMainWindow,
-                            &MainWindow::onParserProgress);
-    pMainWindow->disconnect(parser.get(),
-                            &CppParser::parseFinished,
-                            pMainWindow,
-                            &MainWindow::onParseFinished);
-    pMainWindow->disconnect(parser.get(), &CppParser::cacheResetStarted,
-                            pMainWindow, &MainWindow::onParseStarted);
-    pMainWindow->disconnect(parser.get(), &CppParser::cacheResetFinished,
-                            pMainWindow, &MainWindow::onCacheResetFinished);
-    pMainWindow->disconnect(parser.get(), &CppParser::inputSnapshotUnavailable,
-                            pMainWindow, &MainWindow::onAnalysisInputUnavailable);
-    pMainWindow->connect(parser.get(),
-                            &CppParser::parseStarted,
-                            pMainWindow,
-                            &MainWindow::onParseStarted);
-    pMainWindow->connect(parser.get(),
-                            &CppParser::progress,
-                            pMainWindow,
-                            &MainWindow::onParserProgress);
-    pMainWindow->connect(parser.get(),
-                            &CppParser::parseFinished,
-                            pMainWindow,
-                            &MainWindow::onParseFinished);
-    pMainWindow->connect(parser.get(), &CppParser::cacheResetStarted,
-                         pMainWindow, &MainWindow::onParseStarted);
-    pMainWindow->connect(parser.get(), &CppParser::cacheResetFinished,
-                         pMainWindow, &MainWindow::onCacheResetFinished);
-    pMainWindow->connect(parser.get(), &CppParser::inputSnapshotUnavailable,
-                         pMainWindow, &MainWindow::onAnalysisInputUnavailable);
+    if (!parser) return;
+    connectParserUi(parser);
+    // Explicit legacy command adapter: acceptance is not synchronous analysis
+    // completion. Failed preparation is published by the parser's typed state.
+    const auto submitted = configureCppParser(parser, compilerSetIndex,
+        parser->requestedConfigurationValues(), QDir::currentPath());
+    Q_UNUSED(submitted)
 }

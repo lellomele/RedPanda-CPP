@@ -2734,6 +2734,7 @@ void TestEditorSymbolCompletion::test_header_completion_preserves_include_preced
     auto parser = std::make_shared<CppParser>();
     parser->addProjectIncludePath(dir.filePath("project"));
     parser->addIncludePath(dir.filePath("system"));
+    QTRY_VERIFY_WITH_TIMEOUT(!parser->hasPendingWork(), 3000);
     HeaderCompletionPopup popup(mColorManager.get());
     popup.setShowEditorCaretFunc([] {});
     popup.setSuggestionColor(Qt::red, Qt::green, Qt::blue, Qt::yellow);

@@ -24,6 +24,7 @@
 #include "project.h"
 #include "systemconsts.h"
 #include "documentfilecontroller.h"
+#include "analysis/parserconfiguration.h"
 #include "visithistorymanager.h"
 #include "debugger/debugger.h"
 #include "utils/parser.h"
@@ -646,10 +647,11 @@ PCppParser EditorManager::sharedParser(QHash<ParserLanguage,std::weak_ptr<CppPar
     if (!parser) {
         parser = std::make_shared<CppParser>();
         parser->setSharedByFiles(true);
-        parser->setLanguage(language);
         bindParserInput(parser);
-        resetCppParser(parser);
-        parser->setEnabled(true);
+        Analysis::ParserConfigurationValues configuration; configuration.language = language;
+        connectParserUi(parser);
+        const auto submitted = configureCppParser(parser, -1, std::move(configuration), QDir::currentPath());
+        Q_UNUSED(submitted)
         sharedParsers.insert(language,parser);
     }
     return parser;
@@ -701,10 +703,11 @@ PCppParser EditorManager::createParserForEditor(Editor *editor)
         } else if (editor->syntaxer()->language() == QSynedit::ProgrammingLanguage::CPP) {
             PCppParser parser = std::make_shared<CppParser>();
             parser->setSharedByFiles(false);
-            parser->setLanguage(editor->calcParserLanguage());
             bindParserInput(parser);
-            resetCppParser(parser);
-            parser->setEnabled(true);
+            Analysis::ParserConfigurationValues configuration; configuration.language = editor->calcParserLanguage();
+            connectParserUi(parser);
+            const auto submitted = configureCppParser(parser, -1, std::move(configuration), QDir::currentPath());
+            Q_UNUSED(submitted)
             return parser;
         }
     }
@@ -1026,16 +1029,12 @@ bool EditorManager::closeAll(bool force) {
 //    });
     while (mLeftPageWidget->count()>0) {
         Editor* e = getEditor(0,mLeftPageWidget);
-        if (e->parser())
-            resetCppParser(e->parser());
         if (!closeEditor(e,false,force)) {
             return false;
         }
     }
     while (mRightPageWidget->count()>0) {
         Editor* e = getEditor(0,mRightPageWidget);
-        if (e->parser())
-            resetCppParser(e->parser());
         if (!closeEditor(e,false,force)) {
             return false;
         }

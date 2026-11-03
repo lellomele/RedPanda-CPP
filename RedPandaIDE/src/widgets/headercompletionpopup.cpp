@@ -221,11 +221,12 @@ void HeaderCompletionPopup::getCompletionFor(const QString &phrase)
     // can legitimately no longer have a parser attached.
     if (mSearchLocal)
         addPath(QFileInfo(mCurrentFile).absolutePath(), HeaderCompletionListItemType::LocalHeader);
-    if (!mParser)
+    const auto configuration = mParser ? mParser->appliedConfiguration() : nullptr;
+    if (!configuration)
         return;
-    for (const QString &path : mParser->projectIncludePaths())
+    for (const QString &path : configuration->projectIncludePaths)
         addPath(path, HeaderCompletionListItemType::ProjectHeader);
-    for (const QString &path : mParser->includePaths())
+    for (const QString &path : configuration->includePaths)
         addPath(path, HeaderCompletionListItemType::SystemHeader);
 }
 

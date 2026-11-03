@@ -16,6 +16,7 @@
  */
 #ifndef CPPTOKENIZER_H
 #define CPPTOKENIZER_H
+#include <atomic>
 
 #include <QObject>
 #include "parserutils.h"
@@ -173,7 +174,7 @@ private:
     QVector<int> mUnmatchedBraces; // stack of indices for unmatched '{'
     QVector<int> mUnmatchedBrackets; // stack of indices for unmatched '['
     QVector<int> mUnmatchedParenthesis;// stack of indices for unmatched '('
-    bool mStopForParserReset;
+    std::atomic_bool mStopForParserReset{false};
 };
 
 using PCppTokenizer = std::shared_ptr<CppTokenizer>;

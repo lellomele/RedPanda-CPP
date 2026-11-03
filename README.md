@@ -12,15 +12,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-**[Stable release 3.5.3.3824](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.3.3824-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.4.3834](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.4.3834-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/RedPandaCPP-3.5.3.3824-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.3.3824-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 

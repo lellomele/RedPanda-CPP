@@ -103,6 +103,36 @@ Compiler::Compiler(Compilation::FileCompileRequest::Pointer request):
     }
 }
 
+Compiler::Compiler(Compilation::FrozenConfiguration::Pointer projectConfiguration, bool capabilitiesKnown)
+    : Compiler({}, false, false)
+{
+    mProjectConfiguration = std::move(projectConfiguration);
+    mProjectCapabilitiesKnown = capabilitiesKnown;
+    if (!mProjectConfiguration)
+        throw CompileError(tr("Compilation requires a captured immutable request."));
+    mMacroVariables = mProjectConfiguration->values().macros;
+}
+
+Compilation::FrozenConfiguration::Pointer Compiler::prepareCapabilities(
+    Compilation::FrozenConfiguration::Pointer prepared)
+{
+    log(tr("Preparing the compiler toolchain..."));
+    const auto probe = Compilation::probeToolchainCapabilities(prepared->values(), *mStop);
+    if (probe.ownership != Compilation::ProcessOwnershipLevel::NoProcessStarted)
+        mProcessOwnershipLevel = probe.ownership;
+    if (!probe.preparation.ready()) {
+        if (probe.preparation.status == Compilation::PreparationStatus::Cancelled) return {};
+        throw CompileError(probe.preparation.reason);
+    }
+    auto values = prepared->values();
+    values.toolchain.supportNLS = probe.facts.supportNLS;
+    values.toolchain.supportConvertingCharset = probe.facts.supportConvertingCharset;
+    values.toolchain.compilerUsingUTF8 = probe.facts.compilerUsingUTF8;
+    emit toolchainCapabilitiesAvailable(values.toolchain.identity, probe.facts.supportNLS,
+        probe.facts.supportConvertingCharset, probe.facts.compilerUsingUTF8);
+    return Compilation::FrozenConfiguration::capture(values);
+}
+
 void Compiler::setPreparationMailbox(std::shared_ptr<Compilation::PreparationMailbox> mailbox)
 {
     Q_ASSERT(QThread::currentThread() == thread() && !isRunning());
@@ -114,6 +144,12 @@ const Compilation::ConfigurationValues &Compiler::configuration() const
     if (!mResolvedConfiguration)
         throw CompileError(tr("Compilation has no prepared immutable configuration."));
     return mResolvedConfiguration->values();
+}
+
+void Compiler::checkCancellation() const
+{
+    if (mStop->load(std::memory_order_acquire))
+        throw CompileError(tr("Compilation cancelled."));
 }
 
 void Compiler::validateGeneratedOutputPath(const QString &path) const
@@ -196,7 +232,7 @@ void Compiler::run()
         writeQaProcessTrace("task-exit");
         emit compileFinished(mFilename);
     });
-    if (!mFileRequest)
+    if (!mFileRequest && !mProjectConfiguration)
         mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::DriverOnlyUnverifiedTree;
     try {
         if (mStop->load(std::memory_order_acquire))
@@ -286,26 +322,28 @@ void Compiler::run()
                 prepared = Compilation::FrozenConfiguration::capture(values);
             }
             if (!mFileRequest->values().capabilitiesKnown) {
-                log(tr("Preparing the compiler toolchain..."));
-                const auto probe = Compilation::probeToolchainCapabilities(prepared->values(), *mStop);
-                if (probe.ownership != Compilation::ProcessOwnershipLevel::NoProcessStarted)
-                    mProcessOwnershipLevel = probe.ownership;
-                if (!probe.preparation.ready()) {
-                    if (probe.preparation.status == Compilation::PreparationStatus::Cancelled) return;
-                    throw CompileError(probe.preparation.reason);
-                }
-                auto values = prepared->values();
-                values.toolchain.supportNLS = probe.facts.supportNLS;
-                values.toolchain.supportConvertingCharset = probe.facts.supportConvertingCharset;
-                values.toolchain.compilerUsingUTF8 = probe.facts.compilerUsingUTF8;
-                prepared = Compilation::FrozenConfiguration::capture(values);
-                emit toolchainCapabilitiesAvailable(values.toolchain.identity, probe.facts.supportNLS,
-                    probe.facts.supportConvertingCharset, probe.facts.compilerUsingUTF8);
+                prepared = prepareCapabilities(std::move(prepared));
+                if (!prepared) return;
             }
             mResolvedConfiguration = std::move(prepared);
             mResolvedAutolink = configuration().autolink.resolve(exactPathSpelling(mFileRequest->values().sourcePath));
             if (!mResolvedAutolink.complete)
                 throw CompileError(mResolvedAutolink.error);
+        } else if (mProjectConfiguration) {
+            auto prepared = mProjectCapabilitiesKnown ? mProjectConfiguration : prepareCapabilities(mProjectConfiguration);
+            if (!prepared) return;
+#ifdef Q_OS_WIN
+            auto values = prepared->values();
+            if (values.preferences.systemEncoding.compare("UTF-8", Qt::CaseInsensitive) != 0) {
+                const auto &make = values.toolchain.make;
+                const auto binary = Compilation::readBoundedCompilerBinary(make, *mStop);
+                if (binary.preparation.status == Compilation::PreparationStatus::Cancelled) return;
+                values.toolchain.makerUsingUTF8 = binary.preparation.ready() &&
+                    (Compilation::peImportsUnicodeArguments(binary.bytes) || Compilation::executableHasUtf8Manifest(make));
+            }
+            prepared = Compilation::FrozenConfiguration::capture(values);
+#endif
+            mResolvedConfiguration = std::move(prepared);
         }
         mTaskOutcome = OperationResult::success();
         if (!prepareForCompile()){
@@ -313,6 +351,7 @@ void Compiler::run()
             return;
         }
         if (mStop->load(std::memory_order_acquire)) return;
+        if (mOnlyGenerateMakefile) return;
         if (mRebuild && !prepareForRebuild()) {
             throw CompileError(tr("Clean before rebuild failed."));
         }
@@ -349,6 +388,7 @@ void Compiler::run()
         }
         log(tr("- Compilation Time: %1 secs").arg(timer.elapsed() / 1000.0));
     } catch (const BaseError &e) {
+        if (mStop->load(std::memory_order_acquire)) return;
         mTaskOutcome = OperationResult::failure(e.reason());
         ++mErrorCount;
         emit compileErrorOccured(e.reason());
@@ -485,14 +525,8 @@ CompileIssueType Compiler::getIssueTypeFromOutputLine(QString &line)
 
 PCompilerSet Compiler::compilerSet()
 {
-    if (mFileRequest)
+    if (mFileRequest || mProjectConfiguration)
         throw CompileError(tr("A captured compilation must not read live compiler settings."));
-    if (mProject) {
-        int index = mProject->options().compilerSet;
-        PCompilerSet set = pSettings->compilerSets().getSet(index);
-        if (set)
-            return set;
-    }
     return pSettings->compilerSets().defaultSet();
 }
 
@@ -731,12 +765,7 @@ QStringList Compiler::getCCompileArguments(bool checkSyntax)
         result << "-fsyntax-only";
     }
 
-    QMap<QString, QString> compileOptions;
-    if (mProject && !mProject->options().compilerOptions.isEmpty()) {
-        compileOptions = mProject->options().compilerOptions;
-    } else {
-        compileOptions = compilerSet()->compileOptions();
-    }
+    const auto compileOptions = compilerSet()->compileOptions();
     foreach (const QString& key, compileOptions.keys()) {
         if (compileOptions[key]=="")
             continue;
@@ -765,13 +794,6 @@ QStringList Compiler::getCCompileArguments(bool checkSyntax)
         result << parseArguments(compilerSet()->customCompileParams(), macros, true);
     }
 
-    if (mProject) {
-        QString s = mProject->options().compilerCmd;
-        if (!s.isEmpty()) {
-            s.replace("_@@_", " ");
-            result << parseArguments(s, macros, true);
-        }
-    }
 
     return result;
 }
@@ -784,12 +806,7 @@ QStringList Compiler::getCppCompileArguments(bool checkSyntax)
     if (checkSyntax) {
         result << "-fsyntax-only";
     }
-    QMap<QString, QString> compileOptions;
-    if (mProject && !mProject->options().compilerOptions.isEmpty()) {
-        compileOptions = mProject->options().compilerOptions;
-    } else {
-        compileOptions = compilerSet()->compileOptions();
-    }
+    const auto compileOptions = compilerSet()->compileOptions();
     foreach (const QString& key, compileOptions.keys()) {
         if (compileOptions[key]=="")
             continue;
@@ -816,13 +833,6 @@ QStringList Compiler::getCppCompileArguments(bool checkSyntax)
     if (compilerSet()->useCustomCompileParams() && !compilerSet()->customCompileParams().isEmpty()) {
         result << parseArguments(compilerSet()->customCompileParams(), macros, true);
     }
-    if (mProject) {
-        QString s = mProject->options().cppCompilerCmd;
-        if (!s.isEmpty()) {
-            s.replace("_@@_", " ");
-            result << parseArguments(s, macros, true);
-        }
-    }
 
     return result;
 }
@@ -843,12 +853,6 @@ QStringList Compiler::getProjectIncludeArguments()
     if (mResolvedConfiguration)
         return configuration().project ? Compilation::includeArguments(configuration().project->includeDirs) : QStringList{};
     QStringList result;
-    if (mProject) {
-        foreach (const QString& folder,mProject->options().includeDirs) {
-            result << "-I" + folder;
-        }
-//        result +=  QString(" -I\"%1\"").arg(extractFilePath(mProject->filename()));
-    }
     return result;
 }
 
@@ -877,12 +881,6 @@ QStringList Compiler::getLibraryArguments(FileType fileType)
         result << "-L" + folder;
     }
 
-    //add libs added via project
-    if (mProject) {
-        foreach (const QString& folder, mProject->options().libDirs){
-            result << "-L" + folder;
-        }
-    }
 
     //Add auto links
     // is file and auto link enabled
@@ -908,12 +906,7 @@ QStringList Compiler::getLibraryArguments(FileType fileType)
 
     //add compiler set link options
     //options like "-static" must be added after "-lxxx"
-    QMap<QString, QString> compileOptions;
-    if (mProject && !mProject->options().compilerOptions.isEmpty()) {
-        compileOptions = mProject->options().compilerOptions;
-    } else {
-        compileOptions = compilerSet()->compileOptions();
-    }
+    const auto compileOptions = compilerSet()->compileOptions();
     foreach (const QString& key, compileOptions.keys()) {
         if (compileOptions[key]=="")
             continue;
@@ -946,25 +939,7 @@ QStringList Compiler::getLibraryArguments(FileType fileType)
         }
     }
 
-    if (mProject) {
-        if (mProject->options().type == ProjectType::GUI) {
-            result << "-mwindows";
-        }
-
-        if (!mProject->options().linkerCmd.isEmpty()) {
-            QString s = mProject->options().linkerCmd;
-            if (!s.isEmpty()) {
-                s.replace("_@@_", " "); // historical reason
-                result += parseArguments(s, {}, true);
-            }
-        }
-        if (mProject->options().staticLink)
-            result << "-static";
-    } else {
-        if (compilerSet()->staticLink()) {
-            result << "-static";
-        }
-    }
+    if (compilerSet()->staticLink()) result << "-static";
     return result;
 }
 
@@ -1153,7 +1128,7 @@ void Compiler::runCommand(const QString &cmd, const QStringList &arguments, cons
             [this](const QString &reason) { log(reason); });
         treeCompleted = true;
         treeFailure = completed.error;
-        if (mFileRequest) mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::WindowsTreeQuiescent;
+        if (mResolvedConfiguration) mProcessOwnershipLevel = Compilation::ProcessOwnershipLevel::WindowsTreeQuiescent;
     };
     // This guard runs before callbacks/output are destroyed, including when an
     // exception interrupts startup, input transfer or output conversion.
@@ -1270,43 +1245,6 @@ const PCppParser &Compiler::parserForFile() const
 void Compiler::setParserForFile(const PCppParser &newParserForFile)
 {
     mParserForFile = newParserForFile;
-}
-
-const std::shared_ptr<Project> &Compiler::project() const
-{
-    return mProject;
-}
-
-void Compiler::setProject(const std::shared_ptr<Project> &newProject)
-{
-    if (mFileRequest)
-        throw CompileError(tr("A captured file compilation must not retain a live project."));
-    if (QThread::currentThread() != thread() || isRunning())
-        throw CompileError(tr("Project compilation inputs must be captured on their owner thread."));
-    mProject = newProject;
-    mProjectSourceEncodings.clear();
-    mProtectedInputPaths.clear();
-    mProjectSystemEncoding = pCharsetInfoManager->getDefaultSystemEncoding();
-    mProjectConsoleEncoding = pCharsetInfoManager->getDefaultConsoleEncoding();
-    if (mProject) {
-        mProtectedInputPaths.append(mProject->filename());
-        for (const auto &unit : mProject->unitList()) {
-            mProtectedInputPaths.append(unit->fileName());
-            const Editor *editor = mProject->unitEditor(unit);
-            QByteArray source = editor ? editor->fileEncoding() : unit->realEncoding();
-            if (source.isEmpty()) {
-                source = unit->encoding();
-                if (source == ENCODING_PROJECT) source = mProject->options().encoding;
-                if (source == ENCODING_AUTO_DETECT) source.clear();
-            }
-            if (source == ENCODING_SYSTEM_DEFAULT) source = mProjectSystemEncoding;
-            else if (source == ENCODING_OEM_DEFAULT) source = mProjectConsoleEncoding;
-            else if (source == ENCODING_UTF8_BOM) source = ENCODING_UTF8;
-            else if (source == ENCODING_UTF16_BOM) source = ENCODING_UTF16;
-            else if (source == ENCODING_UTF32_BOM) source = ENCODING_UTF32;
-            mProjectSourceEncodings.insert(reinterpret_cast<quintptr>(unit.get()), source);
-        }
-    }
 }
 
 bool Compiler::isRebuild() const

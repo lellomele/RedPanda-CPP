@@ -40,6 +40,7 @@
 #include <QUuid>
 #include "projectcompiler.h"
 #include "compilationcapture.h"
+#include "projectbuildcapture.h"
 #include "../analysis/parserconfigurationcapture.h"
 #include <qt_utils/charsetinfo.h>
 #include "frozencompilearguments.h"
@@ -365,105 +366,96 @@ void CompilerManager::compile(const QString& filename, FileType fileType, const 
 
 void CompilerManager::compileProject(std::shared_ptr<Project> project, bool rebuild)
 {
-    if (!projectInputsReady(project, mMainWindow, true))
-        return;
-    if (!pSettings->compilerSets().defaultSet()) {
-        QMessageBox::critical(mMainWindow,
-                              tr("No compiler set"),
-                              tr("No compiler set is configured.")+tr("Can't start debugging."));
-        return;
-    }
-    {
-        QMutexLocker locker(&mCompileMutex);
-        if (mCompiler!=nullptr) {
-            return;
-        }
-        mCompileErrorCount = 0;
-        mCompileIssueCount = 0;
-        mLastCompileOutcome = OperationResult::cancelled();
-        mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
-        mCanContinueLastCompile = false;
-        //deleted when thread finished
-        mCompiler = createProjectCompiler(project);
-        mCompiler->setRebuild(rebuild);
-        trackWorker(mCompiler);
-        connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
-        connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
-
-        connect(mCompiler, &Compiler::compileIssue, this, &CompilerManager::onCompileIssue);
-        if (mMainWindow) {
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::onProjectCompileStarted);
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::clearToolsOutput);
-
-            connect(mCompiler, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
-            connect(mCompiler, &Compiler::compileIssue, mMainWindow, &MainWindow::onCompileIssue);
-            connect(mCompiler, &Compiler::compileErrorOccured, mMainWindow, &MainWindow::onCompileErrorOccured);
-        }
-        mCompiler->start();
-    }
+    submitProjectBuild(project, rebuild ? ProjectBuildAction::Rebuild : ProjectBuildAction::Build);
 }
 
 void CompilerManager::cleanProject(std::shared_ptr<Project> project)
 {
-    if (!projectInputsReady(project, mMainWindow, true))
-        return;
-    if (!pSettings->compilerSets().defaultSet()) {
-        QMessageBox::critical(mMainWindow,
-                              tr("No compiler set"),
-                              tr("No compiler set is configured.")+tr("Can't start debugging."));
-        return;
-    }
-    {
-        QMutexLocker locker(&mCompileMutex);
-        if (mCompiler!=nullptr) {
-            return;
-        }
-        mCompileErrorCount = 0;
-        mCompileIssueCount = 0;
-        mLastCompileOutcome = OperationResult::cancelled();
-        mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
-        mCanContinueLastCompile = false;
-        //deleted when thread finished
-        ProjectCompiler* compiler = createProjectCompiler(project);
-        compiler->setOnlyClean(true);
-        mCompiler = compiler;
-        mCompiler->setRebuild(false);
-        trackWorker(mCompiler);
-        connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
-        connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
-
-        connect(mCompiler, &Compiler::compileIssue, this, &CompilerManager::onCompileIssue);
-        if (mMainWindow) {
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::onProjectCompileStarted);
-            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::clearToolsOutput);
-
-            connect(mCompiler, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
-            connect(mCompiler, &Compiler::compileIssue, mMainWindow, &MainWindow::onCompileIssue);
-            connect(mCompiler, &Compiler::compileErrorOccured, mMainWindow, &MainWindow::onCompileErrorOccured);
-        }
-        mCompiler->start();
-    }
+    submitProjectBuild(project, ProjectBuildAction::Clean);
 }
 
 void CompilerManager::buildProjectMakefile(std::shared_ptr<Project> project)
 {
-    if (!projectInputsReady(project, mMainWindow, true))
+    submitProjectBuild(project, ProjectBuildAction::GenerateMakefile);
+}
+
+void CompilerManager::submitProjectBuild(const std::shared_ptr<Project> &project, ProjectBuildAction action)
+{
+    if (!project || QThread::currentThread() != thread() || compiling() || !projectInputsReady(project, mMainWindow, true))
         return;
-    if (!pSettings->compilerSets().defaultSet()) {
-        QMessageBox::critical(mMainWindow,
-                              tr("No compiler set"),
-                              tr("No compiler set is configured.")+tr("Can't start debugging."));
+    auto set = pSettings->compilerSets().getSet(project->options().compilerSet);
+    if (!set) set = pSettings->compilerSets().defaultSet();
+    if (!set) {
+        QMessageBox::critical(mMainWindow, tr("No compiler set"), tr("No compiler set is configured."));
         return;
     }
-    {
-        QMutexLocker locker(&mCompileMutex);
-        if (mCompiler!=nullptr) {
-            return;
+
+    const bool makefileOnly = action == ProjectBuildAction::GenerateMakefile;
+    std::unique_ptr<ProjectCompiler> candidate;
+    ActiveProjectBuild intent{project, action, {}, {}};
+    try {
+        auto captured = Compilation::captureCompilerConfiguration(set, project.get(),
+            mMainWindow ? mMainWindow->macroVariables(false) : QMap<QString, QString>{}, false);
+        if (!captured.preparation.ready()) throw CompileError(captured.preparation.reason);
+        auto &values = captured.values;
+        const auto capabilities = mCapabilityCache.constFind(values.toolchain.identity);
+        const bool known = capabilities != mCapabilityCache.cend();
+        if (known) {
+            values.toolchain.supportNLS = capabilities->supportNLS;
+            values.toolchain.supportConvertingCharset = capabilities->supportConvertingCharset;
+            values.toolchain.compilerUsingUTF8 = capabilities->compilerUsingUTF8;
         }
-        ProjectCompiler* pCompiler=createProjectCompiler(project);
-        pCompiler->buildMakeFile();
-        delete pCompiler;
+        const bool custom = project->options().useCustomMakefile && !project->options().customMakefile.isEmpty();
+        const auto driver = values.toolchain.cCompiler.isEmpty() ? values.toolchain.cppCompiler : values.toolchain.cCompiler;
+        // A user-supplied Makefile can drive its own tools. Preserve that
+        // path when the configured C/C++ driver is absent.
+        const bool noProbe = known || (custom && (makefileOnly || !QFileInfo(driver).isExecutable()));
+        auto snapshot = Compilation::captureProjectBuild(*project, std::move(values), noProbe,
+            mMainWindow ? mMainWindow->editorManager()->documentInputGeneration() : 0);
+        intent.makefile = snapshot.makefilePath;
+        intent.output = snapshot.outputPath;
+#ifdef ENABLE_SDCC
+        if (snapshot.options.type == ProjectType::MicroController)
+            candidate = std::make_unique<SDCCProjectCompiler>(std::move(snapshot));
+        else
+#endif
+            candidate = std::make_unique<ProjectCompiler>(std::move(snapshot));
+    } catch (const BaseError &error) {
+        QMessageBox::critical(mMainWindow, tr("Compile Error"), error.reason());
+        return;
     }
+
+    QMutexLocker locker(&mCompileMutex);
+    if (mCompiler) return;
+    mCompileErrorCount = 0;
+    mCompileIssueCount = 0;
+    mLastCompileOutcome = OperationResult::cancelled();
+    mLastCompileOwnership = Compilation::ProcessOwnershipLevel::NoProcessStarted;
+    mCanContinueLastCompile = false;
+    candidate->setOnlyClean(action == ProjectBuildAction::Clean);
+    candidate->setOnlyGenerateMakefile(makefileOnly);
+    candidate->setRebuild(action == ProjectBuildAction::Rebuild);
+    mCompiler = candidate.release();
+    mActiveProjectBuild = std::move(intent);
+    trackWorker(mCompiler);
+    connect(mCompiler, &Compiler::finished, mCompiler, &QObject::deleteLater);
+    connect(mCompiler, &Compiler::compileFinished, this, &CompilerManager::onCompileFinished);
+    connect(mCompiler, &Compiler::compileIssue, this, &CompilerManager::onCompileIssue);
+    connect(mCompiler, &Compiler::toolchainCapabilitiesAvailable, this,
+        [this](const QString &identity, bool nls, bool charset, bool utf8) {
+            if (mCapabilityCache.size() >= 32 && !mCapabilityCache.contains(identity)) mCapabilityCache.clear();
+            mCapabilityCache.insert(identity, {nls, charset, utf8});
+        });
+    if (mMainWindow) {
+        if (!makefileOnly) {
+            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::onProjectCompileStarted);
+            connect(mCompiler, &Compiler::compileStarted, mMainWindow, &MainWindow::clearToolsOutput);
+            connect(mCompiler, &Compiler::compileOutput, mMainWindow, &MainWindow::logToolsOutput);
+            connect(mCompiler, &Compiler::compileIssue, mMainWindow, &MainWindow::onCompileIssue);
+        }
+        connect(mCompiler, &Compiler::compileErrorOccured, mMainWindow, &MainWindow::onCompileErrorOccured);
+    }
+    mCompiler->start();
 }
 
 void CompilerManager::checkSyntax(const QString &filename, const QByteArray& encoding, const QString &content,
@@ -728,11 +720,24 @@ void CompilerManager::onCompileFinished(const QString& filename)
             mCanContinueLastCompile = mCanContinueLastCompile && editor
                 && mMainWindow->editorManager()->documentId(editor) == request->values().identity.documentId;
         }
-    } else if (mCompiler->project()) {
-        mCanContinueLastCompile = mCanContinueLastCompile && mMainWindow && mMainWindow->project() == mCompiler->project();
     }
-    mCompiler=nullptr;
-    emit compileFinished(filename, false);
+    const auto intent = std::exchange(mActiveProjectBuild, std::nullopt);
+    bool openMakefile = false;
+    if (intent) {
+        const auto project = intent->project.lock();
+        const bool current = project && mMainWindow && mMainWindow->project() == project;
+        openMakefile = mLastCompileOutcome.succeeded() && current && project->makeFileName() == intent->makefile;
+        mCanContinueLastCompile = mCanContinueLastCompile && current &&
+            (intent->action == ProjectBuildAction::Build || intent->action == ProjectBuildAction::Rebuild) &&
+            project->outputFilename() == intent->output;
+    }
+    mCompiler = nullptr;
+    locker.unlock();
+    if (intent && intent->action == ProjectBuildAction::GenerateMakefile) {
+        if (openMakefile) emit projectMakefileReady(intent->makefile);
+    } else {
+        emit compileFinished(filename, false);
+    }
 }
 
 void CompilerManager::onRunnerTerminated()
@@ -783,16 +788,6 @@ void CompilerManager::onSyntaxCheckIssue(PCompileIssue issue)
     if (issue->type == CompileIssueType::Error ||
             issue->type == CompileIssueType::Warning)
         mSyntaxCheckIssueCount++;
-}
-
-ProjectCompiler *CompilerManager::createProjectCompiler(std::shared_ptr<Project> project)
-{
-#ifdef ENABLE_SDCC
-    if (project->options().type==ProjectType::MicroController)
-        return new SDCCProjectCompiler(project);
-    else
-#endif
-        return new ProjectCompiler(project);
 }
 
 PCppParser CompilerManager::getParserForFile(const QString &filename)

@@ -99,7 +99,7 @@ public:
 
 class GccDiagnosticParserProbe : public Compiler {
 public:
-    GccDiagnosticParserProbe() : Compiler({}, true), mSet(std::make_shared<CompilerSet>()) { mErrorCount = 0; mWarningCount = 0; mSet->setCompilerType(CompilerType::GCC); }
+    GccDiagnosticParserProbe() : Compiler(QString{}, true), mSet(std::make_shared<CompilerSet>()) { mErrorCount = 0; mWarningCount = 0; mSet->setCompilerType(CompilerType::GCC); }
     void feed(QString line) { processOutput(line); }
     void finish() { feed("---//END//----"); }
     void setFamily(CompilerType type) { mSet->setCompilerType(type); }

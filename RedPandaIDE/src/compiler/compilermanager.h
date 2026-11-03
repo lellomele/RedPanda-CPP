@@ -104,6 +104,7 @@ public:
 signals:
     void signalStopAllRunners();
     void compileFinished(const QString& filename, bool isSyntaxCheck);
+    void projectMakefileReady(const QString &path);
 
 private slots:
     void doRunProblem(const QString& filename, const QString& arguments, const QString& workDir, const QVector<POJProblemCase> &problemCases,
@@ -118,7 +119,8 @@ private slots:
 private:
     friend class CompilerRequestChecks;
     void trackWorker(QThread *worker);
-    ProjectCompiler* createProjectCompiler(std::shared_ptr<Project> project);
+    enum class ProjectBuildAction { Build, Rebuild, Clean, GenerateMakefile };
+    void submitProjectBuild(const std::shared_ptr<Project> &project, ProjectBuildAction action);
     PCppParser getParserForFile(const QString& filename);
     Compilation::FileCompileRequest::Pointer captureFileRequest(const QString &filename, FileType fileType,
         const QByteArray &encoding, CppCompileType compileType, bool syntaxOnly, bool rebuild,
@@ -128,6 +130,13 @@ private:
 private:
     MainWindow *mMainWindow;
     Compiler* mCompiler;
+    struct ActiveProjectBuild {
+        std::weak_ptr<Project> project;
+        ProjectBuildAction action;
+        QString makefile;
+        QString output;
+    };
+    std::optional<ActiveProjectBuild> mActiveProjectBuild;
     int mCompileErrorCount;
     int mCompileIssueCount;
     int mSyntaxCheckErrorCount;

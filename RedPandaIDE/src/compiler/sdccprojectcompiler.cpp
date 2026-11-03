@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "sdccprojectcompiler.h"
-#include "../project.h"
 #include "compilermanager.h"
 #include "../systemconsts.h"
 #include "qt_utils/utils.h"
@@ -25,24 +24,25 @@
 
 #include <QDir>
 
-SDCCProjectCompiler::SDCCProjectCompiler(std::shared_ptr<Project> project):
-    ProjectCompiler(project)
+SDCCProjectCompiler::SDCCProjectCompiler(Compilation::ProjectBuildSnapshot snapshot):
+    ProjectCompiler(std::move(snapshot))
 {
 }
 
 void SDCCProjectCompiler::buildMakeFile()
 {
     //we are using custom make file, don't overwrite it
-    if (mProject->options().useCustomMakefile && !mProject->options().customMakefile.isEmpty())
+    if (mBuild.options.useCustomMakefile && !mBuild.options.customMakefile.isEmpty())
         return;
     createStandardMakeFile();
 }
 
 void SDCCProjectCompiler::createStandardMakeFile()
 {
-    QFile file(mProject->makeFileName());
+    validateGeneratedOutputPath(mBuild.makefilePath);
+    Compilation::GeneratedTextFile file(mBuild.makefilePath, configuration().toolchain.makerUsingUTF8);
     newMakeFile(file);
-    QString suffix = compilerSet()->executableSuffix();
+    QString suffix = configuration().toolchain.executableSuffix;
     if (suffix == SDCC_IHX_SUFFIX) {
         writeln(file,"$(BIN_TAR): $(OBJ)");
         writeln(file,"\t$(CC) $(LIBS) -o $(BIN_ARG) $(LINKOBJ)");
@@ -58,26 +58,29 @@ void SDCCProjectCompiler::createStandardMakeFile()
         }
     }
     writeMakeObjFilesRules(file);
+    checkCancellation();
+    const auto committed = file.commit();
+    if (!committed.succeeded()) throw CompileError(committed.error);
 }
 
-void SDCCProjectCompiler::newMakeFile(QFile& file)
+void SDCCProjectCompiler::newMakeFile(Compilation::GeneratedTextFile &file)
 {
     // Create OBJ output directory
-    if (!mProject->options().folderForObjFiles.isEmpty()) {
-        QDir(mProject->directory()).mkpath(mProject->options().folderForObjFiles);
-    }
+    if (!mBuild.options.folderForObjFiles.isEmpty() &&
+            !QDir(mBuild.directory).mkpath(mBuild.options.folderForObjFiles))
+        throw CompileError(tr("Can't create build directory '%1'.").arg(mBuild.options.folderForObjFiles));
     // Create executable output directory
-    if (!mProject->options().folderForOutput.isEmpty()) {
-        QDir(mProject->directory()).mkpath(mProject->options().folderForOutput);
-    }
+    if (!mBuild.options.folderForOutput.isEmpty() &&
+            !QDir(mBuild.directory).mkpath(mBuild.options.folderForOutput))
+        throw CompileError(tr("Can't create build directory '%1'.").arg(mBuild.options.folderForOutput));
     // Write more information to the log file than before
     log(tr("Building makefile..."));
     log("--------");
-    log(tr("- Filename: %1").arg(mProject->makeFileName()));
+    log(tr("- Filename: %1").arg(mBuild.makefilePath));
 
     // Create the actual file
-    if (!file.open(QFile::WriteOnly | QFile::Truncate))
-        throw CompileError(tr("Can't open '%1' for write!").arg(mProject->makeFileName()));
+    const auto opened = file.open();
+    if (!opened.succeeded()) throw CompileError(opened.error);
 
     // Write header
     writeMakeHeader(file);
@@ -96,14 +99,14 @@ void SDCCProjectCompiler::newMakeFile(QFile& file)
 
 }
 
-void SDCCProjectCompiler::writeMakeHeader(QFile &file)
+void SDCCProjectCompiler::writeMakeHeader(Compilation::GeneratedTextFile &file)
 {
-    writeln(file,"# Project: " + mProject->name());
+    writeln(file,"# Project: " + mBuild.displayName);
     writeln(file,QString("# Makefile created by Red Panda C++ ") + REDPANDA_CPP_VERSION);
     writeln(file);
 }
 
-void SDCCProjectCompiler::writeMakeDefines(QFile &file)
+void SDCCProjectCompiler::writeMakeDefines(Compilation::GeneratedTextFile &file)
 {
     // Get list of object files
     QStringList Objects;
@@ -111,43 +114,43 @@ void SDCCProjectCompiler::writeMakeDefines(QFile &file)
     QStringList cleanObjects;
 
     // Create a list of object files
-    foreach(const PProjectUnit &unit, mProject->unitList()) {
-        if (!unit->compile() && !unit->link())
+    for (const auto &unit : mBuild.units) {
+        if (!unit.compile && !unit.link)
             continue;
 
         // Only process source files
-        QString RelativeName = extractRelativePath(mProject->directory(), unit->fileName());
+        QString RelativeName = extractRelativePath(mBuild.directory, unit.path);
         FileType fileType = getFileType(RelativeName);
 
         if (isC_CPP_ASMSourceFile(fileType)) {
-            if (!mProject->options().folderForObjFiles.isEmpty()) {
+            if (!mBuild.options.folderForObjFiles.isEmpty()) {
                 // ofile = C:\MyProgram\obj\main.o
-                QString fullObjFile = includeTrailingPathDelimiter(mProject->options().folderForObjFiles)
-                        + extractFileName(unit->fileName());
-                QString relativeObjFile = extractRelativePath(mProject->directory(), changeFileExt(fullObjFile, SDCC_REL_SUFFIX));
+                QString fullObjFile = includeTrailingPathDelimiter(mBuild.options.folderForObjFiles)
+                        + extractFileName(unit.path);
+                QString relativeObjFile = extractRelativePath(mBuild.directory, changeFileExt(fullObjFile, SDCC_REL_SUFFIX));
                 Objects << relativeObjFile;
                 cleanObjects << localizeMakefilePath(relativeObjFile);
-                if (unit->link()) {
+                if (unit.link) {
                     LinkObjects << relativeObjFile;
                 }
             } else {
                 Objects << changeFileExt(RelativeName, SDCC_REL_SUFFIX);
                 cleanObjects << localizeMakefilePath(changeFileExt(RelativeName, SDCC_REL_SUFFIX));
-                if (unit->link())
+                if (unit.link)
                     LinkObjects << changeFileExt(RelativeName, SDCC_REL_SUFFIX);
             }
         }
     }
 
-    QString cc = extractFileName(compilerSet()->CCompiler());
+    QString cc = extractFileName(configuration().toolchain.cCompiler);
 
     QStringList cCompileArguments = getCCompileArguments(mOnlyCheckSyntax);
     QStringList libraryArguments = getLibraryArguments(FileType::Project);
     QStringList cIncludeArguments = getCIncludeArguments() + getProjectIncludeArguments();
 
-    QString executable = extractRelativePath(mProject->makeFileName(), mProject->outputFilename());
+    QString executable = extractRelativePath(mBuild.makefilePath, mBuild.outputPath);
     QString cleanExe = localizeMakefilePath(executable);
-    QString ihx = extractRelativePath(mProject->makeFileName(), changeFileExt(mProject->outputFilename(), SDCC_IHX_SUFFIX));
+    QString ihx = extractRelativePath(mBuild.makefilePath, changeFileExt(mBuild.outputPath, SDCC_IHX_SUFFIX));
     QString cleanIhx = localizeMakefilePath(ihx);
 
     writeln(file, "CC       = " + escapeArgumentForMakefileVariableValue(cc, true));
@@ -174,7 +177,7 @@ void SDCCProjectCompiler::writeMakeDefines(QFile &file)
     writeln(file);
 }
 
-void SDCCProjectCompiler::writeMakeTarget(QFile &file)
+void SDCCProjectCompiler::writeMakeTarget(Compilation::GeneratedTextFile &file)
 {
     writeln(file, ".PHONY: all all-before all-after clean clean-custom");
     writeln(file);
@@ -183,66 +186,66 @@ void SDCCProjectCompiler::writeMakeTarget(QFile &file)
 
 }
 
-void SDCCProjectCompiler::writeMakeIncludes(QFile &file)
+void SDCCProjectCompiler::writeMakeIncludes(Compilation::GeneratedTextFile &file)
 {
-    foreach(const QString& s, mProject->options().makeIncludes) {
+    foreach(const QString& s, mBuild.options.makeIncludes) {
         writeln(file, "include " + escapeFilenameForMakefileInclude(s));
     }
-    if (!mProject->options().makeIncludes.isEmpty()) {
+    if (!mBuild.options.makeIncludes.isEmpty()) {
         writeln(file);
     }
 }
 
-void SDCCProjectCompiler::writeMakeClean(QFile &file)
+void SDCCProjectCompiler::writeMakeClean(Compilation::GeneratedTextFile &file)
 {
     writeln(file, "clean: clean-custom");
     writeln(file, QString("\t-$(RM) $(CLEANOBJ) >%1 2>&1||:").arg(NULL_FILE));
     writeln(file);
 }
 
-void SDCCProjectCompiler::writeMakeObjFilesRules(QFile &file)
+void SDCCProjectCompiler::writeMakeObjFilesRules(Compilation::GeneratedTextFile &file)
 {
-    PCppParser parser = mProject->cppParser();
 
-    QList<PProjectUnit> projectUnits=mProject->unitList();
-    foreach(const PProjectUnit &unit, projectUnits) {
-        if (!unit->compile())
+    const auto &projectUnits = mBuild.units;
+    for (const auto &unit : projectUnits) {
+        if (!unit.compile)
             continue;
-        FileType fileType = getFileType(unit->fileName());
+        FileType fileType = getFileType(unit.path);
         // Only process source files
         if (!isC_CPP_ASMSourceFile(fileType))
             continue;
 
-        QString shortFileName = extractRelativePath(mProject->makeFileName(),unit->fileName());
+        QString shortFileName = extractRelativePath(mBuild.makefilePath,unit.path);
 
         writeln(file);
         QString objStr = escapeFilenameForMakefilePrerequisite(shortFileName);
         // if we have scanned it, use scanned info
-        if (parser && parser->fileScanned(unit->fileName())) {
-            QSet<QString> includedFiles = parser->getIncludedFiles(unit->fileName());
-            foreach(const PProjectUnit &unit2, projectUnits) {
-                if (unit2==unit)
+        const auto dependencies = mBuild.knownDependencies.constFind(unit.path);
+        if (dependencies != mBuild.knownDependencies.cend()) {
+            const auto &includedFiles = *dependencies;
+            for (const auto &unit2 : projectUnits) {
+                if (&unit2 == &unit)
                     continue;
-                if (includedFiles.contains(unit2->fileName())) {
-                    QString header = extractRelativePath(mProject->makeFileName(),unit2->fileName());
+                if (includedFiles.contains(unit2.path)) {
+                    QString header = extractRelativePath(mBuild.makefilePath,unit2.path);
                     objStr = objStr + ' ' + escapeFilenameForMakefilePrerequisite(header);
                 }
             }
         } else {
-            foreach(const PProjectUnit &unit2, projectUnits) {
-                FileType fileType = getFileType(unit2->fileName());
+            for (const auto &unit2 : projectUnits) {
+                FileType fileType = getFileType(unit2.path);
                 if (isC_CPPHeaderFile(fileType)) {
-                    QString header = extractRelativePath(mProject->makeFileName(),unit2->fileName());
+                    QString header = extractRelativePath(mBuild.makefilePath,unit2.path);
                     objStr = objStr + ' ' + escapeFilenameForMakefilePrerequisite(header);
                 }
             }
         }
         QString objFileNameTarget;
         QString objFileNameCommand;
-        if (!mProject->options().folderForObjFiles.isEmpty()) {
-            QString fullObjname = includeTrailingPathDelimiter(mProject->options().folderForObjFiles) +
-                    extractFileName(unit->fileName());
-            QString objFile = extractRelativePath(mProject->makeFileName(), changeFileExt(fullObjname, SDCC_REL_SUFFIX));
+        if (!mBuild.options.folderForObjFiles.isEmpty()) {
+            QString fullObjname = includeTrailingPathDelimiter(mBuild.options.folderForObjFiles) +
+                    extractFileName(unit.path);
+            QString objFile = extractRelativePath(mBuild.makefilePath, changeFileExt(fullObjname, SDCC_REL_SUFFIX));
             objFileNameTarget = escapeFilenameForMakefileTarget(objFile);
             objFileNameCommand = escapeArgumentForMakefileRecipe(objFile, false);
         } else {
@@ -257,19 +260,19 @@ void SDCCProjectCompiler::writeMakeObjFilesRules(QFile &file)
 
         // Write custom build command
 
-        if (unit->overrideBuildCmd() && !unit->buildCmd().isEmpty()) {
-            QString BuildCmd = unit->buildCmd();
+        if (unit.overrideBuildCommand && !unit.buildCommand.isEmpty()) {
+            QString BuildCmd = unit.buildCommand;
             BuildCmd.replace("<CRTAB>", "\n\t");
             writeln(file, '\t' + BuildCmd);
             // Or roll our own
         } else {
             if (fileType==FileType::CSource) {
-                if(mProject->options().folderForObjFiles.isEmpty()) {
+                if(mBuild.options.folderForObjFiles.isEmpty()) {
                     writeln(file, "\t$(CC) $(CFLAGS) -c " + escapeArgumentForMakefileRecipe(shortFileName, false));
                 }else{
-                    QString fullObjDir = includeTrailingPathDelimiter(mProject->options().folderForObjFiles);
-                    QString relativeObjDir = extractRelativePath(mProject->directory(),fullObjDir);
-                    QString objfile=extractRelativePath(generateAbsolutePath(mProject->directory(),relativeObjDir),unit->fileName());
+                    QString fullObjDir = includeTrailingPathDelimiter(mBuild.options.folderForObjFiles);
+                    QString relativeObjDir = extractRelativePath(mBuild.directory,fullObjDir);
+                    QString objfile=extractRelativePath(generateAbsolutePath(mBuild.directory,relativeObjDir),unit.path);
                     writeln(file, "\t$(CD) "+ localizeMakefilePath(relativeObjDir)+" && $(CC) $(CFLAGS) -c " + localizeMakefilePath(objfile));
                 }
 
@@ -279,11 +282,11 @@ void SDCCProjectCompiler::writeMakeObjFilesRules(QFile &file)
 
 }
 
-void SDCCProjectCompiler::writeln(QFile &file, const QString &s)
+void SDCCProjectCompiler::writeln(Compilation::GeneratedTextFile &file, const QString &s)
 {
-    if (!s.isEmpty())
-        file.write(s.toLocal8Bit());
-    file.write("\n");
+    checkCancellation();
+    const auto written = file.appendLine(s);
+    if (!written.succeeded()) throw CompileError(written.error);
 }
 
 bool SDCCProjectCompiler::prepareForRebuild()
@@ -294,18 +297,23 @@ bool SDCCProjectCompiler::prepareForRebuild()
 
 bool SDCCProjectCompiler::prepareForCompile()
 {
-    if (!mProject)
-        return false;
     //initProgressForm();
     log(tr("Compiling project changes..."));
     log("--------");
-    log(tr("- Project Filename: %1").arg(mProject->filename()));
-    log(tr("- Compiler Set Name: %1").arg(compilerSet()->name()));
+    log(tr("- Project Filename: %1").arg(mBuild.projectPath));
+    log(tr("- Compiler Set Name: %1").arg(configuration().toolchain.name));
     log("");
 
+    const bool generated = !mBuild.options.useCustomMakefile || mBuild.options.customMakefile.isEmpty();
+    if (generated && !mOnlyGenerateMakefile) validateGeneratedOutputPath(mBuild.outputPath);
     buildMakeFile();
+    if (mOnlyGenerateMakefile) {
+        if (!QFileInfo(mBuild.makefilePath).isFile())
+            throw CompileError(tr("Makefile '%1' does not exist.").arg(mBuild.makefilePath));
+        return true;
+    }
 
-    mCompiler = compilerSet()->make();
+    mCompiler = configuration().toolchain.make;
 
     if (!programExists(mCompiler)) {
         throw CompileError(
@@ -315,18 +323,18 @@ bool SDCCProjectCompiler::prepareForCompile()
     }
 
     QString parallelParam;
-    if (mProject->options().allowParallelBuilding) {
-        if (mProject->options().parellelBuildingJobs==0) {
+    if (mBuild.options.allowParallelBuilding) {
+        if (mBuild.options.parellelBuildingJobs==0) {
             parallelParam = "--jobs";
         } else {
-            parallelParam = QString("-j%1").arg(mProject->options().parellelBuildingJobs);
+            parallelParam = QString("-j%1").arg(mBuild.options.parellelBuildingJobs);
         }
     } else {
         parallelParam = "-j1";
     }
 
     QString makefile =
-            extractRelativePath(mProject->directory(), mProject->makeFileName());
+            extractRelativePath(mBuild.directory, mBuild.makefilePath);
     QStringList cleanArgs{
         "-f",
         makefile,
@@ -348,9 +356,9 @@ bool SDCCProjectCompiler::prepareForCompile()
     } else {
         mArguments = makeAllArgs;
     }
-    mDirectory = mProject->directory();
+    mDirectory = mBuild.directory;
 
-    mOutputFile = mProject->outputFilename();
+    mOutputFile = mBuild.outputPath;
     log(tr("Processing makefile:"));
     log("--------");
     log(tr("- makefile processer: %1").arg(mCompiler));

@@ -19,28 +19,28 @@
 
 #include "projectcompiler.h"
 #include <QObject>
-#include <QFile>
+#include "generatedtextfile.h"
 
 class Project;
 class SDCCProjectCompiler : public ProjectCompiler
 {
     Q_OBJECT
 public:
-    SDCCProjectCompiler(std::shared_ptr<Project> project);
+    explicit SDCCProjectCompiler(Compilation::ProjectBuildSnapshot snapshot);
     SDCCProjectCompiler(const SDCCProjectCompiler&)=delete;
     SDCCProjectCompiler& operator=(const SDCCProjectCompiler&)=delete;
     void buildMakeFile() override;
 
 private:
     void createStandardMakeFile();
-    void newMakeFile(QFile& file);
-    void writeMakeHeader(QFile& file);
-    void writeMakeDefines(QFile& file);
-    void writeMakeTarget(QFile& file);
-    void writeMakeIncludes(QFile& file);
-    void writeMakeClean(QFile& file);
-    void writeMakeObjFilesRules(QFile& file);
-    void writeln(QFile& file, const QString& s="");
+    void newMakeFile(Compilation::GeneratedTextFile& file);
+    void writeMakeHeader(Compilation::GeneratedTextFile& file);
+    void writeMakeDefines(Compilation::GeneratedTextFile& file);
+    void writeMakeTarget(Compilation::GeneratedTextFile& file);
+    void writeMakeIncludes(Compilation::GeneratedTextFile& file);
+    void writeMakeClean(Compilation::GeneratedTextFile& file);
+    void writeMakeObjFilesRules(Compilation::GeneratedTextFile& file);
+    void writeln(Compilation::GeneratedTextFile& file, const QString& s="");
     // Compiler interface
 protected:
     bool prepareForCompile() override;

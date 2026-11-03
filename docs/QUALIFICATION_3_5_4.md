@@ -211,3 +211,19 @@ projection allocation budget covers Structure snapshots and scratch data.
 Process memory and the historic high-memory incident require separate evidence.
 
 The same build passed 1,619 native Windows checks in English and 1,968 in Italian, with no skips.
+
+## Project compilation and Makefiles
+
+Project build, rebuild, clean and Makefile generation capture the toolchain,
+unit paths, flags, encodings and project options in the GUI thread. The worker
+uses those values. When a stable dependency entry is unavailable, generated
+rules use the conservative project-header fallback. Generated Makefiles are
+staged and replaced atomically. If a destination collides with a protected
+input, generation fails and the previous bytes are preserved.
+
+The Windows x64 build with Qt 6.11.2 passed 49 of 49 CTest groups in 133.50
+seconds. Native checks passed in English (1,621) and Italian (1,970), with no
+skips. They include the real GCC and GNU Make multi-unit build, failure and
+rebuild, a captured-options check and a generated-Makefile collision check.
+The SDCC project writer was compiled in this configuration. The recorded
+end-to-end project checks used GCC and GNU Make.

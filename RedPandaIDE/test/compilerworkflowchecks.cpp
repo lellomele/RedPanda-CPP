@@ -6,6 +6,8 @@
 #include "src/editor.h"
 #include "src/editormanager.h"
 #include "src/compiler/compilermanager.h"
+#include "src/compiler/projectcompiler.h"
+#include "src/compiler/projectbuildcapture.h"
 #include "src/compiler/executablerunner.h"
 #include "src/widgets/issuestable.h"
 #include "src/debugger/gdbmiresultparser.h"
@@ -559,6 +561,43 @@ int main(int argc, char **argv) {
     if (QFileInfo(make).isExecutable()) {
         fixtureSet->setMake(make);
         auto project = Project::load(projectFile, window.editorManager(), window.iconsManager(), window.fileSystemWatcher());
+        if (project) {
+            const QString previousCommand = project->options().cppCompilerCmd;
+            project->options().cppCompilerCmd = "-DQA_CAPTURED_PROJECT_FLAG=1";
+            const auto captured = Compilation::captureCompilerConfiguration(fixtureSet, project.get(), {}, false);
+            auto snapshot = Compilation::captureProjectBuild(*project, captured.values, false,
+                window.editorManager()->documentInputGeneration());
+            project->options().cppCompilerCmd = "-DQA_LIVE_PROJECT_FLAG=1";
+            const auto generate = [&](Compilation::ProjectBuildSnapshot request) {
+                auto task = std::make_unique<ProjectCompiler>(std::move(request));
+                task->setOnlyGenerateMakefile(true);
+                task->start();
+                if (!waitUntil([&] { return task->isFinished(); }, 15000)) {
+                    task->stopCompile();
+                    if (!waitUntil([&] { return task->isFinished(); }, 5000)) {
+                        // The test's outer process watchdog still owns this failure.
+                        auto *stopping = task.release();
+                        QObject::connect(stopping, &QThread::finished, stopping, &QObject::deleteLater);
+                    }
+                    return false;
+                }
+                return task->taskOutcome().succeeded();
+            };
+            const QString makefilePath = snapshot.makefilePath;
+            const bool generated = generate(snapshot);
+            QFile first(makefilePath);
+            const QByteArray previous = first.open(QIODevice::ReadOnly) ? first.readAll() : QByteArray{};
+            first.close();
+            record("project Makefile uses submitted options after the live project changes",
+                captured.preparation.ready() && generated && previous.contains("QA_CAPTURED_PROJECT_FLAG") &&
+                !previous.contains("QA_LIVE_PROJECT_FLAG"));
+            snapshot.units.append({makefilePath, {}, {}, false, false, false, false});
+            const bool conflicting = generate(std::move(snapshot));
+            QFile after(makefilePath);
+            record("project Makefile rejects an input collision and preserves the previous bytes",
+                !conflicting && !previous.isEmpty() && after.open(QIODevice::ReadOnly) && after.readAll() == previous);
+            project->options().cppCompilerCmd = previousCommand;
+        }
         const auto projectCompile = [&](bool rebuild) {
             CompileResult result;
             QObject projectScope;

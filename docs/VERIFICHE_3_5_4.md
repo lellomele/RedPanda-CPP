@@ -226,3 +226,20 @@ memoria complessiva del processo e il precedente episodio di consumo elevato
 richiedono verifiche distinte.
 
 La stessa build ha superato 1.619 controlli nativi Windows in inglese e 1.968 in italiano, senza prove saltate.
+
+## Compilazione di progetto e Makefile
+
+Compilazione, ricompilazione, pulizia e generazione del Makefile acquisiscono
+toolchain, percorsi delle unità, opzioni e codifiche nel thread dell’interfaccia.
+Il worker usa i valori acquisiti. Se mancano dipendenze accertate nella cache,
+le regole generate usano tutti gli header di progetto come prerequisiti. Il
+Makefile è scritto in un file temporaneo e sostituito in modo atomico. Se la
+destinazione coincide con un input protetto, la generazione fallisce e lascia
+intatti i byte precedenti.
+
+La build Windows x64 con Qt 6.11.2 ha superato 49 suite CTest su 49 in 133,50
+secondi. I controlli nativi sono passati in inglese (1.621) e italiano
+(1.970), senza prove saltate. Comprendono compilazione di più unità con GCC e
+GNU Make, errore e ricompilazione, verifica delle opzioni acquisite e collisione
+sul Makefile. La build include il generatore per progetti SDCC. Le prove
+complete di progetto qui registrate hanno usato GCC e GNU Make.

@@ -18,39 +18,41 @@
 #define PROJECTCOMPILER_H
 
 #include "compiler.h"
+#include "projectbuildsnapshot.h"
 #include <QObject>
-#include <QFile>
+#include "generatedtextfile.h"
 
-class Project;
 class ProjectCompiler : public Compiler
 {
     Q_OBJECT
 public:
-    ProjectCompiler(std::shared_ptr<Project> project);
+    explicit ProjectCompiler(Compilation::ProjectBuildSnapshot snapshot);
     ProjectCompiler(const ProjectCompiler&)=delete;
     ProjectCompiler& operator=(const ProjectCompiler&)=delete;
     virtual void buildMakeFile();
 
     bool onlyClean() const;
     void setOnlyClean(bool newOnlyClean);
+    void setOnlyGenerateMakefile(bool enabled) { mOnlyGenerateMakefile = enabled; }
 
 private:
     void createStandardMakeFile();
     void createStaticMakeFile();
     void createDynamicMakeFile();
-    void newMakeFile(QFile& file);
-    void newMakeFile(QFile& file, bool &genModuleDef);
-    void writeMakeHeader(QFile& file);
-    void writeMakeDefines(QFile& file, bool &genModuleDef);
-    void writeMakeTarget(QFile& file);
-    void writeMakeIncludes(QFile& file);
-    void writeMakeClean(QFile& file);
-    void writeMakeObjFilesRules(QFile& file);
-    void writeln(QFile& file, const QString& s="");
+    void newMakeFile(Compilation::GeneratedTextFile& file);
+    void newMakeFile(Compilation::GeneratedTextFile& file, bool &genModuleDef);
+    void writeMakeHeader(Compilation::GeneratedTextFile& file);
+    void writeMakeDefines(Compilation::GeneratedTextFile& file, bool &genModuleDef);
+    void writeMakeTarget(Compilation::GeneratedTextFile& file);
+    void writeMakeIncludes(Compilation::GeneratedTextFile& file);
+    void writeMakeClean(Compilation::GeneratedTextFile& file);
+    void writeMakeObjFilesRules(Compilation::GeneratedTextFile& file);
+    void writeln(Compilation::GeneratedTextFile& file, const QString& s="");
     // Compiler interface
 private:
     bool mOnlyClean;
 protected:
+    const Compilation::ProjectBuildSnapshot mBuild;
     bool prepareForCompile() override;
     bool prepareForRebuild() override;
 };

@@ -242,6 +242,9 @@ MainWindow::MainWindow(QWidget *parent)
     mCompilerManager->setMainWindow(this);
     connect(mCompilerManager, &CompilerManager::compileFinished,
             this, &MainWindow::onCompileFinished);
+    connect(mCompilerManager, &CompilerManager::projectMakefileReady, this, [this](const QString &file) {
+        if (!mQuitting) openFile(file);
+    });
 
     mDebugger = new Debugger(this);
     connect(mDebugger, &Debugger::debugFinished, this,
@@ -7798,7 +7801,6 @@ void MainWindow::on_actionView_Makefile_triggered()
     }
     prepareProjectForCompile();
     mCompilerManager->buildProjectMakefile(mProject);
-    openFile(mProject->makeFileName());
 }
 
 

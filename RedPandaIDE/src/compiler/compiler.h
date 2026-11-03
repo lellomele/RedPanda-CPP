@@ -47,9 +47,6 @@ public:
     bool isRebuild() const;
     void setRebuild(bool isRebuild);
 
-    const std::shared_ptr<Project> &project() const;
-    void setProject(const std::shared_ptr<Project> &newProject);
-
     const PCppParser &parserForFile() const;
     void setParserForFile(const PCppParser &newParserForFile);
     void setPreparationMailbox(std::shared_ptr<Compilation::PreparationMailbox> mailbox);
@@ -68,6 +65,7 @@ public slots:
     void stopCompile();
 
 protected:
+    Compiler(Compilation::FrozenConfiguration::Pointer projectConfiguration, bool capabilitiesKnown);
     void run() override;
     void processOutput(QString& line);
     virtual QString getFileNameFromOutputLine(QString &line);
@@ -102,9 +100,11 @@ protected:
     const QMap<QString, QString> &macroVariables() const { return mMacroVariables; }
     const Compilation::ConfigurationValues &configuration() const;
     void validateGeneratedOutputPath(const QString &path) const;
+    void checkCancellation() const;
 
 protected:
     bool mOnlyCheckSyntax;
+    bool mOnlyGenerateMakefile = false;
     QString mCompiler;
     QStringList mArguments;
     QList<QString> mExtraCompilersList;
@@ -117,14 +117,10 @@ protected:
     QString mFilename;
     QString mDirectory;
     bool mRebuild;
-    std::shared_ptr<Project> mProject;
     bool mSetLANG;
     PCppParser mParserForFile;
     bool mForceEnglishOutput;
     bool mSuppressDebugInfo = false;
-    QHash<quintptr, QByteArray> mProjectSourceEncodings;
-    QByteArray mProjectSystemEncoding;
-    QByteArray mProjectConsoleEncoding;
     QStringList mProtectedInputPaths;
 
 private:
@@ -132,6 +128,9 @@ private:
     void writeQaProcessTrace(const char *stage, const QProcess *process = nullptr, int started = -1) const;
     const std::shared_ptr<std::atomic_bool> mStop = std::make_shared<std::atomic_bool>(false);
     Compilation::FileCompileRequest::Pointer mFileRequest;
+    Compilation::FrozenConfiguration::Pointer mProjectConfiguration;
+    bool mProjectCapabilitiesKnown = false;
+    Compilation::FrozenConfiguration::Pointer prepareCapabilities(Compilation::FrozenConfiguration::Pointer configuration);
     std::shared_ptr<Compilation::PreparationMailbox> mPreparationMailbox;
     Compilation::FrozenConfiguration::Pointer mResolvedConfiguration;
     Compilation::AutolinkResolution mResolvedAutolink;

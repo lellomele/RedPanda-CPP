@@ -34,13 +34,20 @@ public:
     virtual bool roots(QStringView file, SemanticSourceVisitor) const = 0;
     virtual bool children(SemanticSourceId, SemanticSourceVisitor) const = 0;
 };
-enum class SemanticBuildStatus { Complete, Partial, BudgetExceeded, InvalidInput, AllocationFailure, SourceFailure };
+enum class SemanticBuildStatus { Complete, Partial, BudgetExceeded, InvalidInput, AllocationFailure, SourceFailure, Cancelled, TimedOut };
 struct SemanticPublicationDiagnostics {
     SnapshotBuildDiagnostics graph;
     quint64 sourceFiles = 0, uniquePayloads = 0, textCodeUnits = 0;
     quint64 textUnitsExamined = 0;
     bool sourceUnavailable = false, identityExhausted = false;
     bool textLimitReached = false;
+};
+struct OutlineOptions {
+    bool alphabetical = false;
+    bool groupByKind = false;
+    bool showInherited = true;
+    bool hideSingleUnderscore = false;
+    bool hideDoubleUnderscore = false;
 };
 struct SemanticPublicationRequest {
     PublicationIdentity identity;
@@ -50,6 +57,9 @@ struct SemanticPublicationRequest {
     std::size_t initialReservation = 0;
     quint64 maximumTextUnitsExamined = 16000000;
     bool wholeProject = false;
+    OutlineOptions outline;
+    std::shared_ptr<const std::atomic_bool> cancelled;
+    int maximumMilliseconds = 5000;
 };
 struct SemanticPublicationBuild {
     SemanticBuildStatus status = SemanticBuildStatus::InvalidInput;

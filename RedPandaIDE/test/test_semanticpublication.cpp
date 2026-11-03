@@ -4,6 +4,9 @@
 #include "src/analysis/enginesemanticadapter.h"
 #include "src/analysis/semanticsnapshotbuilder.h"
 #include <QTest>
+#include <QAbstractItemModelTester>
+#include <QElapsedTimer>
+#include "src/widgets/classbrowser.h"
 #include <QSemaphore>
 #include <map>
 #include <mutex>
@@ -52,6 +55,7 @@ class Source final : public SemanticGraphSource {
 public:
     bool symbol(SemanticSourceId id, SemanticSourceSymbol &out) const override {
         if (throwOnRead) throw std::runtime_error("injected source failure");
+        if (cancelOnRead) cancelOnRead->store(true, std::memory_order_release);
         const auto found = values.find(id); if (found == values.end()) return false;
         const auto &v = found->second;
         out.parent = v.parent; out.name = v.name; out.qualifiedName = v.qualifiedName;
@@ -80,6 +84,7 @@ public:
     std::map<QString, std::vector<SemanticSourceId>> files;
     mutable std::map<SemanticSourceId, int> childScans;
     bool throwOnRead = false;
+    std::shared_ptr<std::atomic_bool> cancelOnRead;
 };
 SemanticPublicationRequest request(bool project = false)
 {
@@ -107,9 +112,13 @@ void verifyTree(const SemanticPublicationPtr &publication)
         QVERIFY(node.firstChild <= tree.children().size()); QVERIFY(node.childCount <= tree.children().size() - node.firstChild);
         for (quint32 i = 0; i < node.childCount; ++i) {
             const auto child = tree.children()[node.firstChild + i]; QVERIFY(child > id); QVERIFY(child < tree.nodes().size());
-            QCOMPARE(tree.nodes()[child].parent, id); pending.push_back(child);
+            QCOMPARE(tree.nodes()[child].parent, id);
+            QCOMPARE(tree.nodes()[child].rowInParent, i);
+            pending.push_back(child);
         }
     }
+    for (quint32 row = 0; row < tree.roots().size(); ++row)
+        QCOMPARE(tree.nodes()[tree.roots()[row]].rowInParent, row);
     for (bool reachable : seen) QVERIFY(reachable);
 }
 QString field(const SemanticPublicationPtr &publication, const SemanticOutlineNode &node, SemanticTextRef SemanticRecord::*member)
@@ -294,4 +303,265 @@ void TestSemanticPublication::invalid_or_unavailable_source_is_not_complete()
     auto invalid = request(); invalid.identity.service = 0;
     QCOMPARE(SemanticPublicationBuilder::build(source, invalid, ids, ledger, reclaim).status, SemanticBuildStatus::InvalidInput);
     missing.publication.reset(); reclaim->drainOnWorker(); QCOMPARE(ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestSemanticPublication::native_adapter_exact_paths_preserve_distinct_unicode_files()
+{
+    const QString plain = QStringLiteral("k.cpp"), kelvin = QString::fromUtf8("\xE2\x84\xAA.cpp");
+    const auto statement = [](const QString &file, const QString &name) {
+        auto value = std::make_shared<Statement>(); value->fileName = file; value->definitionFileName = file;
+        value->command = name; value->fullName = name; value->line = 1; value->definitionLine = 1;
+        value->kind = StatementKind::Variable; value->scope = StatementScope::Global;
+        value->accessibility = StatementAccessibility::Public; value->properties = StatementProperty::InProject;
+        return value;
+    };
+    StatementMap first, second; first.insert("plain_symbol", statement(plain, "plain_symbol"));
+    second.insert("kelvin_symbol", statement(kelvin, "kelvin_symbol"));
+    // Put Kelvin first: the old Qt case-insensitive lookup incorrectly selected it for k.cpp.
+    const EngineSemanticFileView views[]{{kelvin, &second}, {plain, &first}};
+    SemanticMemoryLedger ledger(1024 * 1024); SemanticIdentitySource ids(19);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    {
+        auto reservation = ledger.tryReserve(); auto scratch = reservation.resource(SemanticMemoryKind::Scratch);
+        EngineSemanticGraphSource adapter(views, 2, scratch);
+        auto input = request(); input.files = {plain}; input.primaryFile = plain;
+        auto a = SemanticPublicationBuilder::build(adapter, input, ids, ledger, reclaim);
+        QVERIFY(a.complete()); QCOMPARE(a.publication->outline()->nodes().size(), std::size_t(1));
+        QCOMPARE(field(a.publication, a.publication->outline()->nodes()[0], &SemanticRecord::name), QString("plain_symbol"));
+        input.identity.job++; input.files = {kelvin}; input.primaryFile = kelvin;
+        auto b = SemanticPublicationBuilder::build(adapter, input, ids, ledger, reclaim);
+        QVERIFY(b.complete()); QCOMPARE(b.publication->outline()->nodes().size(), std::size_t(1));
+        QCOMPARE(field(b.publication, b.publication->outline()->nodes()[0], &SemanticRecord::name), QString("kelvin_symbol"));
+        input.identity.job++; input.wholeProject = true; input.files = {plain, kelvin};
+        auto both = SemanticPublicationBuilder::build(adapter, input, ids, ledger, reclaim);
+        QVERIFY(both.complete()); QCOMPARE(both.publication->outline()->nodes().size(), std::size_t(2));
+        QSet<QString> names;
+        for (const auto &node : both.publication->outline()->nodes()) names.insert(field(both.publication, node, &SemanticRecord::name));
+        QCOMPARE(names, QSet<QString>({"plain_symbol", "kelvin_symbol"}));
+        input.identity.job++; input.files = {"K.cpp"}; input.primaryFile = "K.cpp"; input.wholeProject = false;
+        auto missing = SemanticPublicationBuilder::build(adapter, input, ids, ledger, reclaim);
+        QVERIFY(!missing.complete()); QVERIFY(missing.diagnostics.sourceUnavailable);
+        // No unspecified first-match alias may contribute either symbol.
+        QVERIFY(!missing.publication || missing.publication->outline()->nodes().empty());
+        a.publication.reset(); b.publication.reset(); both.publication.reset(); missing.publication.reset();
+        reclaim->drainOnWorker();
+    }
+    QCOMPARE(ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestSemanticPublication::outline_builds_labels_sorted_rows_and_owned_context()
+{
+    Source source;
+    source.add(1, "_HiddenScope", StatementKind::Class);
+    source.values[1].declaration = source.values[1].definition = "library.hpp";
+    source.values[1].children = {2, 3, 4, 5, 6};
+    source.add(2, "beta", StatementKind::Function, 1);
+    source.values[2].type = "bool"; source.values[2].arguments = "()"; source.values[2].line = 2;
+    source.add(3, "Alpha", StatementKind::Typedef, 1);
+    source.values[3].type = "int"; source.values[3].arguments = "(double)"; source.values[3].line = 4;
+    source.add(4, "virtualMethod", StatementKind::Function, 1);
+    source.values[4].properties |= static_cast<quint32>(StatementProperty::Inherited);
+    source.add(5, "__hidden", StatementKind::Variable, 1);
+    source.values[5].declaration = source.values[5].definition = "library.hpp";
+    source.add(6, "__active", StatementKind::Variable, 1);
+    source.values[6].type = "int"; source.values[6].line = 3;
+    source.add(7, "global", StatementKind::Variable);
+    source.values[7].type = "int";
+    source.add(8, "{", StatementKind::Namespace);
+    source.files["source.cpp"] = {1, 2, 3, 4, 5, 6, 7, 8};
+
+    auto input = request();
+    input.outline = {true, false, false, true, true};
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(1024 * 1024);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    auto outcome = SemanticPublicationBuilder::build(source, input, ids, ledger, reclaim);
+    QVERIFY(outcome.complete());
+    verifyTree(outcome.publication);
+    const auto &tree = *outcome.publication->outline();
+    QCOMPARE(tree.nodes().size(), std::size_t(6));
+    const auto scope = std::find_if(tree.nodes().begin(), tree.nodes().end(), [&](const auto &node) {
+        return tree.label(node) == u"_HiddenScope";
+    });
+    QVERIFY(scope != tree.nodes().end());
+    QVERIFY(scope->contextOnly);
+    QCOMPARE(scope->childCount, quint32(3));
+    QCOMPARE(tree.label(tree.nodes()[tree.children()[scope->firstChild]]), QStringView(u"__active : int"));
+    QCOMPARE(tree.label(tree.nodes()[tree.children()[scope->firstChild + 1]]), QStringView(u"Alpha : int (*)(double)"));
+    QCOMPARE(tree.label(tree.nodes()[tree.children()[scope->firstChild + 2]]), QStringView(u"beta() : bool"));
+    const auto global = std::find_if(tree.nodes().begin(), tree.nodes().end(), [&](const auto &node) {
+        return tree.label(node) == u"global : int";
+    });
+    QVERIFY(global != tree.nodes().end());
+    QCOMPARE(global->color, StatementKind::GlobalVariable);
+    QCOMPARE(global->icon.kind, StatementKind::GlobalVariable);
+    QVERIFY(std::any_of(tree.nodes().begin(), tree.nodes().end(), [](const auto &node) { return node.anonymous; }));
+    outcome.publication.reset();
+    reclaim->drainOnWorker();
+}
+
+void TestSemanticPublication::exact_adapter_rejects_conflicting_duplicate_views()
+{
+    const QString filename = "source.cpp";
+    StatementMap first, second;
+    const EngineSemanticFileView files[]{{filename, &first}, {filename, &second}};
+    SemanticMemoryLedger ledger(1024 * 1024);
+    auto reservation = ledger.tryReserve();
+    EngineSemanticGraphSource adapter(files, 2, reservation.resource(SemanticMemoryKind::Scratch));
+    SemanticIdentitySource ids(19);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    auto outcome = SemanticPublicationBuilder::build(adapter, request(), ids, ledger, reclaim);
+    QVERIFY(!outcome.complete());
+    QVERIFY(outcome.diagnostics.sourceUnavailable);
+    outcome.publication.reset();
+    reclaim->drainOnWorker();
+}
+
+void TestSemanticPublication::model_rejects_obsolete_demands_and_stale_indexes()
+{
+    auto source = simpleSource();
+    source.values[2].definition = "impl.cpp";
+    source.values[2].definitionLine = 42;
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(1024 * 1024);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    auto input = request();
+    auto first = SemanticPublicationBuilder::build(source, input, ids, ledger, reclaim);
+    QVERIFY(first.complete());
+    ++input.identity.job;
+    auto second = SemanticPublicationBuilder::build(source, input, ids, ledger, reclaim);
+    QVERIFY(second.complete());
+    ClassBrowserModel model;
+    QAbstractItemModelTester modelCheck(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const OutlineDemand a{19, 10, 5}, b{19, 11, 5};
+    QCOMPARE(model.expect(a, true), OutlineApply::Applied);
+    QCOMPARE(model.apply(a, first.publication), OutlineApply::Applied);
+    const auto root = model.index(0, 0);
+    const auto child = model.index(0, 0, root);
+    QVERIFY(root.isValid() && child.isValid());
+    QCOMPARE(model.parent(child), root);
+    QCOMPARE(model.rowCount(child), 0);
+    QCOMPARE(model.data(child).toString(), QString("Root::member : int"));
+    OutlineAppearance appearance;
+    appearance.text = Qt::yellow;
+    model.setAppearance(std::move(appearance));
+    QCOMPARE(model.data(child, Qt::ForegroundRole).value<QColor>(), QColor(Qt::yellow));
+    const auto selection = model.selection(child);
+    QCOMPARE(model.indexFor(selection.exact), child);
+    const auto navigation = model.navigation(child);
+    QCOMPARE(navigation.declaration, QString("source.cpp"));
+    QCOMPARE(navigation.definition, QString("impl.cpp"));
+    QCOMPARE(navigation.definitionLine, 42);
+    QCOMPARE(model.expect(b, false), OutlineApply::Applied);
+    QCOMPARE(model.apply(a, first.publication), OutlineApply::Obsolete);
+    QVERIFY(model.data(child).isValid());
+    QCOMPARE(model.apply(b, second.publication), OutlineApply::Applied);
+    QVERIFY(!model.data(child).isValid());
+    QVERIFY(!model.indexFor(selection.exact).isValid());
+    QVERIFY(model.uniqueIndexForHint(selection.hint).isValid());
+    QCOMPARE(navigation.definition, QString("impl.cpp")); // Copied before the reset.
+    const OutlineDemand other{20, 1, 5};
+    QCOMPARE(model.expect(other, false), OutlineApply::Applied);
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(model.apply(other, second.publication), OutlineApply::Invalid);
+    first.publication.reset();
+    second.publication.reset();
+    reclaim->drainOnWorker();
+    QCOMPARE(ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestSemanticPublication::model_indexes_large_sibling_sets_without_engine_reads()
+{
+    constexpr int siblingCount = 50000;
+    Source source;
+    source.add(1, "Parent", StatementKind::Class);
+    source.files["source.cpp"] = {1};
+    for (int row = 0; row < siblingCount; ++row) {
+        const auto id = SemanticSourceId(row + 2);
+        source.add(id, QString("member_%1").arg(row), StatementKind::Variable, 1);
+        source.values[id].line = row + 2;
+        source.values[1].children.push_back(id);
+    }
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(128 * 1024 * 1024);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    QElapsedTimer elapsed;
+    elapsed.start();
+    auto outcome = SemanticPublicationBuilder::build(source, request(), ids, ledger, reclaim);
+    QVERIFY(outcome.complete());
+    const auto constructionMs = elapsed.elapsed();
+    ClassBrowserModel model;
+    const OutlineDemand demand{19, 1, 5};
+    QCOMPARE(model.expect(demand, true), OutlineApply::Applied);
+    QCOMPARE(model.apply(demand, outcome.publication), OutlineApply::Applied);
+    source.throwOnRead = true;
+    const auto parent = model.index(0, 0);
+    QCOMPARE(model.rowCount(parent), siblingCount);
+    elapsed.restart();
+    for (int row = 0; row < siblingCount; row += 13) {
+        const auto child = model.index(row, 0, parent);
+        QVERIFY(child.isValid());
+        QCOMPARE(model.parent(child), parent);
+        QCOMPARE(model.data(child).toString(), QString("member_%1").arg(row));
+    }
+    qInfo("projection_ms=%lld model_roundtrips_ms=%lld siblings=%d peak_charged=%llu",
+          static_cast<long long>(constructionMs), static_cast<long long>(elapsed.elapsed()), siblingCount,
+          static_cast<unsigned long long>(ledger.usage().peakAdmitted));
+    outcome.publication.reset();
+    QCOMPARE(model.expect({}, true), OutlineApply::Applied);
+    reclaim->drainOnWorker();
+    QCOMPARE(ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestSemanticPublication::cancelled_outline_never_publishes_partial_data()
+{
+    auto source = simpleSource();
+    auto input = request();
+    source.cancelOnRead = std::make_shared<std::atomic_bool>(false);
+    input.cancelled = source.cancelOnRead;
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(1024 * 1024);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    const auto result = SemanticPublicationBuilder::build(source, input, ids, ledger, reclaim);
+    QCOMPARE(result.status, SemanticBuildStatus::Cancelled);
+    QVERIFY(!result.publication);
+    reclaim->drainOnWorker();
+    QCOMPARE(ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestSemanticPublication::publication_requires_same_certified_source_configuration_and_revision()
+{
+    auto graph = simpleSource();
+    const OutlineStamp stamp{3, "configuration-A", 4, "C:/workspace"};
+    const OutlineCertifiedInput inputs{stamp, 7, {"source.cpp"}, true};
+    OutlineJobRequest job{{19, 10, 5}, stamp, 7, 41, 6, "source.cpp"};
+    SemanticIdentitySource ids(19);
+    SemanticMemoryLedger ledger(1024 * 1024);
+    auto reclaim = std::make_shared<ManualReclaimer>();
+    auto earlier = job;
+    earlier.stamp.configurationTicket = 2;
+    const auto obsolete = buildOutline(graph, inputs, earlier, ids, ledger, reclaim);
+    QCOMPARE(obsolete.status, OutlineJobStatus::Obsolete);
+    QVERIFY(!obsolete.publication);
+    earlier = job;
+    ++earlier.sourceJob;
+    QCOMPARE(buildOutline(graph, inputs, earlier, ids, ledger, reclaim).status, OutlineJobStatus::Obsolete);
+    earlier = job;
+    earlier.primaryFile = "other.cpp";
+    QCOMPARE(buildOutline(graph, inputs, earlier, ids, ledger, reclaim).status, OutlineJobStatus::Unavailable);
+    auto invalid = inputs;
+    invalid.complete = false;
+    QCOMPARE(buildOutline(graph, invalid, job, ids, ledger, reclaim).status, OutlineJobStatus::Unavailable);
+    auto valid = buildOutline(graph, inputs, job, ids, ledger, reclaim);
+    QCOMPARE(valid.status, OutlineJobStatus::Ready);
+    QVERIFY(valid.matches(job));
+    QCOMPARE(valid.publication->identity().job, quint64(7));
+    ++job.documentRevision;
+    QVERIFY(!valid.matches(job));
+    --job.documentRevision;
+    ++job.demand.sequence;
+    QVERIFY(!valid.matches(job));
+    valid.publication.reset();
+    reclaim->drainOnWorker();
+    QCOMPARE(ledger.usage().admitted(), std::size_t(0));
 }

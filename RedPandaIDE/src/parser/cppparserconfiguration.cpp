@@ -56,6 +56,9 @@ quint64 CppParser::configurationTicket() const {
 quint64 CppParser::appliedConfigurationTicket() const {
     QMutexLocker locker(&mMutex); return mAppliedConfigurationTicket;
 }
+QByteArray CppParser::appliedConfigurationDigest() const {
+    QMutexLocker locker(&mMutex); return mAppliedConfigurationDigest;
+}
 CppParser::ConfigurationState CppParser::configurationState() const {
     QMutexLocker locker(&mMutex); return mConfigurationState;
 }
@@ -94,7 +97,9 @@ quint64 CppParser::beginConfigurationPreparation()
         ticket = ++mRequestedConfigurationTicket;
         discarded.swap(mAnalysisQueue);
         for (auto &command : discarded) command.cancelled->store(true, std::memory_order_release);
-        if (mActiveAnalysisCommand && (mActiveAnalysisCommand->kind == AnalysisCommandKind::PrepareConfiguration
+        mExpectedOutline.reset();
+        if (mActiveAnalysisCommand && (mActiveAnalysisCommand->kind == AnalysisCommandKind::BuildOutline
+                || mActiveAnalysisCommand->kind == AnalysisCommandKind::PrepareConfiguration
                 || mActiveAnalysisCommand->kind == AnalysisCommandKind::ApplyConfiguration))
             mActiveAnalysisCommand->cancelled->store(true, std::memory_order_release);
         mRequestedBuilderDirty = false;
@@ -442,7 +447,8 @@ void CppParser::startPendingParseCommands()
         owner = mAsyncOwner.lock(); if (!owner) return;
         const auto &next = mAnalysisQueue.first();
         if ((next.kind == AnalysisCommandKind::ParseFile || next.kind == AnalysisCommandKind::ParseFileList
-                || next.kind == AnalysisCommandKind::ResetParsedResults || next.kind == AnalysisCommandKind::InvalidateFiles)
+                || next.kind == AnalysisCommandKind::ResetParsedResults || next.kind == AnalysisCommandKind::InvalidateFiles
+                || next.kind == AnalysisCommandKind::BuildOutline)
                 && next.ticket != mAppliedConfigurationTicket) return;
         command = mAnalysisQueue.takeFirst();
         mActiveAnalysisCommand = command; mWriterReserved = true;
@@ -458,6 +464,8 @@ void CppParser::startPendingParseCommands()
             owner->finishAnalysisWorker(id, configuration,
                 configuration->result, configuration->error, configuration->cancelled);
         }, Qt::QueuedConnection);
+    } else if (command.kind == AnalysisCommandKind::BuildOutline) {
+        worker = makeOutlineWorker(owner, command);
     } else {
         if (command.kind == AnalysisCommandKind::ResetParsedResults || command.kind == AnalysisCommandKind::InvalidateFiles)
             worker = new CppParsedResultsResetThread(owner, command.invalidatedFiles);

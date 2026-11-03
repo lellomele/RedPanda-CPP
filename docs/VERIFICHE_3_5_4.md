@@ -200,3 +200,29 @@ in italiano, tutti eseguiti. In un’esecuzione inglese il programma ha prodotto
 il primo output dopo 6,540 secondi e il worker ha concluso un millisecondo
 dopo. Il maggior intervallo misurato fra due aggiornamenti della GUI è stato
 di 51 ms.
+
+## Struttura legge un albero immutabile
+
+Struttura espande i nodi e consente di navigare usando un albero immutabile. Il
+parser possiede il grafo modificabile dei simboli e prepara l’albero nella coda
+di analisi. Ogni richiesta identifica documento, revisione, progetto,
+configurazione e analisi che ha verificato i sorgenti. Il cambio di file svuota
+l’albero precedente. Durante un aggiornamento dello stesso file l’albero può
+restare visibile. Il pannello scarta gli indici di un albero precedente e
+libera i dati dismessi in background.
+
+Il test di sovrapposizione accoda una richiesta di Struttura dietro una seconda
+analisi della stessa generazione dei documenti e verifica che il risultato
+precedente venga scartato. Il test di progetto parte dai dati di un solo file
+e verifica che Struttura chieda al parser di leggere anche gli altri prima di
+mostrare l’intero albero. Le suite di ripristino e concorrenza coprono l’avvio,
+l’espansione di nodi annidati e il cambio tra file che condividono il parser.
+
+La build di sviluppo Windows x64 con Qt 6.11.2 ha superato tutte le 49 suite
+CTest in 182,15 secondi. La verifica riguarda i sorgenti letti dal parser.
+Un cambiamento successivo sul disco può invalidarla. Il limite di allocazione
+riguarda gli alberi di Struttura e i dati temporanei della proiezione. La
+memoria complessiva del processo e il precedente episodio di consumo elevato
+richiedono verifiche distinte.
+
+La stessa build ha superato 1.619 controlli nativi Windows in inglese e 1.968 in italiano, senza prove saltate.

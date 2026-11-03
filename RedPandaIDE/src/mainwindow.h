@@ -25,7 +25,8 @@
 #include <QSortFilterProxyModel>
 #include "common.h"
 #include "widgets/searchresultview.h"
-#include "widgets/classbrowser.h"
+#include "widgets/classbrowsercontroller.h"
+#include "analysis/semanticretirement.h"
 #include "widgets/codecompletionpopup.h"
 #include "widgets/headercompletionpopup.h"
 #include "widgets/functiontooltipwidget.h"
@@ -169,6 +170,7 @@ public:
     void updateDebugEval(const QString& value);
     void rebuildOpenedFileHisotryMenu();
     void updateClassBrowserForEditor(Editor* editor);
+    ClassBrowserController *classBrowserController() const { return mClassBrowserController; }
     void resetAutoSaveTimer();
     void updateShortcuts();
     bool saveLastOpens();
@@ -955,7 +957,13 @@ private:
     SearchResultModel *mSearchResultModel;
     BookmarkModel *mBookmarkModel;
     SearchResultTreeViewDelegate *mSearchViewDelegate;
-    ClassBrowserModel *mClassBrowserModel;
+    ClassBrowserController::SourceIdentity classBrowserSource(const Editor *editor) const;
+    void updateClassBrowserAppearance();
+    void navigateFromStructure(const QString &filename, int line);
+    ClassBrowserController *mClassBrowserController = nullptr;
+    ClassBrowserModel *mClassBrowserModel = nullptr;
+    std::shared_ptr<Analysis::SemanticRetirementScheduler> mOutlineRetirement;
+    QTimer mOutlineStopCheckTimer;
     QTimer mStructureUpdateBlinkTimer;
     std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > mStatementColors;
     SymbolUsageManager *mSymbolUsageManager;

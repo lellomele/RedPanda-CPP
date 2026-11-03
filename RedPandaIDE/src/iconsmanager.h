@@ -34,6 +34,8 @@ class DirSettings;
 
 class QToolButton;
 class QPushButton;
+namespace Analysis { struct OutlineIconDescriptor; }
+
 class IconsManager : public QObject
 {
     Q_OBJECT
@@ -218,6 +220,7 @@ public:
     void prepareCustomIconSet(const QString &customIconSet);
 
     QPixmap getPixmapForStatement(PStatement statement);
+    QPixmap getPixmapForOutline(const Analysis::OutlineIconDescriptor &icon);
     QPixmap getPixmapForStatement(PStatement statement, int size);
 
     const QString iconSetsFolder() const;
@@ -231,6 +234,7 @@ private:
     void updateMakeDisabledIconDarker(const QString& iconset);
     void updateParserIcons(QMap<IconName,PPixmap> &iconPixmaps, const QString& iconSet, int size);
     QPixmap getPixmapForStatement(const QMap<IconName,PPixmap> &iconPixmaps, PStatement statement);
+    QPixmap getPixmapForOutline(const QMap<IconName,PPixmap> &iconPixmaps, const Analysis::OutlineIconDescriptor &icon);
     PPixmap getPixmap(const QMap<IconName,PPixmap> &iconPixmaps, IconName iconName) const;
 signals:
     void actionIconsUpdated();

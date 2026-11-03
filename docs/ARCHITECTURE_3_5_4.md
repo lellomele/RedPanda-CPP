@@ -129,3 +129,14 @@ Temporary adapter: EditorClosePlan currently compares GUI text snapshots at
 close time. Replace that identity/revision check with DocumentStore revisions
 once all mutation notifications have been qualified. The scope/membership and
 discard decisions remain part of the controller contract.
+
+## Runtime Structure publication
+
+Structure now consumes the immutable projection described above. Its GUI
+controller tracks the current workspace and document and submits projection
+requests to the parser writer. The tree model owns no parser objects and
+expansion reads only published rows. Publication checks the certified parse job
+and current document identity. A complete project view requires every requested
+project root. Retained snapshots stay charged until background reclamation.
+Completion, refactoring and the remaining service shutdown paths are separate
+migration steps. The qualification record contains the Windows results.

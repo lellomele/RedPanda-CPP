@@ -74,6 +74,7 @@ public:
     DocumentId documentId(const Editor *editor) const;
     DocumentRevision documentRevision(const Editor *editor) const;
     QString documentAbsolutePath(const Editor *editor) const;
+    quint64 documentInputGeneration() const;
     Editor *editorForDocument(DocumentId id) const;
     DocumentSaveAsResult saveDocument(Editor *editor, const DocumentSaveRequest &request);
     UnitLocationCommitResult relinkProjectUnit(const std::shared_ptr<Project> &project,

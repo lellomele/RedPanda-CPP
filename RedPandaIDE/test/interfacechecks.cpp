@@ -354,17 +354,17 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             deadline.start();
             while (deadline.elapsed() < 10000 &&
                    (target->parser()->hasPendingWork() ||
-                    QDir::cleanPath(model->currentFile()) != QDir::cleanPath(target->filename()) ||
+                    QDir::cleanPath(window.classBrowserController()->context().source.logical) != QDir::cleanPath(target->filename()) ||
                     (wanted.isEmpty() ? model->rowCount({}) != 0 : !hasRoot(wanted))))
                 waitForUi(20);
             const bool titleMatches = window.windowTitle().contains(QDir::toNativeSeparators(target->filename())) ||
                 window.windowTitle().contains(QDir::fromNativeSeparators(target->filename()));
-            const bool correct = manager->getEditor() == target && titleMatches && model->parser() == target->parser() &&
+            const bool correct = manager->getEditor() == target && titleMatches && window.classBrowserController()->context().parser == target->parser() &&
                 !target->parser()->hasPendingWork() &&
-                QDir::cleanPath(model->currentFile()) == QDir::cleanPath(target->filename()) &&
+                QDir::cleanPath(window.classBrowserController()->context().source.logical) == QDir::cleanPath(target->filename()) &&
                 (wanted.isEmpty() ? model->rowCount({}) == 0 : hasRoot(wanted)) && !hasRoot(unwanted);
             observations.append(QJsonObject{{"cycle", cycle}, {"kind", kind},
-                {"expectedSymbol", wanted}, {"currentFile", model->currentFile()},
+                {"expectedSymbol", wanted}, {"currentFile", window.classBrowserController()->context().source.logical},
                 {"editorFile", target->filename()}, {"pending", target->parser()->hasPendingWork()},
                 {"activeEditorFile", manager->getEditor() ? manager->getEditor()->filename() : QString()},
                 {"windowTitle", window.windowTitle()}, {"titleMatches", titleMatches},
@@ -510,7 +510,7 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         QPersistentModelIndex prime(findPrime());
         if (!prime.isValid() || !editor->parser()->fileScanned(expected))
             return finish(false, "PrimeResult or parsed file not ready", {}, -1, -1);
-        if (model->parser() != editor->parser() || QDir::cleanPath(model->currentFile()) != expected)
+        if (window.classBrowserController()->context().parser != editor->parser() || QDir::cleanPath(window.classBrowserController()->context().source.logical) != expected)
             return finish(false, "Structure refers to a different editor", {}, -1, -1);
         QJsonArray children;
         bool hasCount = false, hasSum = false;
@@ -557,9 +557,9 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             for (int cycle = 0; cycle < 3; ++cycle) {
                 QElapsedTimer readyWait; readyWait.start();
                 while (readyWait.elapsed() < 10000 &&
-                       (parser->parsing() || model->currentFile() != expected || !findPrime().isValid()))
+                       (parser->parsing() || window.classBrowserController()->context().source.logical != expected || !findPrime().isValid()))
                     waitForUi(20);
-                if (parser->parsing() || model->currentFile() != expected || !findPrime().isValid())
+                if (parser->parsing() || window.classBrowserController()->context().source.logical != expected || !findPrime().isValid())
                     return finish(false, "race did not settle before cycle", children, maxSwitchMs, -1);
                 prime = findPrime();
                 requested->store(true);
@@ -640,10 +640,10 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
                     return finish(false, "tab switching exceeded the QA responsiveness bound", children, maxSwitchMs, -1);
                 QElapsedTimer settle; settle.start();
                 while (settle.elapsed() < 10000 &&
-                       (parser->parsing() || model->currentFile() != expected || !findPrime().isValid()))
+                       (parser->parsing() || window.classBrowserController()->context().source.logical != expected || !findPrime().isValid()))
                     waitForUi(20);
                 prime = findPrime();
-                if (parser->parsing() || model->currentFile() != expected || !prime.isValid())
+                if (parser->parsing() || window.classBrowserController()->context().source.logical != expected || !prime.isValid())
                     return finish(false, "Structure did not recover after overlapping requests", children, maxSwitchMs, -1);
                 mark(QJsonObject{{"phase", "race-cycle-complete"}, {"cycle", cycle},
                                  {"rows", model->rowCount(prime)}});
@@ -744,14 +744,14 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         }
         const bool selected = editor && editorPage && editorPage->currentWidget() == editor
             && QDir::cleanPath(editor->filename()) == expected;
-        const bool modelAttached = selected && model && model->parser() == editor->parser()
-            && QDir::cleanPath(model->currentFile()) == expected;
+        const bool modelAttached = selected && model && window.classBrowserController()->context().parser == editor->parser()
+            && QDir::cleanPath(window.classBrowserController()->context().source.logical) == expected;
         const bool parsed = selected && editor->parser() && editor->parser()->fileScanned(expected);
         const bool configVisible = containsConfig();
         const QJsonObject report{
             {"expectedFile", expected},
             {"selectedFile", editor ? editor->filename() : QString()},
-            {"modelFile", model ? model->currentFile() : QString()},
+            {"modelFile", model ? window.classBrowserController()->context().source.logical : QString()},
             {"selected", selected}, {"modelAttached", modelAttached}, {"parsed", parsed},
             {"configVisible", configVisible}, {"rootRows", model ? model->rowCount({}) : -1},
             {"parserBusy", editor && editor->parser() && editor->parser()->parsing()}
@@ -852,253 +852,173 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         }
         cpu.hide();
     }
+    const auto waitOutline = [](const std::function<bool()> &condition, int timeout = 5000) {
+        QElapsedTimer elapsed;
+        elapsed.start();
+        while (!condition() && elapsed.elapsed() < timeout) waitForUi(10);
+        return condition();
+    };
+    const auto outlineResources = std::make_shared<Analysis::OutlineResources>(Analysis::OutlineResources{
+        Analysis::SemanticMemoryLedger(24 * 1024 * 1024), Analysis::SemanticRetirementScheduler::create()});
+    const auto bindOutlineFixture = [](const PCppParser &parser, const std::shared_ptr<DocumentStore> &store) {
+        parser->setInputSnapshotProvider([store] { return store->capture(); });
+    };
+    const auto outlineSymbol = [](const ClassBrowserModel &model, const QString &name) {
+        for (int row = 0; row < model.rowCount(); ++row)
+            if (model.data(model.index(row, 0)).toString().contains(name)) return true;
+        return false;
+    };
     {
-        // Repeated traversal of parser scopes must preserve nested and reopened
-        // namespaces, their members and their navigation attributes.
-        const QString file = QStringLiteral("structure_nesting_fixture.cpp");
+        const QString file = QDir(outputDirectory).filePath("structure_nesting_fixture.cpp");
         auto parser = std::make_shared<CppParser>();
-        parser->setOnGetFileStream([](const QString &name, QStringList &lines) {
-            if (!name.endsWith(QStringLiteral("structure_nesting_fixture.cpp"))) return false;
-            for (int i = 0; i < 80; ++i)
-                lines << QStringLiteral("namespace Level%1 {").arg(i);
-            lines << QStringLiteral("int deepest = 7;");
-            for (int i = 0; i < 80; ++i) lines << QStringLiteral("}");
-            lines << QStringLiteral("namespace Again { struct A { int x; }; }");
-            lines << QStringLiteral("namespace Again { struct B { int y; }; }");
-            return true;
-        });
-        CppParser::parseFileBlocking(parser, file, false, QString(), false, false);
-        ClassBrowserModel model;
-        model.beginUpdate(); model.setParser(parser); model.setCurrentFile(file); model.endUpdate();
+        auto store = std::make_shared<DocumentStore>();
+        QStringList source;
+        for (int i = 0; i < 80; ++i)
+            source << QStringLiteral("namespace Level%1 {").arg(i);
+        source << QStringLiteral("int deepest = 7;");
+        for (int i = 0; i < 80; ++i) source << QStringLiteral("}");
+        source << QStringLiteral("namespace Again { struct A { int x; }; }");
+        source << QStringLiteral("namespace Again { struct B { int y; }; }");
+        const auto id = store->add(file, [source](QStringList &lines) { lines = source; return true; });
+        bindOutlineFixture(parser, store);
+        const auto current = [store, id, file] {
+            return ClassBrowserController::SourceIdentity{store->generation(), id, store->revisionFor(id), file,
+                store->absolutePathFor(id)};
+        };
+        ClassBrowserController controller(outlineResources, current);
+        ClassBrowserController::Context context;
+        context.parser = parser;
+        context.source = current();
+        controller.setContext(context);
+        auto &model = *controller.model();
+        const bool available = waitOutline([&] { return controller.state() == ClassBrowserController::State::Ready; });
         const auto childNamed = [&](const QModelIndex &parent, const QString &name) {
             for (int row = 0; row < model.rowCount(parent); ++row) {
                 const auto index = model.index(row, 0, parent);
-                if (model.data(index, Qt::DisplayRole).toString() == name) return index;
+                if (model.data(index).toString() == name) return index;
             }
-            return QModelIndex();
+            return QModelIndex{};
         };
         QModelIndex nested;
-        int levelsFound = 0;
-        for (int i = 0; i < 80; ++i) {
+        int levels = 0;
+        for (int i = 0; available && i < 80; ++i) {
             nested = childNamed(nested, QStringLiteral("Level%1").arg(i));
             if (!nested.isValid()) break;
-            ++levelsFound;
+            ++levels;
         }
-        check("Structure retains all deeply nested namespaces", levelsFound == 80 && nested.isValid()
-              && model.rowCount(nested) == 1
-              && model.data(model.index(0, 0, nested), Qt::DisplayRole).toString().startsWith(QStringLiteral("deepest")));
-        const QModelIndex again = childNamed({}, QStringLiteral("Again"));
-        const QModelIndex a = again.isValid() ? childNamed(again, QStringLiteral("A")) : QModelIndex();
-        const QModelIndex b = again.isValid() ? childNamed(again, QStringLiteral("B")) : QModelIndex();
-        const bool members = again.isValid() && model.rowCount(again) == 2 && a.isValid() && b.isValid()
-                && model.rowCount(a) == 1 && model.rowCount(b) == 1
-                && model.data(model.index(0, 0, a), Qt::DisplayRole).toString().startsWith(QStringLiteral("x"))
-                && model.data(model.index(0, 0, b), Qt::DisplayRole).toString().startsWith(QStringLiteral("y"));
-        check("Structure merges reopened namespaces without losing members", members);
-        PStatement originalA, originalB;
-        const bool frozen = parser->freeze();
-        if (frozen) {
-            const auto info = parser->findFileInfo(file);
-            if (info) for (const PStatement &statement : info->statements()) {
-                if (statement->fullName == QStringLiteral("Again::A")) originalA = statement;
-                if (statement->fullName == QStringLiteral("Again::B")) originalB = statement;
-            }
-        }
-        const auto sameAttributes = [](const PStatement &actual, const PStatement &original) {
-            return actual && original && actual->kind == original->kind
-                    && actual->fullName == original->fullName && actual->fileName == original->fileName
-                    && actual->line == original->line && actual->args == original->args
-                    && actual->accessibility == original->accessibility;
-        };
-        auto *aNode = a.isValid() ? static_cast<ClassBrowserNode *>(a.internalPointer()) : nullptr;
-        auto *bNode = b.isValid() ? static_cast<ClassBrowserNode *>(b.internalPointer()) : nullptr;
-        check("Structure preserves namespace member navigation attributes", frozen && aNode && bNode
-              && sameAttributes(aNode->statement, originalA) && sameAttributes(bNode->statement, originalB));
-        if (frozen) parser->unFreeze();
+        check("Structure retains all deeply nested namespaces", levels == 80 && nested.isValid() &&
+              model.rowCount(nested) == 1 && model.data(model.index(0, 0, nested)).toString().startsWith("deepest"));
+        const auto again = childNamed({}, "Again");
+        const auto first = again.isValid() ? childNamed(again, "A") : QModelIndex{};
+        const auto second = again.isValid() ? childNamed(again, "B") : QModelIndex{};
+        check("Structure merges reopened namespaces without losing members", again.isValid() && model.rowCount(again) == 2 &&
+              first.isValid() && second.isValid() && model.rowCount(first) == 1 && model.rowCount(second) == 1 &&
+              model.data(model.index(0, 0, first)).toString().startsWith("x") &&
+              model.data(model.index(0, 0, second)).toString().startsWith("y"));
+        const auto firstNavigation = model.navigation(first);
+        const auto secondNavigation = model.navigation(second);
+        check("Structure preserves namespace member navigation attributes", first.isValid() && second.isValid() &&
+              firstNavigation.declaration == file && secondNavigation.declaration == file &&
+              firstNavigation.declarationLine > 160 && secondNavigation.declarationLine > firstNavigation.declarationLine);
+        controller.stop();
     }
     {
-        // Exercise a real parser on an isolated model; the semaphore forces the
-        // refresh attempt to overlap parsing without relying on timing luck.
-        const QString originalFile = QStringLiteral("structure_fixture.cpp");
+        const QString firstFile = QDir(outputDirectory).filePath("structure_fixture.cpp");
+        const QString secondFile = QDir(outputDirectory).filePath("structure_next.cpp");
         auto parser = std::make_shared<CppParser>();
-        parser->setOnGetFileStream([](const QString &file, QStringList &lines) {
-            if (!file.endsWith(QStringLiteral("structure_fixture.cpp"))) return false;
-            lines = {QStringLiteral("int original_symbol = 1;")};
-            return true;
-        });
-        CppParser::parseFileBlocking(parser, originalFile, false, QString(), false, false);
-        ClassBrowserModel model;
-        model.beginUpdate();
-        model.setParser(parser);
-        model.setCurrentFile(originalFile);
-        model.endUpdate();
-        const auto contains = [&](const QString &name) {
-            for (int row = 0; row < model.rowCount({}); ++row)
-                if (model.data(model.index(row, 0, {}), Qt::DisplayRole).toString().contains(name))
-                    return true;
-            return false;
-        };
-        check("Structure model displays parsed file symbols", contains(QStringLiteral("original_symbol")));
-        QSemaphore parsingStarted, permitFinish;
-        parser->setOnGetFileStream([&](const QString &file, QStringList &lines) {
-            if (!file.endsWith(QStringLiteral("structure_fixture.cpp"))) return false;
-            parsingStarted.release();
-            if (!permitFinish.tryAcquire(1, 5000)) return false;
-            lines = {QStringLiteral("int refreshed_symbol = 2;")};
-            return true;
-        });
-        std::thread parsing([&] { CppParser::parseFileBlocking(parser, originalFile, false, QString(), false, true); });
-        const bool busy = parsingStarted.tryAcquire(1, 3000);
-        check("Structure regression fixture reaches active parsing", busy);
-        if (busy) {
-            model.fillStatements();
-            waitForUi(180); // includes queued parse signals and at least one retry
-            check("Structure retains previous same-file snapshot while parser is busy",
-                  contains(QStringLiteral("original_symbol")));
-        }
-        permitFinish.release();
-        parsing.join();
-        waitForUi(250);
-        check("Structure automatically refreshes after parser finishes",
-              contains(QStringLiteral("refreshed_symbol")) && !contains(QStringLiteral("original_symbol")));
-
         auto next = std::make_shared<CppParser>();
-        next->setOnGetFileStream([](const QString &file, QStringList &lines) {
-            if (!file.endsWith(QStringLiteral("structure_next.cpp"))) return false;
-            lines = {QStringLiteral("int next_symbol = 3;")};
-            return true;
+        auto store = std::make_shared<DocumentStore>();
+        auto firstLines = std::make_shared<QStringList>(QStringList{"int original_symbol = 1;"});
+        const auto firstId = store->add(firstFile, [firstLines](QStringList &out) { out = *firstLines; return true; });
+        const auto nextId = store->add(secondFile, [](QStringList &out) { out = {"int next_symbol = 2;"}; return true; });
+        bindOutlineFixture(parser, store);
+        bindOutlineFixture(next, store);
+        auto id = firstId;
+        const auto current = [&] {
+            const auto snapshot = store->snapshotFor(id);
+            return ClassBrowserController::SourceIdentity{store->generation(), id, snapshot->revision,
+                snapshot->filename, snapshot->absoluteFilename};
+        };
+        ClassBrowserController controller(outlineResources, current);
+        const auto setContext = [&](const PCppParser &service) {
+            ClassBrowserController::Context value;
+            value.parser = service;
+            value.source = current();
+            controller.setContext(value);
+        };
+        setContext(parser);
+        auto &model = *controller.model();
+        check("Structure model displays parsed file symbols", waitOutline([&] { return outlineSymbol(model, "original_symbol"); }));
+        auto entered = std::make_shared<QSemaphore>();
+        auto released = std::make_shared<QSemaphore>();
+        const auto unstick = finally([released] { released->release(); });
+        parser->setSourceReadObserver([entered, released](const QString &) {
+            entered->release();
+            released->tryAcquire(1, 5000);
         });
-        const QString nextFile = QStringLiteral("structure_next.cpp");
-        CppParser::parseFileBlocking(next, nextFile, false, QString(), false, false);
-        // Queue a completion from the old parser, then switch before delivery.
+        *firstLines = {"int refreshed_symbol = 2;"};
+        store->changed(firstId);
+        const bool accepted = CppParser::parseFileNonBlocking(parser, firstFile, false, {}) == CppParser::RequestResult::Accepted;
+        const bool busy = accepted && waitOutline([&] { return entered->available() > 0; });
+        check("Structure regression fixture reaches active parsing", busy);
+        controller.refresh();
+        waitForUi(50);
+        check("Structure retains previous same-file snapshot while parser is busy", busy && outlineSymbol(model, "original_symbol"));
+        parser->setSourceReadObserver({});
+        released->release(16);
+        check("Structure automatically refreshes after parser finishes", waitOutline([&] { return outlineSymbol(model, "refreshed_symbol"); }) &&
+              !outlineSymbol(model, "original_symbol"));
+
         emit parser->parseFinished(0, 0);
-        int refreshes = 0;
-        QObject::connect(&model, &ClassBrowserModel::refreshStarted, &model, [&] { ++refreshes; });
-        model.beginUpdate(); model.setParser(next); model.setCurrentFile(nextFile); model.endUpdate();
-        const int afterSwitch = refreshes;
-        waitForUi(150);
-        check("Structure ignores queued completions from previous parser",
-              refreshes == afterSwitch && contains(QStringLiteral("next_symbol")));
-        model.beginUpdate(); model.setCurrentFile(QStringLiteral("structure_missing.cpp")); model.endUpdate();
-        check("Structure does not show symbols of a different current file", model.rowCount({}) == 0);
-        model.setParser(nullptr);
-        check("Structure clears when the parser is detached", model.rowCount({}) == 0);
+        id = nextId;
+        setContext(next);
+        check("Structure ignores queued completions from previous parser", waitOutline([&] { return outlineSymbol(model, "next_symbol"); }));
+        check("Structure does not show symbols of a different current file", !outlineSymbol(model, "refreshed_symbol"));
+        controller.setContext({});
+        check("Structure clears when the parser is detached", model.rowCount() == 0);
     }
     {
-        // Block real parser workers deterministically so the indicator can be
-        // observed throughout an analysis and during a parser switch.
-        auto *view = window.findChild<QTreeView *>("classBrowser");
-        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
+        using State = ClassBrowserController::State;
+        auto *controller = window.classBrowserController();
         auto *indicator = window.findChild<QLabel *>("structureUpdateIndicator");
-        check("Structure analysis indicator and browser are available", model && indicator);
-        if (model && indicator) {
-            const PCppParser originalParser = model->parser();
-            const QString originalFile = model->currentFile();
-            const ProjectClassBrowserType originalType = model->classBrowserType();
-            auto first = std::make_shared<CppParser>();
-            auto second = std::make_shared<CppParser>();
-            QSemaphore firstStarted, firstFinish, secondStarted, secondFinish;
-            first->setOnGetFileStream([&](const QString &file, QStringList &lines) {
-                if (!file.endsWith(QStringLiteral("indicator_first.cpp"))) return false;
-                firstStarted.release();
-                if (!firstFinish.tryAcquire(1, 10000)) return false;
-                lines = QStringList{QStringLiteral("int first_indicator_symbol = 1;")};
-                return true;
-            });
-            second->setOnGetFileStream([&](const QString &file, QStringList &lines) {
-                if (!file.endsWith(QStringLiteral("indicator_second.cpp"))) return false;
-                secondStarted.release();
-                if (!secondFinish.tryAcquire(1, 10000)) return false;
-                lines = QStringList{QStringLiteral("int second_indicator_symbol = 2;")};
-                return true;
-            });
-            model->beginUpdate();
-            model->setParser(first);
-            model->setCurrentFile(QStringLiteral("indicator_first.cpp"));
-            model->endUpdate();
-            waitForUi(100);
-            check("Structure indicator is hidden when analysis is idle", indicator->isHidden());
-            std::thread firstWorker([&] {
-                CppParser::parseFileBlocking(first, QStringLiteral("indicator_first.cpp"), false, QString(), false, true);
-            });
-            const bool firstBusy = firstStarted.tryAcquire(1, 3000);
-            waitForUi(150);
+        check("Structure analysis indicator and browser are available", controller && indicator);
+        if (controller && indicator) {
+            const auto previous = controller->context();
+            const auto make = [&](const PCppParser &parser) {
+                parser->setInputSnapshotProvider(window.editorManager()->inputSnapshotProvider());
+                auto context = previous;
+                context.parser = parser;
+                context.wholeProject = false;
+                return context;
+            };
+            const auto first = std::make_shared<CppParser>();
+            const auto second = std::make_shared<CppParser>();
+            controller->setContext({});
+            check("Structure indicator is hidden when analysis is idle", waitOutline([&] { return indicator->isHidden(); }));
+            controller->setContext(make(first));
+            const auto firstTicket = first->beginConfigurationPreparation();
             check("Structure indicator appears while the current parser is active",
-                  firstBusy && model->parsingInProgress() && !indicator->isHidden());
-            const QString blinkBefore = indicator->text();
-            waitForUi(850);
+                  firstTicket && waitOutline([&] { return controller->state() == State::Reading && !indicator->isHidden(); }));
+            const QString before = indicator->text();
             check("Structure indicator blinks during active analysis",
-                  firstBusy && !indicator->isHidden() && indicator->text() != blinkBefore);
-            model->beginUpdate();
-            model->setParser(second);
-            model->setCurrentFile(QStringLiteral("indicator_second.cpp"));
-            model->endUpdate();
-            waitForUi(100);
-            check("Switching to an idle parser clears the structure indicator",
-                  !model->parsingInProgress() && indicator->isHidden());
-            std::thread secondWorker([&] {
-                CppParser::parseFileBlocking(second, QStringLiteral("indicator_second.cpp"), false, QString(), false, true);
-            });
-            const bool secondBusy = secondStarted.tryAcquire(1, 3000);
-            waitForUi(150);
+                  waitOutline([&] { return indicator->text() != before; }, 2000));
+            controller->setContext({});
+            check("Switching to an idle parser clears the structure indicator", waitOutline([&] { return indicator->isHidden(); }));
+            controller->setContext(make(second));
+            const auto secondTicket = second->beginConfigurationPreparation();
             check("Structure indicator follows analysis of the new file",
-                  secondBusy && model->parsingInProgress() && !indicator->isHidden());
-            firstFinish.release();
-            firstWorker.join();
-            waitForUi(150);
-            check("Old parser completion cannot hide the new parser indicator",
-                  secondBusy && model->parsingInProgress() && !indicator->isHidden());
-            secondFinish.release();
-            secondWorker.join();
-            waitForUi(200);
-            check("Structure indicator disappears when analysis finishes",
-                  !model->parsingInProgress() && indicator->isHidden());
-            model->beginUpdate();
-            model->setParser(originalParser);
-            model->setClassBrowserType(originalType);
-            model->setCurrentFile(originalFile);
-            model->endUpdate();
-        }
-    }
-    {
-        // Configuration preparation and application are writer commands.
-        // Neither should require a parseFinished signal to clear the indicator.
-        auto *view = window.findChild<QTreeView *>("classBrowser");
-        auto *model = view ? qobject_cast<ClassBrowserModel *>(view->model()) : nullptr;
-        auto *indicator = window.findChild<QLabel *>("structureUpdateIndicator");
-        if (model && indicator) {
-            const PCppParser originalParser = model->parser();
-            const QString originalFile = model->currentFile();
-            const ProjectClassBrowserType originalType = model->classBrowserType();
-            auto parser = std::make_shared<CppParser>();
-            int completedParses = 0;
-            const auto observation = QObject::connect(parser.get(), &CppParser::parseFinished, &window,
-                [&](int, int) { ++completedParses; });
-            model->beginUpdate();
-            model->setParser(parser);
-            model->setCurrentFile(QStringLiteral("reset_indicator.cpp"));
-            model->endUpdate();
-            const auto ticket = parser->beginConfigurationPreparation();
-            waitForUi(50);
-            const bool observedReset = ticket && model->parsingInProgress() && !indicator->isHidden();
-            check("Reset fixture observes the structure indicator during parser maintenance", observedReset);
-            auto values = parser->requestedConfigurationValues();
-            values.includeOnce = !values.includeOnce;
-            const bool accepted = parser->completeConfigurationPreparation(ticket, Analysis::ParserConfiguration::create(std::move(values)));
-            QElapsedTimer deadline;
-            deadline.start();
-            while (parser->hasPendingWork() && deadline.elapsed() < 3000)
-                waitForUi(10);
-            waitForUi(50);
-            QObject::disconnect(observation);
-            check("Structure indicator clears after parser maintenance without parseFinished",
-                  accepted && parser->appliedConfigurationTicket() == ticket && completedParses == 0 &&
-                  !parser->hasPendingWork() && !model->parsingInProgress() && indicator->isHidden());
-            model->beginUpdate();
-            model->setParser(originalParser);
-            model->setClassBrowserType(originalType);
-            model->setCurrentFile(originalFile);
-            model->endUpdate();
+                  secondTicket && waitOutline([&] { return controller->state() == State::Reading && !indicator->isHidden(); }));
+            first->completeConfigurationPreparation(firstTicket, Analysis::ParserConfiguration::create(first->requestedConfigurationValues()));
+            waitOutline([&] { return !first->hasPendingWork(); });
+            check("Old parser completion cannot hide the new parser indicator", controller->state() == State::Reading && !indicator->isHidden());
+            check("Reset fixture observes the structure indicator during parser maintenance", controller->state() == State::Reading);
+            second->completeConfigurationPreparation(secondTicket, Analysis::ParserConfiguration::create(second->requestedConfigurationValues()));
+            check("Structure indicator disappears when analysis finishes", waitOutline([&] {
+                return controller->state() == State::Ready && indicator->isHidden();
+            }));
+            check("Structure indicator clears after maintenance and a fresh publication",
+                  second->appliedConfigurationTicket() == secondTicket && !second->hasPendingWork() && indicator->isHidden());
+            controller->setContext(previous);
         }
     }
     {
@@ -1149,71 +1069,46 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
         check("Editor readiness returns to idle after analysis", !fixture.needReparse());
     }
     {
-        // Hold the reset worker immediately after cacheResetFinished. This
-        // exposes the exact gap where parsing is false but a parse is queued.
         const auto parser = std::make_shared<CppParser>();
-        parser->setEnabled(true);
-        const auto latest = std::make_shared<std::atomic<bool>>(false);
-        const auto resetEntered = std::make_shared<QSemaphore>();
-        const auto releaseReset = std::make_shared<QSemaphore>();
-        const auto resetOffGui = std::make_shared<std::atomic<bool>>(false);
-        QThread *const guiThread = QCoreApplication::instance()->thread();
-        parser->setOnGetFileStream([latest](const QString &filename, QStringList &lines) {
-            if (!filename.endsWith(QStringLiteral("snapshot-reset-gap.cpp"))) return false;
-            lines = QStringList{latest->load() ? QStringLiteral("int snapshot_new = 2;")
-                                               : QStringLiteral("int snapshot_old = 1;")};
-            return true;
-        });
-        const QString file = QStringLiteral("snapshot-reset-gap.cpp");
-        CppParser::parseFileBlocking(parser, file, false, QString());
-        ClassBrowserModel model;
-        model.beginUpdate();
-        model.setParser(parser);
-        model.setCurrentFile(file);
-        model.endUpdate();
-        const auto contains = [&model](const QString &name) {
-            for (int row = 0; row < model.rowCount({}); ++row)
-                if (model.data(model.index(row, 0, {}), Qt::DisplayRole).toString().contains(name))
-                    return true;
-            return false;
+        auto store = std::make_shared<DocumentStore>();
+        auto text = std::make_shared<QStringList>(QStringList{"int snapshot_old = 1;"});
+        const QString file = QDir(outputDirectory).filePath("snapshot-reset-gap.cpp");
+        const auto id = store->add(file, [text](QStringList &out) { out = *text; return true; });
+        bindOutlineFixture(parser, store);
+        const auto current = [&] {
+            return ClassBrowserController::SourceIdentity{store->generation(), id, store->revisionFor(id), file, file};
         };
+        ClassBrowserController controller(outlineResources, current);
+        ClassBrowserController::Context context;
+        context.parser = parser;
+        context.source = current();
+        controller.setContext(context);
+        auto &model = *controller.model();
         check("Reset gap fixture starts with the previous structure snapshot",
-              contains(QStringLiteral("snapshot_old")));
-        QObject::connect(parser.get(), &CppParser::cacheResetFinished, &model,
-                         [resetEntered, releaseReset, resetOffGui, guiThread] {
-            resetOffGui->store(QThread::currentThread() != guiThread);
-            resetEntered->release();
-            releaseReset->tryAcquire(1, 10000);
-        }, Qt::DirectConnection);
-        auto unblock = finally([releaseReset] { releaseReset->release(); });
-        const bool frozen = parser->freeze();
-        if (frozen) {
-            latest->store(true);
-            CppParser::resetParsedResultsNonBlocking(parser);
-            CppParser::parseFileNonBlocking(parser, file, false, QString());
-            parser->unFreeze();
-        }
-        bool reached = false;
-        QElapsedTimer deadline;
-        deadline.start();
-        while (frozen && !reached && deadline.elapsed() < 5000) {
-            reached = resetEntered->tryAcquire(1, 0);
-            if (!reached) waitForUi(20);
-        }
-        const bool pending = reached && parser->hasPendingWork();
-        const bool idleGap = reached && !parser->parsing();
-        if (reached) model.fillStatements();
-        const bool oldKept = reached && contains(QStringLiteral("snapshot_old"));
+              waitOutline([&] { return outlineSymbol(model, "snapshot_old"); }));
+        const auto entered = std::make_shared<QSemaphore>();
+        const auto release = std::make_shared<QSemaphore>();
+        const auto offGui = std::make_shared<std::atomic_bool>(false);
+        QThread *const guiThread = QCoreApplication::instance()->thread();
+        const auto observer = QObject::connect(parser.get(), &CppParser::cacheResetFinished, &controller,
+            [entered, release, offGui, guiThread] {
+                *offGui = QThread::currentThread() != guiThread;
+                entered->release();
+                release->tryAcquire(1, 8000);
+            }, Qt::DirectConnection);
+        const auto unblock = finally([&] { QObject::disconnect(observer); release->release(16); });
+        *text = {"int snapshot_new = 2;"};
+        store->changed(id);
+        CppParser::resetParsedResultsNonBlocking(parser);
+        CppParser::parseFileNonBlocking(parser, file, false, {});
+        const bool reached = waitOutline([&] { return entered->available() > 0; });
         check("Reset gap is reached outside the GUI with analysis queued",
-              reached && pending && idleGap && resetOffGui->load());
-        check("Structure preserves the snapshot while post-reset analysis is queued", oldKept);
-        releaseReset->release();
-        deadline.restart();
-        while (reached && !contains(QStringLiteral("snapshot_new")) && deadline.elapsed() < 10000)
-            waitForUi(20);
-        check("Structure refreshes after the queued post-reset analysis finishes",
-              reached && contains(QStringLiteral("snapshot_new"))
-                  && !contains(QStringLiteral("snapshot_old")));
+              reached && parser->hasPendingWork() && !parser->parsing() && offGui->load());
+        check("Structure preserves the snapshot while post-reset analysis is queued",
+              reached && outlineSymbol(model, "snapshot_old"));
+        release->release();
+        check("Structure refreshes after the queued post-reset analysis finishes", reached &&
+              waitOutline([&] { return outlineSymbol(model, "snapshot_new"); }) && !outlineSymbol(model, "snapshot_old"));
     }
     if (qEnvironmentVariableIsSet("REDPANDA_QA_BUSY_ONLY")) {
         QFile output(QDir(outputDirectory).filePath("parser-busy-result.json"));

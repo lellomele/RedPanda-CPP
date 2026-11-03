@@ -473,38 +473,51 @@ MainWindow::MainWindow(QWidget *parent)
     //class browser
     ui->classBrowser->setUniformRowHeights(true);
     m=ui->classBrowser->selectionModel();
-    mClassBrowserModel = new ClassBrowserModel{this};
+    mOutlineRetirement = Analysis::SemanticRetirementScheduler::create();
+    auto outlineResources = std::make_shared<Analysis::OutlineResources>(Analysis::OutlineResources{
+        Analysis::SemanticMemoryLedger(128 * 1024 * 1024), mOutlineRetirement});
+    mClassBrowserController = new ClassBrowserController(std::move(outlineResources), [this] {
+        return classBrowserSource(mEditorManager->getEditor());
+    }, this);
+    mClassBrowserModel = mClassBrowserController->model();
     ui->classBrowser->setModel(mClassBrowserModel);
     delete m;
 
-    connect(mClassBrowserModel, &ClassBrowserModel::refreshStarted,
-            this, &MainWindow::onClassBrowserRefreshStart);
-    connect(mClassBrowserModel, &ClassBrowserModel::refreshEnd,
-            this, &MainWindow::onClassBrowserRefreshEnd);
+    connect(mClassBrowserModel, &QAbstractItemModel::modelAboutToBeReset, this, &MainWindow::onClassBrowserRefreshStart);
+    connect(mClassBrowserModel, &QAbstractItemModel::modelReset, this, &MainWindow::onClassBrowserRefreshEnd);
 
-    // Keep the row's height fixed during the blink so the tree does not jump.
+    // Reserve a fixed-height status row while blinking.
     ui->structureUpdateIndicator->setMinimumHeight(ui->structureUpdateIndicator->sizeHint().height());
-    ui->structureUpdateIndicator->setAccessibleName(tr("Updating structure…"));
-    ui->structureUpdateIndicator->setToolTip(tr("Updating structure…"));
     ui->structureUpdateIndicator->hide();
     mStructureUpdateBlinkTimer.setInterval(700);
     connect(&mStructureUpdateBlinkTimer, &QTimer::timeout, this, [this] {
-        // Some parser maintenance operations do not emit parseFinished.
-        // Recheck while blinking so a stale notification cannot leave it on.
-        mClassBrowserModel->synchronizeParsingState();
-        if (!mClassBrowserModel->parsingInProgress())
-            return;
-        ui->structureUpdateIndicator->setText(
-            ui->structureUpdateIndicator->text().trimmed().isEmpty()
+        ui->structureUpdateIndicator->setText(ui->structureUpdateIndicator->text().trimmed().isEmpty()
                 ? tr("Updating structure…") : QStringLiteral(" "));
     });
-    connect(mClassBrowserModel, &ClassBrowserModel::parsingStateChanged, this, [this](bool parsing) {
-        ui->structureUpdateIndicator->setText(tr("Updating structure…"));
-        ui->structureUpdateIndicator->setVisible(parsing);
-        if (parsing)
-            mStructureUpdateBlinkTimer.start();
-        else
-            mStructureUpdateBlinkTimer.stop();
+    connect(mClassBrowserController, &ClassBrowserController::stateChanged, this, [this](ClassBrowserController::State state) {
+        using State = ClassBrowserController::State;
+        QString message;
+        switch (state) {
+        case State::Reading: message = tr("Updating structure…"); break;
+        case State::Unavailable: message = tr("Structure is unavailable"); break;
+        case State::Partial: message = tr("Structure could not read all files"); break;
+        case State::ResourceLimit: message = tr("Structure reached its resource limit"); break;
+        case State::Empty:
+        case State::Ready: break;
+        }
+        ui->structureUpdateIndicator->setText(message);
+        ui->structureUpdateIndicator->setAccessibleName(message);
+        ui->structureUpdateIndicator->setToolTip(message);
+        ui->structureUpdateIndicator->setVisible(!message.isEmpty());
+        if (state == State::Reading) mStructureUpdateBlinkTimer.start();
+        else mStructureUpdateBlinkTimer.stop();
+    });
+    mOutlineStopCheckTimer.setInterval(25);
+    connect(&mOutlineStopCheckTimer, &QTimer::timeout, this, [this] {
+        if (mQuitting && !mHandlingCloseEvent && mOutlineRetirement->state().stopped()) {
+            mOutlineStopCheckTimer.stop();
+            close();
+        }
     });
 
     connect(&mFileSystemWatcher,&QFileSystemWatcher::fileChanged,
@@ -521,7 +534,7 @@ MainWindow::MainWindow(QWidget *parent)
     mHeaderCompletionPopup->setShowEditorCaretFunc(std::bind(&EditorManager::showActiveEditorCaret,mEditorManager));
     mFunctionTip = new FunctionTooltipWidget(this);
 
-    mClassBrowserModel->setColors(mStatementColors);
+    updateClassBrowserAppearance();
 
     connect(&mAutoSaveTimer, &QTimer::timeout,
             this, &MainWindow::onAutoSaveTimeout);
@@ -1009,6 +1022,7 @@ void MainWindow::updateEditorColorSchemes()
     mEditorManager->applyColorSchemes(pSettings->editor().colorScheme());
     QString schemeName = pSettings->editor().colorScheme();
     mColorManager->updateStatementColors(mStatementColors,schemeName);
+    updateClassBrowserAppearance();
     //color for code completion popup
     PColorSchemeItem item;
     QColor localHeaderColor=palette().color(QPalette::Text);
@@ -1189,6 +1203,7 @@ void MainWindow::applySettings()
                 calIconSize(
                     pSettings->environment().interfaceFont(),
                     pSettings->environment().interfaceFontSize()));
+    updateClassBrowserAppearance();
 
     QFont caseEditorFont(pSettings->executor().caseEditorFontName());
     caseEditorFont.setPixelSize(pointToPixel(pSettings->executor().caseEditorFontSize()));
@@ -1673,62 +1688,61 @@ void MainWindow::rebuildOpenedFileHisotryMenu()
 
 }
 
+ClassBrowserController::SourceIdentity MainWindow::classBrowserSource(const Editor *editor) const
+{
+    ClassBrowserController::SourceIdentity result;
+    result.generation = mEditorManager->documentInputGeneration();
+    if (editor) {
+        result.document = mEditorManager->documentId(editor);
+        result.revision = mEditorManager->documentRevision(editor);
+        result.logical = editor->filename();
+        result.physical = mEditorManager->documentAbsolutePath(editor);
+    }
+    return result;
+}
+
 void MainWindow::updateClassBrowserForEditor(Editor *editor)
 {
-
-    if (mQuitting) {
-        mClassBrowserModel->beginUpdate();
-        mClassBrowserModel->setParser(nullptr);
-        mClassBrowserModel->setCurrentFile("");
-        mClassBrowserModel->endUpdate();
-        return;
+    if (!mClassBrowserController) return;
+    ClassBrowserController::Context context;
+    if (!mQuitting) {
+        const bool projectScope = mProject && (!editor || editor->inProject());
+        context.parser = editor ? editor->parser() : projectScope ? mProject->cppParser() : PCppParser{};
+        context.wholeProject = projectScope && mProject->options().classBrowserType == ProjectClassBrowserType::WholeProject;
+        if (projectScope && context.parser) context.workspace = context.parser->outlineService();
+        context.source = classBrowserSource(editor);
+        if (editor) context.contextFile = editor->contextFile();
+        context.options.alphabetical = pSettings->ui().classBrowserSortAlpha();
+        context.options.groupByKind = pSettings->ui().classBrowserSortType();
+        context.options.showInherited = pSettings->ui().classBrowserShowInherited();
+        context.options.hideSingleUnderscore = pSettings->codeCompletion().hideSymbolsStartsWithUnderLine();
+        context.options.hideDoubleUnderscore = pSettings->codeCompletion().hideSymbolsStartsWithTwoUnderLine();
     }
+    mClassBrowserController->setContext(std::move(context));
+}
 
-    if (editor) {
-        if ((mClassBrowserModel->currentFile() == editor->filename())
-             && (mClassBrowserModel->parser() == editor->parser()))
-                return;
-
-        if (mClassBrowserModel->parser() == editor->parser() && mClassBrowserModel->classBrowserType()==ProjectClassBrowserType::WholeProject) {
-            mClassBrowserModel->setCurrentFile(editor->filename());
-            return;
-        }
-
-        if (editor->inProject() && !mProject) {
-            //project is in creation
-            mClassBrowserModel->setCurrentFile(editor->filename());
-            return;
-        }
-
-        mClassBrowserModel->beginUpdate();
-        mClassBrowserModel->setParser(editor->parser());
-        if (editor->inProject()) {
-            mClassBrowserModel->setClassBrowserType(mProject->options().classBrowserType);
-        } else {
-            mClassBrowserModel->setClassBrowserType(ProjectClassBrowserType::CurrentFile);
-        }
-        mClassBrowserModel->setCurrentFile(editor->filename());
-        mClassBrowserModel->endUpdate();
-    } else if (mProject) {
-        if (mClassBrowserModel->parser() == mProject->cppParser()) {
-            mClassBrowserModel->beginUpdate();
-            mClassBrowserModel->setCurrentFile("");
-            mClassBrowserModel->endUpdate();
-            return;
-        }
-
-        mClassBrowserModel->beginUpdate();
-        mClassBrowserModel->setParser(mProject->cppParser());
-        mClassBrowserModel->setClassBrowserType(mProject->options().classBrowserType);
-        mClassBrowserModel->setCurrentFile("");
-        mClassBrowserModel->endUpdate();
-    } else {
-        mClassBrowserModel->beginUpdate();
-        mClassBrowserModel->setParser(nullptr);
-        mClassBrowserModel->setCurrentFile("");
-        mClassBrowserModel->endUpdate();
-        return;
+void MainWindow::updateClassBrowserAppearance()
+{
+    if (!mClassBrowserModel || !mStatementColors) return;
+    OutlineAppearance appearance;
+    appearance.text = palette().color(QPalette::Text);
+    for (auto item = mStatementColors->cbegin(); item != mStatementColors->cend(); ++item) {
+        if (item.value()) appearance.colors.insert(int(item.key()), item.value()->foreground());
     }
+    for (int kind = int(StatementKind::Unknown); kind <= int(StatementKind::Alias); ++kind) {
+        for (int scope = int(StatementScope::Global); scope <= int(StatementScope::ClassLocal); ++scope) {
+            for (int access = int(StatementAccessibility::None); access <= int(StatementAccessibility::Public); ++access) {
+                for (bool inherited : {false, true}) {
+                    const Analysis::OutlineIconDescriptor descriptor{StatementKind(kind), StatementScope(scope),
+                                                                     StatementAccessibility(access), inherited};
+                    const auto pixmap = mIconsManager->getPixmapForOutline(descriptor);
+                    if (!pixmap.isNull()) appearance.icons.insert(ClassBrowserModel::appearanceKey(descriptor), QIcon(pixmap));
+                }
+            }
+        }
+    }
+    mClassBrowserModel->setAppearance(std::move(appearance));
+    ui->classBrowser->viewport()->update();
 }
 
 void MainWindow::resetAutoSaveTimer()
@@ -2002,8 +2016,6 @@ void MainWindow::openProject(QString filename, bool openFiles)
         ui->tabExplorer->setCurrentWidget(ui->tabProject);
 
     // Only update class browser once
-    mClassBrowserModel->beginUpdate();
-    const auto finishBrowserUpdate = finally([this] { mClassBrowserModel->endUpdate(); });
     mProject = Project::load(filename,mEditorManager,mIconsManager.get(), &mFileSystemWatcher);
     const QString projectDirectory = mProject->directory();
     if (!mFileSystemWatcher.directories().contains(projectDirectory)
@@ -4268,19 +4280,9 @@ void MainWindow::onProjectViewContextMenu(const QPoint &pos)
 void MainWindow::onClassBrowserContextMenu(const QPoint &pos)
 {
     QMenu menu(this);
-    bool canGoto = false;
-    QModelIndex index = ui->classBrowser->currentIndex();
-    if (index.isValid()) {
-        ClassBrowserNode * node = static_cast<ClassBrowserNode*>(index.internalPointer());
-        if (node) {
-            PStatement statement = node->statement;
-            if (statement) {
-                canGoto = true;
-            }
-        }
-    }
-    mClassBrowser_goto_declaration->setEnabled(canGoto);
-    mClassBrowser_goto_definition->setEnabled(canGoto);
+    const auto location = mClassBrowserModel->navigation(ui->classBrowser->currentIndex());
+    mClassBrowser_goto_declaration->setEnabled(!location.declaration.isEmpty());
+    mClassBrowser_goto_definition->setEnabled(!location.definition.isEmpty());
     menu.addAction(mClassBrowser_goto_declaration);
     menu.addAction(mClassBrowser_goto_definition);
     menu.addSeparator();
@@ -5075,65 +5077,46 @@ void MainWindow::onFilesViewOpen()
     }
 }
 
+void MainWindow::navigateFromStructure(const QString &filename, int line)
+{
+    if (filename.isEmpty()) return;
+    if (auto *editor = openFile(filename)) {
+        if (line > 0)
+            mEditorManager->activeEditorAndSetCaret(editor, QSynedit::CharPos{0, line});
+    }
+}
+
 void MainWindow::onClassBrowserGotoDeclaration()
 {
-    QModelIndex index = ui->classBrowser->currentIndex();
-    if (!index.isValid())
-        return ;
-    ClassBrowserNode * node = static_cast<ClassBrowserNode*>(index.internalPointer());
-    if (!node)
-        return ;
-    PStatement statement = node->statement;
-    if (!statement) {
-        return;
-    }
-    QString filename = statement->fileName;
-    int line = statement->line;
-    Editor* e=openFile(filename);
-    if (e) {
-        mEditorManager->activeEditorAndSetCaret(e,QSynedit::CharPos{0,line});
-    }
+    const auto location = mClassBrowserModel->navigation(ui->classBrowser->currentIndex());
+    navigateFromStructure(location.declaration, location.declarationLine);
 }
 
 void MainWindow::onClassBrowserGotoDefinition()
 {
-    QModelIndex index = ui->classBrowser->currentIndex();
-    if (!index.isValid())
-        return ;
-    ClassBrowserNode * node = static_cast<ClassBrowserNode*>(index.internalPointer());
-    if (!node)
-        return ;
-    PStatement statement = node->statement;
-    if (!statement) {
-        return;
-    }
-    QString filename = statement->definitionFileName;
-    int line = statement->definitionLine;
-    Editor* e=openFile(filename);
-    if (e) {
-        mEditorManager->activeEditorAndSetCaret(e,QSynedit::CharPos{0,line});
-    }
+    const auto location = mClassBrowserModel->navigation(ui->classBrowser->currentIndex());
+    navigateFromStructure(location.definition, location.definitionLine);
 }
 
 void MainWindow::onClassBrowserShowInherited()
 {
     pSettings->ui().setClassBrowserShowInherited(mClassBrowser_Show_Inherited->isChecked());
     pSettings->ui().save();
-    mClassBrowserModel->fillStatements();
+    updateClassBrowserForEditor(mEditorManager->getEditor());
 }
 
 void MainWindow::onClassBrowserSortByType()
 {
     pSettings->ui().setClassBrowserSortType(mClassBrowser_Sort_By_Type->isChecked());
     pSettings->ui().save();
-    mClassBrowserModel->fillStatements();
+    updateClassBrowserForEditor(mEditorManager->getEditor());
 }
 
 void MainWindow::onClassBrowserSortByName()
 {
     pSettings->ui().setClassBrowserSortAlpha(mClassBrowser_Sort_By_Name->isChecked());
     pSettings->ui().save();
-    mClassBrowserModel->fillStatements();
+    updateClassBrowserForEditor(mEditorManager->getEditor());
 }
 
 void MainWindow::onClassBrowserChangeScope()
@@ -5148,34 +5131,17 @@ void MainWindow::onClassBrowserChangeScope()
     }
     mProject->options().classBrowserType=classBrowserType;
     mProject->saveOptions();
-    Editor* editor = mEditorManager->getEditor();
-    if ((!editor || editor->inProject())  &&
-            mClassBrowserModel->classBrowserType()!=classBrowserType) {
-        mClassBrowserModel->setClassBrowserType(classBrowserType);
-    }
+    updateClassBrowserForEditor(mEditorManager->getEditor());
 }
 
 void MainWindow::onClassBrowserRefreshStart()
 {
-    mClassBrowserCurrentStatement="";
-    QModelIndex index = ui->classBrowser->currentIndex();
-    if (!index.isValid())
-        return ;
-    ClassBrowserNode * node = static_cast<ClassBrowserNode*>(index.internalPointer());
-    if (!node)
-        return ;
-    PStatement statement = node->statement;
-    if (!statement) {
-        return;
-    }
-    mClassBrowserCurrentStatement=QString("%1+%2+%3")
-            .arg(statement->fullName, statement->noNameArgs)
-            .arg((int)statement->kind);
+    mClassBrowserCurrentStatement = mClassBrowserModel->selection(ui->classBrowser->currentIndex()).hint;
 }
 
 void MainWindow::onClassBrowserRefreshEnd()
 {
-    QModelIndex index = mClassBrowserModel->modelIndexForStatement(mClassBrowserCurrentStatement);
+    QModelIndex index = mClassBrowserModel->uniqueIndexForHint(mClassBrowserCurrentStatement);
     if (index.isValid()) {
         ui->classBrowser->expand(index);
         ui->classBrowser->setCurrentIndex(index);
@@ -5688,11 +5654,9 @@ OperationResult MainWindow::closeProject(bool refreshEditor, const EditorClosePl
             return stillValid;
         }
         {
-            mClassBrowserModel->beginUpdate();
             mEditorManager->beginUpdate();
             const auto finishUpdates = finally([this] {
                 mEditorManager->endUpdate();
-                mClassBrowserModel->endUpdate();
             });
             // GUI resources are retired by the controller while its plan is
             // valid, never by a delayed Project destructor held by a worker.
@@ -5714,8 +5678,7 @@ OperationResult MainWindow::closeProject(bool refreshEditor, const EditorClosePl
                 ui->tabExplorer->setCurrentWidget(ui->tabStructure);
                 updateClassBrowserForEditor(mEditorManager->getEditor());
             } else {
-                mClassBrowserModel->setParser(nullptr);
-                mClassBrowserModel->setCurrentFile("");
+                mClassBrowserController->setContext({});
             }
         }
         if (!mQuitting) {
@@ -6146,6 +6109,9 @@ void MainWindow::closeEvent(QCloseEvent *event) {
                     tr("New documents were opened while closing. They remain open."));
                 return;
             }
+            mClassBrowserController->stop();
+            mOutlineRetirement->beginStop();
+            mOutlineStopCheckTimer.start();
             mShutdownParsers = std::move(shutdownParsers);
             for (const auto &parser : mShutdownParsers) {
                 connect(parser.get(), &CppParser::analysisStopped, this, [this] {
@@ -6177,9 +6143,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         }
         const bool analysisStopped = std::all_of(mShutdownParsers.cbegin(), mShutdownParsers.cend(),
             [](const auto &parser) { return parser->analysisQuiesced(); });
-        if (mParsingCount > 0 || !analysisStopped)
+        if (mParsingCount > 0 || !analysisStopped || !mOutlineRetirement->state().stopped())
             event->ignore();
         else {
+            mOutlineStopCheckTimer.stop();
             mShutdownParsers.clear();
             event->accept();
         }
@@ -7808,8 +7775,7 @@ void MainWindow::on_actionRemove_from_project_triggered()
     }
     if (!committed || project != mProject)
         return;
-    mClassBrowserModel->beginUpdate();
-    mClassBrowserModel->endUpdate();
+    updateClassBrowserForEditor(mEditorManager->getEditor());
     ui->projectView->selectionModel()->clearSelection();
     try {
         project->saveAll();
@@ -7971,42 +7937,19 @@ const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > 
 
 void MainWindow::on_classBrowser_doubleClicked(const QModelIndex &index)
 {
-    if (!index.isValid())
-        return ;
-    ClassBrowserNode * node = static_cast<ClassBrowserNode*>(index.internalPointer());
-    if (!node)
-        return ;
-    PStatement statement = node->statement;
-    if (!statement) {
-        return;
+    const auto location = mClassBrowserModel->navigation(index);
+    const auto *editor = mEditorManager->getEditor();
+    bool definition = false;
+    if (editor) {
+        const bool declaresHere = location.declaration == editor->filename();
+        const bool definesHere = location.definition == editor->filename();
+        if (declaresHere != definesHere)
+            definition = definesHere;
+        else
+            definition = editor->caretY() == location.declarationLine;
     }
-    QString filename;
-    int line;
-    Editor* currentEditor = mEditorManager->getEditor();
-    if (currentEditor) {
-        if (statement->fileName == currentEditor->filename()
-                && statement->definitionFileName!=currentEditor->filename()) {
-            filename = statement->fileName;
-            line = statement->line;
-        } else if (statement->fileName != currentEditor->filename()
-                && statement->definitionFileName==currentEditor->filename()) {
-            filename = statement->definitionFileName;
-            line = statement->definitionLine;
-        } else if (currentEditor->caretY()==statement->line) {
-            filename = statement->definitionFileName;
-            line = statement->definitionLine;
-        } else {
-            filename = statement->fileName;
-            line = statement->line;
-        }
-    } else {
-        filename = statement->fileName;
-        line = statement->line;
-    }
-    Editor* e = openFile(filename);
-    if (e) {
-        mEditorManager->activeEditorAndSetCaret(e, QSynedit::CharPos{0,line});
-    }
+    navigateFromStructure(definition ? location.definition : location.declaration,
+                          definition ? location.definitionLine : location.declarationLine);
 }
 
 const PTodoParser &MainWindow::todoParser() const

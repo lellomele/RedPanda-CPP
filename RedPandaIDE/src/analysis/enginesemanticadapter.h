@@ -19,9 +19,13 @@ public:
     bool children(SemanticSourceId, SemanticSourceVisitor) const override;
 private:
     SemanticSourceId remember(const PStatement &) const;
-    const EngineSemanticFileView *mFiles;
-    std::size_t mFileCount;
+    struct ExactFilenameHash {
+        std::size_t operator()(QStringView filename) const noexcept { return qHash(filename); }
+    };
     std::shared_ptr<SemanticMemoryResource> mScratch;
+    // The caller has already certified exact lexical spellings. Borrowed
+    // names and maps stay inside the same writer reservation as this index.
+    std::pmr::unordered_map<QStringView, const StatementMap *, ExactFilenameHash> mByFile;
     mutable std::pmr::unordered_map<SemanticSourceId, PStatement> mSources;
 };
 } // namespace Analysis

@@ -186,3 +186,28 @@ The same candidate passed 1,619 native Windows checks in English and 1,968 in
 Italian, with no skips. In one English run the process marker arrived after
 6.540 seconds and the worker completed one millisecond later. The longest
 measured GUI heartbeat gap during that run was 51 ms.
+
+## Structure reads an immutable tree
+
+Structure now expands and navigates a value snapshot. The parser owns the
+mutable symbol graph and prepares the tree in its writer queue. Each request
+carries the active document, revision, workspace, configuration and certified
+source job. Switching files clears the old tree. Refreshing the same file can
+retain the previous tree while work is in progress. The view rejects indexes
+from an earlier tree, and retired snapshot data is released by a background
+worker.
+
+The overlap regression queues a projection behind a second parse of the same
+document generation and verifies that the older source job cannot publish.
+The project regression starts with a manifest for one file and verifies that
+Structure requests the remaining project roots before displaying the full tree.
+The session restore and concurrency suites cover startup, nested expansion and
+switching between files that share a parser.
+
+The Windows x64 development build with Qt 6.11.2 passed all 49 CTest groups in
+182.15 seconds. The scope of the read certificate is the source read by the
+parser. A later filesystem change can invalidate the certificate. The
+projection allocation budget covers Structure snapshots and scratch data.
+Process memory and the historic high-memory incident require separate evidence.
+
+The same build passed 1,619 native Windows checks in English and 1,968 in Italian, with no skips.

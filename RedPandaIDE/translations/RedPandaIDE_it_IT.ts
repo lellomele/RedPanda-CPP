@@ -7476,6 +7476,18 @@ Il contenuto non salvato negli editor viene conservato. Git non può annullare q
             <source>The file was renamed on disk, but the destination is open in another document. Both buffers were preserved.</source>
             <translation>Il file è stato rinominato su disco, ma la destinazione è aperta in un altro documento. Entrambi i contenuti sono stati conservati.</translation>
         </message>
+        <message>
+            <source>Structure is unavailable</source>
+            <translation>Struttura non disponibile</translation>
+        </message>
+        <message>
+            <source>Structure could not read all files</source>
+            <translation>Impossibile leggere tutti i file della struttura</translation>
+        </message>
+        <message>
+            <source>Structure reached its resource limit</source>
+            <translation>Struttura oltre il limite di risorse</translation>
+        </message>
 
 
 
@@ -12767,4 +12779,11 @@ Le impostazioni di compilazione e codifica di questo file nel progetto saranno c
         </message>
 
     </context>
+<context>
+    <name>ClassBrowserModel</name>
+        <message>
+            <source>anonymous</source>
+            <translation>senza nome</translation>
+        </message>
+</context>
 </TS>

@@ -15,661 +15,181 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "classbrowser.h"
-#include "../utils.h"
-#include <QDebug>
-#include <QColor>
-#include <QPalette>
-#include <QTimer>
-#include "../mainwindow.h"
-#include "../settings.h"
-#include "../colorscheme.h"
-#include "../utils.h"
-#include "../iconsmanager.h"
+#include <QCoreApplication>
+#include <QScopeGuard>
+#include <QThread>
+#include <limits>
+#include <algorithm>
 
-ClassBrowserModel::ClassBrowserModel(QObject *parent):QAbstractItemModel(parent),
-    mMutex()
-{
-    mClassBrowserType = ProjectClassBrowserType::CurrentFile;
-    mRoot = new ClassBrowserNode();
-    mRoot->parent = nullptr;
-    mRoot->statement = PStatement();
-//    mRoot->childrenFetched = true;
-    mUpdating = false;
-    mUpdateCount = 0;
+using Analysis::NodeIndex;
+using Analysis::NoNode;
+
+namespace {
+constexpr unsigned slotBits = 19; // The supported projection has at most 250,000 nodes.
+constexpr quintptr slotMask = (quintptr(1) << slotBits) - 1;
+constexpr quint32 maximumEpoch = static_cast<quint32>(std::min<quint64>(
+    std::numeric_limits<quintptr>::max() >> slotBits, std::numeric_limits<quint32>::max()));
 }
 
-ClassBrowserModel::~ClassBrowserModel()
+bool ClassBrowserModel::onOwner() const
 {
-    delete mRoot;
+    return QThread::currentThread() == thread();
+}
+
+const Analysis::OutlineProjection *ClassBrowserModel::tree() const
+{
+    return mPublication && mPublication->outline() ? mPublication->outline().get() : nullptr;
+}
+
+OutlineApply ClassBrowserModel::expect(OutlineDemand demand, bool clearPreviousContext)
+{
+    if (!onOwner()) return OutlineApply::Invalid;
+    if (mResetting) return OutlineApply::Busy;
+    const bool differentContext = mDemand.service != demand.service || mDemand.workspace != demand.workspace;
+    mDemand = demand;
+    if (mPublication && (!demand.valid() || differentContext || clearPreviousContext))
+        return replace({});
+    return OutlineApply::Applied;
+}
+
+OutlineApply ClassBrowserModel::apply(OutlineDemand demand, Analysis::SemanticPublicationPtr publication)
+{
+    if (!onOwner() || !publication || !publication->outline() || !demand.valid() ||
+            publication->identity().service != demand.service ||
+            publication->identity().workspaceGeneration != demand.workspace ||
+            publication->outline()->nodes().size() >= slotMask)
+        return OutlineApply::Invalid;
+    if (!(mDemand == demand)) return OutlineApply::Obsolete;
+    return replace(std::move(publication));
+}
+
+OutlineApply ClassBrowserModel::replace(Analysis::SemanticPublicationPtr publication)
+{
+    if (mResetting) return OutlineApply::Busy;
+    if (mEpoch == maximumEpoch) return OutlineApply::IndexEpochExhausted;
+    mResetting = true;
+    const auto resetFlag = qScopeGuard([this] { mResetting = false; });
+    beginResetModel();
+    auto previous = std::move(mPublication);
+    mPublication = std::move(publication);
+    ++mEpoch;
+    endResetModel();
+    return OutlineApply::Applied;
+}
+
+NodeIndex ClassBrowserModel::slot(const QModelIndex &index) const
+{
+    if (!index.isValid() || index.model() != this || index.column() != 0 || !tree())
+        return NoNode;
+    if (index.internalId() >> slotBits != mEpoch)
+        return NoNode;
+    const auto result = NodeIndex(index.internalId() & slotMask);
+    if (result >= tree()->nodes().size() || tree()->nodes()[result].rowInParent != quint32(index.row()))
+        return NoNode;
+    return result;
+}
+
+QModelIndex ClassBrowserModel::indexForSlot(NodeIndex id) const
+{
+    const auto *outline = tree();
+    if (!outline || id >= outline->nodes().size()) return {};
+    return createIndex(int(outline->nodes()[id].rowInParent), 0, (quintptr(mEpoch) << slotBits) | id);
 }
 
 QModelIndex ClassBrowserModel::index(int row, int column, const QModelIndex &parent) const
 {
-    if (!hasIndex(row,column,parent))
-        return QModelIndex();
-
-    ClassBrowserNode *parentNode;
-    if (!parent.isValid()) { // top level
-        parentNode = mRoot;
-    } else {
-        parentNode = static_cast<ClassBrowserNode *>(parent.internalPointer());
+    const auto *outline = tree();
+    if (!outline || row < 0 || column != 0) return {};
+    if (!parent.isValid()) {
+        if (std::size_t(row) >= outline->roots().size()) return {};
+        return indexForSlot(outline->roots()[row]);
     }
-    return createIndex(row,column,parentNode->children[row]);
+    const auto owner = slot(parent);
+    if (owner == NoNode) return {};
+    const auto &node = outline->nodes()[owner];
+    if (quint32(row) >= node.childCount || node.firstChild + quint32(row) >= outline->children().size())
+        return {};
+    return indexForSlot(outline->children()[node.firstChild + row]);
 }
 
-QModelIndex ClassBrowserModel::parent(const QModelIndex &child) const
+QModelIndex ClassBrowserModel::parent(const QModelIndex &index) const
 {
-    if (!child.isValid()) {
-        return QModelIndex();
-    }
-    ClassBrowserNode *childNode = static_cast<ClassBrowserNode *>(child.internalPointer());
-    ClassBrowserNode *parentNode = childNode->parent;
-    if (parentNode->parent == nullptr) //it's root node
-        return QModelIndex();
-
-    ClassBrowserNode *grandNode = parentNode->parent;
-    int row = grandNode->children.indexOf(parentNode);
-    return createIndex(row,0,parentNode);
-}
-
-bool ClassBrowserModel::hasChildren(const QModelIndex &parent) const
-{
-    ClassBrowserNode *parentNode;
-    if (!parent.isValid()) { // top level
-        return mRoot->children.count()>0;
-    } else {
-        parentNode = static_cast<ClassBrowserNode *>(parent.internalPointer());
-//        if (parentNode->childrenFetched)
-        return parentNode->children.count()>0;
-//        if (parentNode->statement)
-//            return !parentNode->statement->children.isEmpty();
-//        return false;
-    }
+    const auto id = slot(index);
+    return id == NoNode ? QModelIndex{} : indexForSlot(tree()->nodes()[id].parent);
 }
 
 int ClassBrowserModel::rowCount(const QModelIndex &parent) const
 {
-    ClassBrowserNode *parentNode;
-    if (!parent.isValid()) { // top level
-        parentNode = mRoot;
-    } else {
-        parentNode = static_cast<ClassBrowserNode *>(parent.internalPointer());
-    }
-    return parentNode->children.count();
+    const auto *outline = tree();
+    if (!outline) return 0;
+    if (!parent.isValid()) return int(outline->roots().size());
+    const auto id = slot(parent);
+    return id == NoNode ? 0 : int(outline->nodes()[id].childCount);
 }
 
-int ClassBrowserModel::columnCount(const QModelIndex&) const
+int ClassBrowserModel::columnCount(const QModelIndex &parent) const
 {
-    return 1;
+    return parent.isValid() && slot(parent) == NoNode ? 0 : 1;
 }
-
-//void ClassBrowserModel::fetchMore(const QModelIndex &parent)
-//{
-//    if (!parent.isValid()) { // top level
-//        return;
-//    }
-
-//    ClassBrowserNode *parentNode = static_cast<ClassBrowserNode *>(parent.internalPointer());
-//    if (!parentNode->childrenFetched) {
-//        parentNode->childrenFetched = true;
-//        if (parentNode->statement && !parentNode->statement->children.isEmpty()) {
-//            filterChildren(parentNode, parentNode->statement->children);
-//            beginInsertRows(parent,0,parentNode->children.count());
-//            endInsertRows();
-//        }
-//    }
-//}
-
-//bool ClassBrowserModel::canFetchMore(const QModelIndex &parent) const
-//{
-//    if (!parent.isValid()) { // top level
-//        return false;
-//    }
-//    ClassBrowserNode *parentNode = static_cast<ClassBrowserNode *>(parent.internalPointer());
-//    if (!parentNode->childrenFetched) {
-//        if (parentNode->statement && !parentNode->statement->children.isEmpty())
-//            return true;
-//        else
-//            parentNode->childrenFetched = true;
-//    }
-//    return false;
-//}
 
 QVariant ClassBrowserModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid()){
-        return QVariant();
-    }
-    ClassBrowserNode *node = static_cast<ClassBrowserNode *>(index.internalPointer());
-    if (!node)
-        return QVariant();
-    if (role == Qt::DisplayRole) {
-        if (node->statement) {
-            if (!(node->statement->type.isEmpty())) {
-                if ( (node->statement->kind == StatementKind::Variable)
-                     || (node->statement->kind == StatementKind::Typedef) ) {
-                    if (node->statement->args.isEmpty())
-                        return node->statement->command + " : " + node->statement->type;
-                    else if (node->statement->args.startsWith("("))
-                        return QString("%1 : %2 (*)%3").arg(node->statement->command,
-                                                            node->statement->type,
-                                                            node->statement->args);
-                    else
-                        return node->statement->command + " : " + node->statement->type + node->statement->args;
-                } else if (node->statement->kind == StatementKind::Function) {
-                    return node->statement->command + node->statement->args + " : " + node->statement->type;
-                } else if (node->statement->kind == StatementKind::OverloadedOperator) {
-                    if (!CppParser::isIdentifier(node->statement->command)) {
-                        return "operator"+node->statement->command + node->statement->args + " : " + node->statement->type;
-                    } else if (node->statement->command == "new"
-                               || node->statement->command == "delete") {
-                        return "operator "+node->statement->command + node->statement->args + " : " + node->statement->type;
-                    } else {
-                        return "operator "+node->statement->command + node->statement->args + " : " + node->statement->type + " " + node->statement->command;
-                    }
-                } else if (node->statement->kind == StatementKind::LiteralOperator) {
-                    return "operator \"\""+node->statement->command + node->statement->args + " : " + node->statement->type;
-                }
-            }
-            if (node->statement->kind == StatementKind::Enum) {
-                if (!node->statement->value.isEmpty())
-                    return node->statement->command + node->statement->args + QString("(%1)").arg(node->statement->value);
-                else
-                    return node->statement->command;
-            }
-            if (node->statement->command == "{") {
-                return "anonymous";
-            }
-            return node->statement->command + node->statement->args;
-        }
-    } else if (role == Qt::ForegroundRole) {
-        if (mColors && node->statement) {
-            PStatement statement = (node->statement);
-            StatementKind kind = getKindOfStatement(statement);
-            if (kind == StatementKind::Keyword) {
-                if (statement->command.startsWith('#'))
-                    kind = StatementKind::Preprocessor;
-            }
-            PColorSchemeItem item = mColors->value(kind,PColorSchemeItem());
-            if (item) {
-                return item->foreground();
-            } else {
-                return pMainWindow->palette().color(QPalette::Text);
-            }
-        }
-        return pMainWindow->palette().color(QPalette::Text);
-    } else if (role == Qt::DecorationRole) {
-        if (node->statement) {
-            return pMainWindow->iconsManager()->getPixmapForStatement(node->statement);
-        }
-    }
-    return QVariant();
+    const auto id = slot(index);
+    if (id == NoNode) return {};
+    const auto &node = tree()->nodes()[id];
+    if (role == Qt::DisplayRole)
+        return node.anonymous ? QCoreApplication::translate("ClassBrowserModel", "anonymous") : tree()->label(node).toString();
+    if (role == Qt::ForegroundRole)
+        return mAppearance.colors.value(int(node.color), mAppearance.text);
+    if (role == Qt::DecorationRole)
+        return mAppearance.icons.value(appearanceKey(node.icon));
+    return {};
 }
 
-const PCppParser &ClassBrowserModel::parser() const
+quint32 ClassBrowserModel::appearanceKey(Analysis::OutlineIconDescriptor icon)
 {
-    return mParser;
+    return (quint32(icon.kind) << 16) | (quint32(icon.scope) << 8) |
+        (quint32(icon.accessibility) << 1) | quint32(icon.inherited);
 }
 
-void ClassBrowserModel::setParser(const PCppParser &newCppParser)
+void ClassBrowserModel::setAppearance(OutlineAppearance appearance)
 {
-    if (mParser == newCppParser)
-        return;
-    disconnect(mParseStartedConnection);
-    disconnect(mParseFinishedConnection);
-    disconnect(mCacheResetStartedConnection);
-    disconnect(mCacheResetFinishedConnection);
-    disconnect(mConfigurationStateConnection);
-    ++mParserGeneration;
-    mRetryScheduled = false;
-    mRetryAttempts = 0;
-    mRefreshPending = bool(newCppParser);
-    mParser = newCppParser;
-    // A previous parser's statements must not be shown for the new context.
-    clear();
-    if (mParser) {
-        const quint64 generation = mParserGeneration;
-        mParseStartedConnection = connect(mParser.get(), &CppParser::parseStarted,
-            this, [this, generation] {
-                if (generation == mParserGeneration)
-                    updateParsingState();
-            }, Qt::QueuedConnection);
-        mParseFinishedConnection = connect(mParser.get(), &CppParser::parseFinished,
-            this, [this, generation](int, int) {
-                if (generation != mParserGeneration)
-                    return; // queued notification from an obsolete parser
-                mRetryAttempts = 0;
-                fillStatements();
-                updateParsingState();
-            }, Qt::QueuedConnection);
-        mConfigurationStateConnection = connect(mParser.get(), &CppParser::configurationStateChanged,
-            this, [this, generation](quint64 ticket, CppParser::ConfigurationState state) {
-                if (generation != mParserGeneration || !mParser || ticket != mParser->configurationTicket())
-                    return;
-                if (state == CppParser::ConfigurationState::Ready) {
-                    mRetryAttempts = 0;
-                    fillStatements();
-                }
-                updateParsingState();
-            }, Qt::QueuedConnection);
-        mCacheResetStartedConnection = connect(mParser.get(), &CppParser::cacheResetStarted,
-            this, [this, generation] {
-                if (generation == mParserGeneration)
-                    updateParsingState();
-            }, Qt::QueuedConnection);
-        mCacheResetFinishedConnection = connect(mParser.get(), &CppParser::cacheResetFinished,
-            this, [this, generation] {
-                if (generation != mParserGeneration)
-                    return;
-                // Retry once the reset worker and any queued parses drain.
-                // Do not publish the just-cleared cache as a final snapshot.
-                mRefreshPending = true;
-                mRetryAttempts = 0;
-                scheduleRefreshRetry();
-                updateParsingState();
-            }, Qt::QueuedConnection);
-    }
-    updateParsingState();
+    if (!onOwner() || mResetting) return;
+    // The GUI owner schedules a viewport repaint. The immutable topology
+    // and its indexes remain valid across changes to colors and icons.
+    mAppearance = std::move(appearance);
 }
 
-bool ClassBrowserModel::parsingInProgress() const
+OutlineNavigation ClassBrowserModel::navigation(const QModelIndex &index) const
 {
-    return mParsingInProgress;
+    const auto id = slot(index);
+    if (id == NoNode) return {};
+    const auto symbol = tree()->nodes()[id].symbol;
+    const auto *record = mPublication->symbol(symbol);
+    if (!record) return {};
+    return {mPublication->text(symbol, record->declaration.filename).toString(),
+            mPublication->text(symbol, record->definition.filename).toString(),
+            record->declaration.line, record->definition.line};
 }
 
-void ClassBrowserModel::synchronizeParsingState()
+OutlineSelection ClassBrowserModel::selection(const QModelIndex &index) const
 {
-    updateParsingState();
+    const auto id = slot(index);
+    if (id == NoNode) return {};
+    const auto symbol = tree()->nodes()[id].symbol;
+    const auto *record = mPublication->symbol(symbol);
+    if (!record) return {};
+    return {{symbol.service, tree()->id(), id}, mPublication->text(symbol, record->selectionKey).toString()};
 }
 
-void ClassBrowserModel::updateParsingState()
+QModelIndex ClassBrowserModel::indexFor(Analysis::OutlineNodeRef ref) const
 {
-    const bool parsing = mParser && mParser->hasPendingWork();
-    if (mParsingInProgress == parsing)
-        return;
-    mParsingInProgress = parsing;
-    emit parsingStateChanged(parsing);
+    return mPublication && mPublication->node(ref) ? indexForSlot(ref.slot) : QModelIndex{};
 }
 
-void ClassBrowserModel::clear()
+QModelIndex ClassBrowserModel::uniqueIndexForHint(QStringView hint) const
 {
-    beginResetModel();
-    mRoot->children.clear();
-    mNodes.clear();
-    mNodeIndex.clear();
-    mProcessedStatements.clear();
-    mDummyStatements.clear();
-    mScopeNodes.clear();
-    endResetModel();
-}
-
-void ClassBrowserModel::scheduleRefreshRetry()
-{
-    // One coalesced retry at a time, bounded even when a parser never becomes idle.
-    constexpr int retryIntervalMs = 100;
-    constexpr int maxRetries = 300;
-    if (mRetryScheduled || mRetryAttempts >= maxRetries || !mParser)
-        return;
-    mRetryScheduled = true;
-    ++mRetryAttempts;
-    const quint64 generation = mParserGeneration;
-    QTimer::singleShot(retryIntervalMs, this, [this, generation] {
-        if (generation != mParserGeneration)
-            return;
-        mRetryScheduled = false;
-        if (mRefreshPending)
-            fillStatements();
-    });
-}
-
-void ClassBrowserModel::fillStatements()
-{
-    {
-        QMutexLocker locker(&mMutex);
-        mRefreshPending = true;
-        if (mUpdateCount != 0 || mUpdating)
-            return;
-    }
-    const PCppParser parser = mParser;
-    if (!parser || !parser->enabled()) {
-        mRefreshPending = false;
-        clear();
-        return;
-    }
-    // Keep the last valid snapshot until fresh parser data is available.
-    if (parser->hasPendingWork() || !parser->freeze()) {
-        scheduleRefreshRetry();
-        return;
-    }
-    const auto releaseParser = finally([parser] { parser->unFreeze(); });
-    mRefreshPending = false;
-    mRetryAttempts = 0;
-    mUpdating = true;
-    bool resetStarted = false;
-    const auto finishRefresh = finally([this, &resetStarted] {
-        if (resetStarted)
-            endResetModel();
-        mUpdating = false;
-        emit refreshEnd();
-        if (mRefreshPending)
-            scheduleRefreshRetry();
-    });
-    emit refreshStarted();
-    // A direct slot may have changed the active parser while notifying views.
-    if (mParser != parser) {
-        mRefreshPending = bool(mParser);
-        return;
-    }
-    beginResetModel();
-    resetStarted = true;
-    mRoot->children.clear();
-    mNodes.clear();
-    mNodeIndex.clear();
-    mProcessedStatements.clear();
-    mDummyStatements.clear();
-    mScopeNodes.clear();
-    addMembers();
-}
-
-PClassBrowserNode ClassBrowserModel::addChild(ClassBrowserNode *node, const PStatement& statement)
-{
-    PClassBrowserNode newNode = std::make_shared<ClassBrowserNode>();
-    newNode->parent = node;
-    // The parser can mutate or discard statements on a worker thread after
-    // unFreeze(). Keep a detached display/navigation snapshot in the model.
-    newNode->statement = std::make_shared<Statement>(*statement);
-    newNode->statement->children.clear();
-    newNode->statement->publicProperties.clear();
-    newNode->statement->matchPositions.clear();
-    newNode->statement->parentScope = node->statement;
-//    newNode->childrenFetched = false;
-    node->children.append(newNode.get());
-    mNodes.append(newNode);
-    mNodeIndex.insert(
-                QString("%1+%2+%3")
-                .arg(statement->fullName,
-                     statement->noNameArgs)
-                .arg((int)statement->kind),newNode);
-    mProcessedStatements.insert(statement.get());
-    if (isScopeStatement(statement)) {
-        mScopeNodes.insert(statement->fullName,newNode);
-    }
-    //don't show enum type's children values (they are displayed in parent scope)
-//    if (statement->kind != StatementKind::skEnumType) {
-        filterChildren(newNode.get(), statement->children);
-//    }
-    return newNode;
-}
-
-void ClassBrowserModel::addMembers()
-{
-    if (mClassBrowserType==ProjectClassBrowserType::CurrentFile) {
-        if (mCurrentFile.isEmpty())
-            return;
-        // show statements in the file
-        PParsedFileInfo p = mParser->findFileInfo(mCurrentFile);
-        if (!p)
-            return;
-        filterChildren(mRoot,p->statements());
-    } else {
-        if (mParser->projectFiles().isEmpty())
-            return;
-        foreach(const QString& file,mParser->projectFiles()) {
-            PParsedFileInfo p = mParser->findFileInfo(file);
-            if (!p)
-                return;
-            filterChildren(mRoot,p->statements());
-        }
-    }
-    sortNode(mRoot);
-}
-
-void ClassBrowserModel::sortNode(ClassBrowserNode *node)
-{
-    if (!pSettings->ui().classBrowserSortAlpha()) {
-        if (mClassBrowserType==ProjectClassBrowserType::CurrentFile) {
-            std::sort(node->children.begin(),node->children.end(),
-                      [](ClassBrowserNode* node1,ClassBrowserNode* node2) {
-                return (node1->statement->line < node2->statement->line);
-            });
-        } else {
-            std::sort(node->children.begin(),node->children.end(),
-                      [](ClassBrowserNode* node1,ClassBrowserNode* node2) {
-                int comp=QString::compare(node1->statement->fileName, node2->statement->fileName);
-                if (comp<0)
-                    return true;
-                else if (comp==0)
-                    return (node1->statement->line < node2->statement->line);
-                return false;
-            });
-        };
-    }
-
-    if (pSettings->ui().classBrowserSortAlpha()
-            && pSettings->ui().classBrowserSortType()) {
-        std::sort(node->children.begin(),node->children.end(),
-                  [](ClassBrowserNode* node1,ClassBrowserNode* node2) {
-            if (node1->statement->kind < node2->statement->kind) {
-                return true;
-            } else if (node1->statement->kind == node2->statement->kind) {
-                return node1->statement->command.toLower() < node2->statement->command.toLower();
-            } else {
-                return false;
-            }
-        });
-    } else if (pSettings->ui().classBrowserSortAlpha()) {
-        std::sort(node->children.begin(),node->children.end(),
-                  [](ClassBrowserNode* node1,ClassBrowserNode* node2) {
-            return node1->statement->command.toLower() < node2->statement->command.toLower();
-        });
-    } else if (pSettings->ui().classBrowserSortType()) {
-        std::sort(node->children.begin(),node->children.end(),
-                  [](ClassBrowserNode* node1,ClassBrowserNode* node2) {
-            return node1->statement->kind < node2->statement->kind;
-        });
-    }
-    foreach(ClassBrowserNode* child,node->children) {
-        sortNode(child);
-    }
-}
-
-void ClassBrowserModel::filterChildren(ClassBrowserNode *node, const StatementMap &statements)
-{
-    for (PStatement statement:statements) {
-        if (mClassBrowserType==ProjectClassBrowserType::WholeProject
-                && !statement->inProject())
-            continue;
-
-        if (mProcessedStatements.contains(statement.get()))
-            continue;
-//        if (statement->properties.testFlag(StatementProperty::spDummyStatement))
-//            continue;
-
-        if (statement->kind == StatementKind::Block)
-            continue;
-        if (statement->kind == StatementKind::Lambda)
-            continue;
-        if (statement->isInherited() && !pSettings->ui().classBrowserShowInherited())
-            continue;
-
-        if (statement == node->statement) // prevent infinite recursion
-            continue;
-
-        if (statement->scope == StatementScope::Local)
-            continue;
-
-        if (pSettings->codeCompletion().hideSymbolsStartsWithTwoUnderLine()
-            && statement->command.startsWith("__")
-            && statement->fileName != mCurrentFile
-                && statement->definitionFileName != mCurrentFile
-                )
-        continue;
-
-        if (pSettings->codeCompletion().hideSymbolsStartsWithUnderLine()
-                && statement->kind != StatementKind::LiteralOperator
-                && statement->command.startsWith('_')
-                && statement->fileName != mCurrentFile
-                && statement->definitionFileName != mCurrentFile
-                )
-        continue;
-
-        ClassBrowserNode *parentNode=node;
-        // we only test and handle orphan statements in the top level (node->statement is null)
-        PStatement parentScope = statement->parentScope.lock();
-        if ( (parentScope!=node->statement)
-                && (!parentScope || !node->statement
-                    || parentScope->fullName!=node->statement->fullName)) {
-//          //should not happend, just in case of error
-//            if (!parentScope)
-//                continue;
-
-            // Processing the orphan statement
-                //the statement's parent is in this file, so it's not a real orphan
-//            if ((parentScope->fileName==mCurrentFile)
-//                    ||(parentScope->definitionFileName==mCurrentFile))
-//                continue;
-
-            ClassBrowserNode *dummyNode = getParentNode(parentScope,1);
-            if (dummyNode)
-                parentNode = dummyNode;
-        }
-        if (isScopeStatement(statement)) {
-            // Scope nodes display detached dummy statements, so addChild()
-            // marks only the dummy. Track the actual parser statement before
-            // visiting its children; separate namespace declarations remain
-            // separate and are still merged into the same scope node.
-            mProcessedStatements.insert(statement.get());
-            //PStatement dummy = mDummyStatements.value(statement->fullName,PStatement());
-            PClassBrowserNode scopeNode = mScopeNodes.value(statement->fullName,PClassBrowserNode());
-            if (!scopeNode) {
-                PStatement dummy = createDummy(statement);
-                scopeNode = addChild(parentNode,dummy);
-            }
-            filterChildren(scopeNode.get(),statement->children);
-        } else {
-            addChild(parentNode,statement);
-        }
-    }
-}
-
-PStatement ClassBrowserModel::createDummy(const PStatement& statement)
-{
-    PStatement result = std::make_shared<Statement>();
-    result->parentScope = statement->parentScope;
-    result->command = statement->command;
-    result->args = statement->args;
-    result->noNameArgs = statement->noNameArgs;
-    result->fullName = statement->fullName;
-    result->kind = statement->kind;
-    result->type = statement->type;
-    result->value = statement->value;
-    result->scope = statement->scope;
-    result->accessibility = statement->accessibility;
-    result->properties = statement->properties;
-    result->fileName= statement->fileName;
-    result->line = statement->line;
-    result->definitionFileName = statement->fileName;
-    result->definitionLine = statement->definitionLine;
-    mDummyStatements.insert(result->fullName,result);
-    return result;
-}
-
-ClassBrowserNode* ClassBrowserModel::getParentNode(const PStatement &parentStatement, int depth)
-{
-    Q_ASSERT(depth<=10);
-    if (depth>10) return mRoot;
-    if (!parentStatement) return mRoot;
-    if (!isScopeStatement(parentStatement)) return mRoot;
-
-    PClassBrowserNode parentNode = mScopeNodes.value(parentStatement->fullName,PClassBrowserNode());
-    if (!parentNode) {
-        PStatement dummyParent = createDummy(parentStatement);
-        ClassBrowserNode *grandNode = getParentNode(parentStatement->parentScope.lock(), depth+1);
-        parentNode = addChild(grandNode,dummyParent);
-    }
-    return parentNode.get();
-}
-
-bool ClassBrowserModel::isScopeStatement(const PStatement &statement)
-{
-    switch(statement->kind) {
-    case StatementKind::Class:
-    case StatementKind::Namespace:
-    case StatementKind::EnumClassType:
-    case StatementKind::EnumType:
-        return true;
-    default:
-        return false;
-    }
-}
-
-QModelIndex ClassBrowserModel::modelIndexForStatement(const QString &key) const
-{
-    QMutexLocker locker(&mMutex);
-    if (mUpdating)
-        return QModelIndex();
-    PClassBrowserNode node=mNodeIndex.value(key,PClassBrowserNode());
-    if (!node)
-        return QModelIndex();
-
-    ClassBrowserNode *parentNode=node->parent;
-    if (!parentNode)
-        return QModelIndex();
-    int row=parentNode->children.indexOf(node.get());
-    if (row<0)
-        return QModelIndex();
-    return createIndex(row,0,node.get());
-}
-
-ProjectClassBrowserType ClassBrowserModel::classBrowserType() const
-{
-    return mClassBrowserType;
-}
-
-void ClassBrowserModel::setClassBrowserType(ProjectClassBrowserType newClassBrowserType)
-{
-    if (mClassBrowserType != newClassBrowserType) {
-        beginUpdate();
-        clear();
-        mClassBrowserType = newClassBrowserType;
-        endUpdate();
-    }
-}
-
-const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > &ClassBrowserModel::colors() const
-{
-    return mColors;
-}
-
-void ClassBrowserModel::setColors(const std::shared_ptr<QHash<StatementKind, std::shared_ptr<ColorSchemeItem> > > &newColors)
-{
-    mColors = newColors;
-}
-
-const QString &ClassBrowserModel::currentFile() const
-{
-    return mCurrentFile;
-}
-
-void ClassBrowserModel::setCurrentFile(const QString &newCurrentFile)
-{
-    if (mCurrentFile == newCurrentFile)
-        return;
-    if (mClassBrowserType == ProjectClassBrowserType::CurrentFile)
-        clear(); // never display another file's symbols while this one parses
-    mCurrentFile = newCurrentFile;
-    mRefreshPending = true;
-    mRetryAttempts = 0;
-}
-
-void ClassBrowserModel::beginUpdate()
-{
-    mUpdateCount++;
-}
-
-void ClassBrowserModel::endUpdate()
-{
-    mUpdateCount--;
-    if (mUpdateCount == 0 && mParser)
-        fillStatements();
+    if (!mPublication || hint.isEmpty()) return {};
+    const auto matches = mPublication->selection(hint, 1);
+    return matches.status == Analysis::SelectionResolution::UniqueBestEffort ? indexFor(matches.candidates[0]) : QModelIndex{};
 }

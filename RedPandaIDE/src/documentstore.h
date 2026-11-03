@@ -217,6 +217,7 @@ public:
         const auto entry = mEntries.constFind(id);
         return entry == mEntries.cend() ? QString{} : entry->absoluteFilename;
     }
+    quint64 generation() const { return onOwnerThread() ? mGeneration : 0; }
     bool onOwnerThread() const { return QThread::currentThread() == mOwner; }
 private:
     struct Entry {

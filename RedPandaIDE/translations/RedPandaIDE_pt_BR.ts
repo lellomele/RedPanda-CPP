@@ -7428,6 +7428,18 @@
         <source>Move Caret</source>
         <translation type="unfinished"></translation>
     </message>
+        <message>
+            <source>Structure is unavailable</source>
+            <translation>Estrutura indisponível</translation>
+        </message>
+        <message>
+            <source>Structure could not read all files</source>
+            <translation>Não foi possível ler todos os arquivos da estrutura</translation>
+        </message>
+        <message>
+            <source>Structure reached its resource limit</source>
+            <translation>A estrutura atingiu o limite de recursos</translation>
+        </message>
 </context>
 <context>
     <name>MemoryModel</name>
@@ -11793,5 +11805,12 @@
         <source>Right edge line color</source>
         <translation>Cor da margem à direita</translation>
     </message>
+</context>
+<context>
+    <name>ClassBrowserModel</name>
+        <message>
+            <source>anonymous</source>
+            <translation>anônimo</translation>
+        </message>
 </context>
 </TS>

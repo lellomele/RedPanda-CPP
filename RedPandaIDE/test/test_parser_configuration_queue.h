@@ -18,6 +18,9 @@ private slots:
     void async_toolchain_probe_prepares_and_applies_complete_values();
     void cancelled_owned_probe_keeps_service_until_early_child_is_quiescent();
     void invalid_configuration_and_wrong_thread_calls_never_become_ready();
+    void queued_outline_uses_latest_certified_demand();
+    void outline_controller_switches_files_with_same_generation();
+    void project_outline_completes_a_single_file_manifest();
 private:
     static bool controlMutexAvailable(CppParser *parser);
 };

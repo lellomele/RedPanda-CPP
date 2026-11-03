@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_parser_configuration_queue.h"
 #include "src/parser/cppparser.h"
+#include "src/pathidentity.h"
+#include "src/widgets/classbrowsercontroller.h"
 #include "src/analysis/parsertoolchainprobe.h"
 #include <QApplication>
 #include <QElapsedTimer>
@@ -380,6 +382,156 @@ void TestParserConfigurationQueue::invalid_configuration_and_wrong_thread_calls_
     QCOMPARE(f.parse(), Request::ConfigurationUnavailable);
     const auto c = parser->submitConfiguration(config("DISABLED", false)); QVERIFY(c > b); QVERIFY(f.idle());
     QCOMPARE(f.parse(), Request::Disabled); QCOMPARE(parser->appliedConfigurationTicket(), c);
+}
+
+void TestParserConfigurationQueue::queued_outline_uses_latest_certified_demand()
+{
+    Fixture f;
+    QVERIFY(f.apply(config("A")));
+    QCOMPARE(f.parse(), Request::Accepted);
+    QVERIFY(f.idle());
+    auto *parser = f.parser.get();
+    const auto report = parser->sourceJobReport();
+    QVERIFY(report && report->complete());
+    const auto document = f.store->snapshotFor(f.document);
+    QVERIFY(document);
+    struct ImmediateReclaimer final : Analysis::SemanticReclamationScheduler {
+        void retire(Analysis::RetiredSemanticAllocation *allocation) noexcept override { allocation->reclaim(); }
+    };
+    const auto resources = std::make_shared<Analysis::OutlineResources>(
+        Analysis::OutlineResources{Analysis::SemanticMemoryLedger(1024 * 1024), std::make_shared<ImmediateReclaimer>()});
+    Analysis::OutlineJobRequest request;
+    request.demand = {parser->outlineService(), 1, 0};
+    request.stamp = {report->configurationTicket, report->configurationDigest, report->inputGeneration, report->workingDirectory};
+    request.sourceJob = report->job;
+    request.documentId = document->id;
+    request.documentRevision = document->revision;
+    request.primaryFile = document->filename;
+    request.primaryPath = document->absoluteFilename;
+    QSignalSpy published(parser, &CppParser::outlineFinished);
+    QVERIFY(parser->submitOutline(request, resources));
+    ++request.demand.sequence;
+    QVERIFY(parser->submitOutline(request, resources));
+    QVERIFY(spin([&] { return published.size() == 1; }));
+    auto result = published.takeFirst().at(0).value<Analysis::OutlineJobResult>();
+    QCOMPARE(result.status, Analysis::OutlineJobStatus::Ready);
+    QVERIFY(result.matches(request));
+    QVERIFY(result.publication && result.publication->outline());
+    const auto &outline = *result.publication->outline();
+    QCOMPARE(outline.roots().size(), std::size_t(1));
+    QCOMPARE(outline.label(outline.nodes()[outline.roots().front()]), QStringView(u"from_A : int"));
+
+    // A second analysis of the same immutable input may already have taken
+    // ownership of the graph when the queued projection starts.
+    Gate parsing;
+    QObject receiver;
+    CallbackCleanup cleanup{f.parser, &receiver, parsing.state};
+    QObject::connect(parser, &CppParser::parseStarted, &receiver,
+        [gate = parsing.state] { gate->holdOnce(); }, Qt::DirectConnection);
+    QCOMPARE(f.parse(), Request::Accepted);
+    QVERIFY(parsing.wait());
+    ++request.demand.sequence;
+    QVERIFY(parser->submitOutline(request, resources));
+    parsing.open();
+    QVERIFY(spin([&] { return published.size() == 1; }));
+    const auto superseded = published.takeFirst().at(0).value<Analysis::OutlineJobResult>();
+    QCOMPARE(superseded.status, Analysis::OutlineJobStatus::Obsolete);
+    QVERIFY(!superseded.publication);
+    const auto newer = parser->sourceJobReport();
+    QVERIFY(newer && newer->complete() && newer->job != request.sourceJob);
+    QCOMPARE(newer->inputGeneration, request.stamp.inputGeneration);
+    request.sourceJob = newer->job;
+
+    ++request.demand.sequence;
+    QVERIFY(parser->submitOutline(request, resources));
+    parser->cancelOutline();
+    QVERIFY(f.idle());
+    QCOMPARE(published.count(), 0);
+    result.publication.reset();
+    QCOMPARE(resources->ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestParserConfigurationQueue::outline_controller_switches_files_with_same_generation()
+{
+    Fixture f;
+    QVERIFY(f.apply(config("A")));
+    const QString other = f.directory.filePath("other.cpp");
+    const auto otherId = f.store->add(other, [](QStringList &output) {
+        output = {"int only_in_other;"};
+        return true;
+    });
+    QVERIFY(otherId);
+    DocumentId active = f.document;
+    const auto current = [&] {
+        const auto snapshot = f.store->capture();
+        const auto document = snapshot.snapshot->documents().value(active);
+        return ClassBrowserController::SourceIdentity{snapshot.snapshot->generation(), document->id, document->revision,
+            document->filename, document->absoluteFilename};
+    };
+    struct ImmediateReclaimer final : Analysis::SemanticReclamationScheduler {
+        void retire(Analysis::RetiredSemanticAllocation *allocation) noexcept override { allocation->reclaim(); }
+    };
+    const auto resources = std::make_shared<Analysis::OutlineResources>(
+        Analysis::OutlineResources{Analysis::SemanticMemoryLedger(1024 * 1024), std::make_shared<ImmediateReclaimer>()});
+    ClassBrowserController controller(resources, current);
+    const auto context = [&] {
+        ClassBrowserController::Context result;
+        result.parser = f.parser;
+        result.source = current();
+        return result;
+    };
+    const auto ready = [&] { return controller.state() == ClassBrowserController::State::Ready; };
+    controller.setContext(context());
+    QVERIFY(spin(ready));
+    const auto previous = controller.model()->index(0, 0);
+    QCOMPARE(controller.model()->data(previous).toString(), QString("from_A : int"));
+    const auto firstGeneration = current().generation;
+    active = otherId;
+    QCOMPARE(current().generation, firstGeneration);
+    controller.setContext(context());
+    QCOMPARE(controller.model()->rowCount(), 0);
+    QVERIFY(spin(ready));
+    QCOMPARE(controller.model()->data(controller.model()->index(0, 0)).toString(), QString("only_in_other : int"));
+    QVERIFY(!controller.model()->data(previous).isValid());
+    controller.stop();
+    QCOMPARE(controller.model()->rowCount(), 0);
+    QVERIFY(f.idle());
+    QCOMPARE(resources->ledger.usage().admitted(), std::size_t(0));
+}
+
+void TestParserConfigurationQueue::project_outline_completes_a_single_file_manifest()
+{
+    Fixture f;
+    const QString other = f.directory.filePath("other.cpp");
+    QVERIFY(touch(other, "int only_in_other;"));
+    auto project = config("A")->values();
+    project.projectFiles = {f.file, other};
+    QVERIFY(f.apply(Analysis::ParserConfiguration::create(std::move(project))));
+    QCOMPARE(f.parse(), Request::Accepted);
+    QVERIFY(f.idle());
+    const auto initial = f.parser->sourceJobReport();
+    QVERIFY(initial && initial->complete());
+    QVERIFY(!initial->reads.contains(exactPathSpelling(other)));
+
+    struct ImmediateReclaimer final : Analysis::SemanticReclamationScheduler {
+        void retire(Analysis::RetiredSemanticAllocation *allocation) noexcept override { allocation->reclaim(); }
+    };
+    const auto resources = std::make_shared<Analysis::OutlineResources>(
+        Analysis::OutlineResources{Analysis::SemanticMemoryLedger(1024 * 1024), std::make_shared<ImmediateReclaimer>()});
+    const auto current = [&] {
+        const auto capture = f.store->capture();
+        return ClassBrowserController::SourceIdentity{capture.snapshot->generation()};
+    };
+    ClassBrowserController controller(resources, current);
+    ClassBrowserController::Context context;
+    context.parser = f.parser;
+    context.workspace = f.parser->outlineService();
+    context.source = current();
+    context.wholeProject = true;
+    controller.setContext(std::move(context));
+    QVERIFY(spin([&] { return controller.state() == ClassBrowserController::State::Ready; }));
+    QCOMPARE(controller.model()->rowCount(), 2);
+    QVERIFY(f.parser->sourceJobReport()->reads.contains(exactPathSpelling(other)));
 }
 
 int runParserConfigurationQueueHelper()

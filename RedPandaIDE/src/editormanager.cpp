@@ -265,6 +265,11 @@ QString EditorManager::documentAbsolutePath(const Editor *editor) const
     return mDocumentStore->absolutePathFor(documentId(editor));
 }
 
+quint64 EditorManager::documentInputGeneration() const
+{
+    return mDocumentStore->generation();
+}
+
 Editor *EditorManager::editorForDocument(DocumentId id) const
 {
     if (QThread::currentThread() != thread() || !id) return nullptr;

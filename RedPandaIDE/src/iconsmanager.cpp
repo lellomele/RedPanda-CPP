@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "iconsmanager.h"
+#include "analysis/semanticpublication.h"
 
 #include <QPainter>
 #include <QSvgRenderer>
@@ -385,8 +386,19 @@ QPixmap IconsManager::getPixmapForStatement(const QMap<IconName, PPixmap> &iconP
 {
     if (!statement)
         return QPixmap();
-    StatementKind kind = getKindOfStatement(statement);
-    switch (kind) {
+    return getPixmapForOutline(iconPixmaps, {getKindOfStatement(statement), statement->scope,
+                                            statement->accessibility, statement->isInherited()});
+}
+
+QPixmap IconsManager::getPixmapForOutline(const Analysis::OutlineIconDescriptor &icon)
+{
+    return getPixmapForOutline(mIconPixmaps, icon);
+}
+
+QPixmap IconsManager::getPixmapForOutline(const QMap<IconName, PPixmap> &iconPixmaps,
+                                          const Analysis::OutlineIconDescriptor &icon)
+{
+    switch (icon.kind) {
     case StatementKind::Typedef:
         return *(getPixmap(iconPixmaps, IconsManager::PARSER_TYPE));
     case StatementKind::Class:
@@ -405,20 +417,20 @@ QPixmap IconsManager::getPixmapForStatement(const QMap<IconName, PPixmap> &iconP
     case StatementKind::Destructor:
     case StatementKind::OverloadedOperator:
     case StatementKind::LiteralOperator:
-        if (statement->scope == StatementScope::Global)
+        if (icon.scope == StatementScope::Global)
             return *(getPixmap(iconPixmaps, IconsManager::PARSER_GLOBAL_METHOD));
-        if (statement->isInherited()) {
-            if (statement->accessibility == StatementAccessibility::Protected) {
+        if (icon.inherited) {
+            if (icon.accessibility == StatementAccessibility::Protected) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_INHERITED_PROTECTED_METHOD));
-            } else if (statement->accessibility == StatementAccessibility::Public) {
+            } else if (icon.accessibility == StatementAccessibility::Public) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_INHERITED_METHOD));
             } else {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PRIVATE_METHOD));
             }
         } else {
-            if (statement->accessibility == StatementAccessibility::Protected) {
+            if (icon.accessibility == StatementAccessibility::Protected) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PROTECTED_METHOD));
-            } else if (statement->accessibility == StatementAccessibility::Public) {
+            } else if (icon.accessibility == StatementAccessibility::Public) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PUBLIC_METHOD));
             } else {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PRIVATE_METHOD));
@@ -430,18 +442,18 @@ QPixmap IconsManager::getPixmapForStatement(const QMap<IconName, PPixmap> &iconP
     case StatementKind::LocalVariable:
         return *(getPixmap(iconPixmaps, IconsManager::PARSER_LOCAL_VAR));
     case StatementKind::Variable:
-        if (statement->isInherited()) {
-            if (statement->accessibility == StatementAccessibility::Protected) {
+        if (icon.inherited) {
+            if (icon.accessibility == StatementAccessibility::Protected) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_INHERITED_PROTECTD_VAR));
-            } else if (statement->accessibility == StatementAccessibility::Public) {
+            } else if (icon.accessibility == StatementAccessibility::Public) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_INHERITED_VAR));
             } else {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PRIVATE_VAR));
             }
         } else {
-            if (statement->accessibility == StatementAccessibility::Protected) {
+            if (icon.accessibility == StatementAccessibility::Protected) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PROTECTED_VAR));
-            } else if (statement->accessibility == StatementAccessibility::Public) {
+            } else if (icon.accessibility == StatementAccessibility::Public) {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PUBLIC_VAR));
             } else {
                 return *(getPixmap(iconPixmaps, IconsManager::PARSER_PRIVATE_VAR));

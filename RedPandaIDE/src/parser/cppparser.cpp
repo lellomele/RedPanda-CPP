@@ -38,6 +38,7 @@ const QString DebugLogFolder{"r:/"};
 #endif
 
 static QAtomicInt cppParserCount(0);
+static Analysis::SemanticIdentitySource outlineServiceIds(0);
 
 static QString calcFullname(const QString& parentName, const QString& name) {
     QString s;
@@ -49,7 +50,7 @@ static QString calcFullname(const QString& parentName, const QString& name) {
 }
 
 CppParser::CppParser() : QObject{nullptr},
-    mMutex{}
+    mMutex{}, mOutlineIdentities(outlineServiceIds.next())
 {
     mParserId = cppParserCount.fetchAndAddRelaxed(1);
     mLanguage = ParserLanguage::CPlusPlus;
@@ -1336,7 +1337,7 @@ void CppParser::beginSourceJob(const AnalysisInput::SourceReadRequestPtr &reques
         mSourceJobRebuild = true;
         // Failed validation of a removed/changed obsolete root must not poison
         // the actual manifest for the fresh rebuild that follows.
-        mSourceSession = std::make_shared<AnalysisInput::SourceReadSession>(request->documents, request->policy);
+        mSourceSession = std::make_shared<AnalysisInput::SourceReadSession>(request->documents, request->policy, cancelled);
         mPreprocessor.setSourceReadSession(mSourceSession);
     }
 }

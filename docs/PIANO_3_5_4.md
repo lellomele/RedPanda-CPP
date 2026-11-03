@@ -110,3 +110,14 @@ DocumentStore dopo la qualificazione di tutte le notifiche di modifica.
 L'obiettivo è la 3.5.4 pronta al rilascio; questa fase non certifica già risolti
 tutti i rilievi dell'audit né attribuisce una causa al precedente blocco con
 crescita di memoria a 4–5 GiB.
+
+## Pubblicazione dei simboli nel pannello Struttura
+
+Struttura usa ora una proiezione immutabile preparata nella coda del parser.
+Il controller grafico identifica documento e progetto attivi. Il modello
+dell’albero espande i nodi leggendo le righe già pubblicate, senza accedere al
+grafo modificabile del parser. Ogni proiezione è legata all’analisi dei sorgenti
+che l’ha prodotta. La vista di progetto richiede la copertura di tutti i file
+previsti e le copie ritirate vengono liberate in background. Restano da migrare
+gli altri lettori semantici e i percorsi di arresto dei servizi. Gli esiti
+Windows sono nel registro delle verifiche.

@@ -18,6 +18,13 @@ QStringView SemanticShard::text(SemanticTextRef ref) const noexcept
     if (ref.size == 0) return {};
     return QStringView(mText.data() + ref.offset, ref.size);
 }
+QStringView OutlineProjection::label(const SemanticOutlineNode &node) const noexcept
+{
+    const auto ref = node.label;
+    if (!ref.size || ref.offset > mText.size() || ref.size > mText.size() - ref.offset) return {};
+    return QStringView(mText.data() + ref.offset, ref.size);
+}
+
 const SemanticRecord *SemanticPublication::symbol(SymbolRef ref) const noexcept
 {
     if (ref.service != mIdentity.service || !ref.valid()) return nullptr;

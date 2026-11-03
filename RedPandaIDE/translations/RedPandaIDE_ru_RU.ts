@@ -7047,6 +7047,18 @@
         <source>Stop execution when the following variable is modified (it must be visible from the currect scope):</source>
         <translation>Остановать выполнение, если следующая переменная изменилась (она должна быть видима из текущей области видимости):</translation>
     </message>
+        <message>
+            <source>Structure is unavailable</source>
+            <translation>Структура недоступна</translation>
+        </message>
+        <message>
+            <source>Structure could not read all files</source>
+            <translation>Не удалось прочитать все файлы структуры</translation>
+        </message>
+        <message>
+            <source>Structure reached its resource limit</source>
+            <translation>Достигнут предел ресурсов для структуры</translation>
+        </message>
 </context>
 <context>
     <name>MemoryModel</name>
@@ -10892,5 +10904,12 @@
         <source>Right edge line color</source>
         <translation>Цвет линии правой границы</translation>
     </message>
+</context>
+<context>
+    <name>ClassBrowserModel</name>
+        <message>
+            <source>anonymous</source>
+            <translation>без имени</translation>
+        </message>
 </context>
 </TS>

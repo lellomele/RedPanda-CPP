@@ -129,6 +129,7 @@ target_moc_classes(RedPandaIDE
     # widgets
     src/widgets/bookmarkmodel
     src/widgets/classbrowser
+    src/widgets/classbrowsercontroller
     src/widgets/codecompletionlistview
     src/widgets/codecompletionpopup
     src/widgets/coloredit
@@ -381,6 +382,8 @@ target_qt_plain_cpp(test-cppparser
     )
 
 target_moc_classes(test-cppparser
+    src/widgets/classbrowser
+    src/widgets/classbrowsercontroller
     #test
     test/test_parser_configuration_queue
     test/test_semanticpublication
@@ -425,8 +428,19 @@ endforeach()
 add_dependencies(all-test-targets test-cppparser)
 
 foreach(parser_consumer IN ITEMS RedPandaIDE test-editor test-cppparser)
-    target_sources(${parser_consumer} PRIVATE src/parser/cppparserconfiguration.cpp)
+    target_sources(${parser_consumer} PRIVATE
+        src/parser/cppparserconfiguration.cpp
+        src/parser/cppparseroutline.cpp
+        src/analysis/outlinejob.cpp)
 endforeach()
+foreach(outline_consumer IN ITEMS RedPandaIDE test-editor)
+    target_sources(${outline_consumer} PRIVATE
+        src/analysis/enginesemanticadapter.cpp
+        src/analysis/semanticmemory.cpp
+        src/analysis/semanticpublication.cpp
+        src/analysis/semanticpublicationbuilder.cpp)
+endforeach()
+target_sources(RedPandaIDE PRIVATE src/analysis/semanticretirement.cpp)
 foreach(parser_test IN ITEMS test-editor test-cppparser)
     target_sources(${parser_test} PRIVATE
         src/analysis/parserconfiguration.cpp

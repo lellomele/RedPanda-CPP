@@ -5,7 +5,17 @@
 namespace Analysis {
 EngineSemanticGraphSource::EngineSemanticGraphSource(const EngineSemanticFileView *files, std::size_t count,
                                                    std::shared_ptr<SemanticMemoryResource> scratch):
-    mFiles(files), mFileCount(count), mScratch(std::move(scratch)), mSources(mScratch.get()) {}
+    mScratch(std::move(scratch)), mByFile(mScratch.get()), mSources(mScratch.get())
+{
+    mByFile.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto &file = files[index];
+        if (file.filename.isEmpty()) continue;
+        const auto [entry, inserted] = mByFile.emplace(file.filename, file.statements);
+        if (!inserted && entry->second != file.statements)
+            entry->second = nullptr; // Ambiguous provenance fails closed.
+    }
+}
 SemanticSourceId EngineSemanticGraphSource::remember(const PStatement &statement) const
 {
     if (!statement) return 0;
@@ -27,24 +37,17 @@ bool EngineSemanticGraphSource::symbol(SemanticSourceId id, SemanticSourceSymbol
     value.declaration = {statement.fileName, statement.line, -1};
     value.definition = {statement.definitionFileName, statement.definitionLine, -1};
     value.selectionKey = {};
-    value.scopeGroup = statement.kind == StatementKind::Namespace ? QStringView(statement.fullName) : QStringView{};
+    value.scopeGroup = statement.kind == StatementKind::Namespace && statement.command != u"{" &&
+            !statement.fullName.contains(u'{') ? QStringView(statement.fullName) : QStringView{};
     return true;
 }
 bool EngineSemanticGraphSource::roots(QStringView filename, SemanticSourceVisitor visitor) const
 {
-#ifdef Q_OS_WIN
-    constexpr auto sensitivity = Qt::CaseInsensitive;
-#else
-    constexpr auto sensitivity = Qt::CaseSensitive;
-#endif
-    for (std::size_t index = 0; index < mFileCount; ++index) {
-        if (mFiles[index].filename.compare(filename, sensitivity) != 0) continue;
-        if (!mFiles[index].statements) return false;
-        for (const auto &statement : *mFiles[index].statements)
-            if (!visitor(remember(statement))) return false;
-        return true;
-    }
-    return false;
+    const auto file = mByFile.find(filename);
+    if (file == mByFile.end() || !file->second) return false;
+    for (const auto &statement : *file->second)
+        if (!visitor(remember(statement))) return false;
+    return true;
 }
 bool EngineSemanticGraphSource::children(SemanticSourceId id, SemanticSourceVisitor visitor) const
 {

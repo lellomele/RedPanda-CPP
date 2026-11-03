@@ -8241,6 +8241,18 @@ p, li { white-space: pre-wrap; }
             <source>(%1 files per second)</source>
             <translation>(每秒%1個檔案)</translation>
         </message>
+        <message>
+            <source>Structure is unavailable</source>
+            <translation>結構無法使用</translation>
+        </message>
+        <message>
+            <source>Structure could not read all files</source>
+            <translation>無法讀取結構中的所有檔案</translation>
+        </message>
+        <message>
+            <source>Structure reached its resource limit</source>
+            <translation>結構已達資源上限</translation>
+        </message>
     </context>
     <context>
         <name>MemoryModel</name>
@@ -12867,4 +12879,11 @@ p, li { white-space: pre-wrap; }
             <translation>光標顏色</translation>
         </message>
     </context>
+<context>
+    <name>ClassBrowserModel</name>
+        <message>
+            <source>anonymous</source>
+            <translation>匿名</translation>
+        </message>
+</context>
 </TS>

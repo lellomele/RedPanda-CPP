@@ -26,6 +26,7 @@
 #include "cpppreprocessor.h"
 #include "../documentstore.h"
 #include "../analysis/parserconfiguration.h"
+#include "../analysis/outlinejob.h"
 #include <QPointer>
 #include <atomic>
 #include <optional>
@@ -71,6 +72,7 @@ public:
     Analysis::PParserConfiguration appliedConfiguration() const;
     quint64 configurationTicket() const;
     quint64 appliedConfigurationTicket() const;
+    QByteArray appliedConfigurationDigest() const;
     ConfigurationState configurationState() const;
     QString configurationError() const;
     int trackedAnalysisWorkerCount() const;
@@ -193,6 +195,10 @@ public:
     SourceJobReportPtr sourceJobReport() const;
 
     int parserId() const;
+    quint64 outlineService() const noexcept { return mOutlineIdentities.service(); }
+    bool submitOutline(Analysis::OutlineJobRequest request, std::shared_ptr<const Analysis::OutlineResources> resources);
+    void cancelOutline();
+
 
     const QString &serialId() const;
 
@@ -254,6 +260,7 @@ signals:
     void configurationReady(quint64 ticket, const QByteArray &digest);
     void configurationFailed(quint64 ticket, const QString &reason);
     void analysisStopped();
+    void outlineFinished(const Analysis::OutlineJobResult &result);
     void configurationApplying(quint64 ticket);
     void analysisRequestSuperseded(quint64 ticket);
     void inputSnapshotUnavailable(const QString &reason);
@@ -852,7 +859,7 @@ private:
         AnalysisInput::SourceReadRequestPtr sourceRequest;
         QSet<QString> roots;
     };
-    enum class AnalysisCommandKind { ParseFile, ParseFileList, ResetParsedResults, InvalidateFiles, PrepareConfiguration, ApplyConfiguration };
+    enum class AnalysisCommandKind { ParseFile, ParseFileList, ResetParsedResults, InvalidateFiles, PrepareConfiguration, ApplyConfiguration, BuildOutline };
     struct AnalysisCommand {
         AnalysisCommandKind kind = AnalysisCommandKind::ParseFile;
         quint64 id = 0;
@@ -860,11 +867,17 @@ private:
         ParseFileCommand file;
         FileListCommand files;
         QSet<QString> invalidatedFiles;
+        Analysis::OutlineJobRequest outline;
+        std::shared_ptr<const Analysis::OutlineResources> outlineResources;
         Analysis::PParserConfiguration configuration;
         std::shared_ptr<const Analysis::ParserToolchainProbeRequest> probe;
         std::shared_ptr<std::atomic_bool> cancelled = std::make_shared<std::atomic_bool>(false);
     };
     QList<AnalysisCommand> mAnalysisQueue;
+    std::optional<OutlineDemand> mExpectedOutline;
+    Analysis::SemanticIdentitySource mOutlineIdentities;
+    QThread *makeOutlineWorker(const PCppParser &owner, const AnalysisCommand &command);
+    Analysis::OutlineJobResult runOutlineCommand(const AnalysisCommand &command);
     std::optional<AnalysisCommand> mActiveAnalysisCommand;
     QPointer<QThread> mActiveAnalysisWorker;
     bool mWriterReserved = false;

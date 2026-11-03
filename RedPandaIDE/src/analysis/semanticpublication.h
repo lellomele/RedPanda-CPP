@@ -49,11 +49,22 @@ struct SemanticMembership {
     SymbolRef symbol, parent;
     bool contextOnly = false;
 };
+struct OutlineIconDescriptor {
+    StatementKind kind{};
+    StatementScope scope{};
+    StatementAccessibility accessibility{};
+    bool inherited = false;
+};
 struct SemanticOutlineNode {
     SymbolRef symbol;
     NodeIndex parent = NoNode;
     quint32 firstChild = 0, childCount = 0;
     bool contextOnly = false;
+    quint32 rowInParent = 0;
+    SemanticTextRef label;
+    bool anonymous = false;
+    StatementKind color{};
+    OutlineIconDescriptor icon;
 };
 class SemanticPublicationBuilder;
 class SemanticShard {
@@ -82,17 +93,19 @@ private:
 using MembershipSegmentPtr = std::shared_ptr<const MembershipSegment>;
 class OutlineProjection {
 public:
-    explicit OutlineProjection(SemanticMemoryResource *memory): mNodes(memory), mChildren(memory), mRoots(memory), mSelection(memory) {}
+    explicit OutlineProjection(SemanticMemoryResource *memory): mNodes(memory), mChildren(memory), mRoots(memory), mSelection(memory), mText(memory) {}
     quint64 id() const { return mId; }
     const std::pmr::vector<SemanticOutlineNode> &nodes() const { return mNodes; }
     const std::pmr::vector<NodeIndex> &children() const { return mChildren; }
     const std::pmr::vector<NodeIndex> &roots() const { return mRoots; }
+    QStringView label(const SemanticOutlineNode &node) const noexcept;
 private:
     friend class SemanticPublication;
     friend class SemanticPublicationBuilder;
     quint64 mId = 0;
     std::pmr::vector<SemanticOutlineNode> mNodes;
     std::pmr::vector<NodeIndex> mChildren, mRoots, mSelection;
+    std::pmr::vector<char16_t> mText;
 };
 using OutlineProjectionPtr = std::shared_ptr<const OutlineProjection>;
 enum class SelectionResolution { Exact, UniqueBestEffort, Ambiguous, Missing };

@@ -58,7 +58,7 @@ public:
     OperationResult registerService(ServiceHooks hooks, ServiceId &id);
     OperationResult unregisterService(ServiceId id);
     OperationResult setStopDeadline(int milliseconds);
-    OperationResult requestClose();
+    OperationResult requestClose(bool commitIfQuiescent = false);
     OperationResult retryClose();
     OperationResult cancelClose();
     bool takeClosePermit();

@@ -63,6 +63,8 @@ enum class RunType {
 
 class EditorManager;
 class EditorClosePlan;
+class SessionRecovery;
+namespace Lifecycle { class ApplicationLifecycle; }
 class QLabel;
 class QComboBox;
 class CompilerManager;
@@ -174,6 +176,7 @@ public:
     void resetAutoSaveTimer();
     void updateShortcuts();
     bool saveLastOpens();
+    void attachSessionRecovery(SessionRecovery &recovery);
     void loadLastOpens();
     void updateTools();
 
@@ -293,6 +296,14 @@ private:
     void prepareSearchDialog();
     void prepareSearchInFilesDialog();
     void prepareProjectForCompile();
+    void setupCloseLifecycle();
+    OperationResult prepareApplicationClose();
+    OperationResult validateApplicationClose();
+    OperationResult commitApplicationClose();
+    void stopAnalysisForClose(quint64 attempt, quint64 service);
+    void checkAnalysisShutdown();
+    void resumeAnalysisAfterClose();
+    void refreshResumedParser(const PCppParser &parser);
     OperationResult prepareEditorClosePlan(EditorClosePlan &plan, bool projectOnly = false);
     OperationResult closeProject(bool refreshEditor, const EditorClosePlan *acceptedPlan = nullptr);
     void updateProjectView();
@@ -933,8 +944,14 @@ private:
     SearchInFileDialog *mSearchInFilesDialog;
     SearchDialog *mSearchDialog;
     bool mQuitting;
-    bool mHandlingCloseEvent = false;
+    Lifecycle::ApplicationLifecycle *mCloseLifecycle = nullptr;
+    std::unique_ptr<EditorClosePlan> mApplicationClosePlan;
+    std::weak_ptr<Project> mClosingWorkspace;
+    bool mHadClosingWorkspace = false;
+    quint64 mAnalysisCloseAttempt = 0;
+    quint64 mAnalysisCloseService = 0;
     QList<PCppParser> mShutdownParsers;
+    QList<QMetaObject::Connection> mShutdownParserConnections;
     bool mOpeningFiles;
     bool mOpeningProject;
     bool mClosingProject;

@@ -21,6 +21,10 @@ public:
     void finishCleanly();
     bool isWriting() const;
     void stopScheduling();
+    void requestShutdown();
+    void resumeScheduling();
+signals:
+    void shutdownComplete();
 private:
     friend class RecoveryChecks;
     void reportFailure(const QString &error);

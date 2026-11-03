@@ -62,6 +62,8 @@
 #include "ui_mainwindow.h"
 #include "editormanager.h"
 #include "editorcloseplan.h"
+#include "lifecycle/applicationlifecycle.h"
+#include "sessionrecovery.h"
 #include "editor.h"
 #include "systemconsts.h"
 #include "settings.h"
@@ -516,12 +518,7 @@ MainWindow::MainWindow(QWidget *parent)
         else mStructureUpdateBlinkTimer.stop();
     });
     mOutlineStopCheckTimer.setInterval(25);
-    connect(&mOutlineStopCheckTimer, &QTimer::timeout, this, [this] {
-        if (mQuitting && !mHandlingCloseEvent && mOutlineRetirement->state().stopped()) {
-            mOutlineStopCheckTimer.stop();
-            close();
-        }
-    });
+    connect(&mOutlineStopCheckTimer, &QTimer::timeout, this, &MainWindow::checkAnalysisShutdown);
 
     connect(&mFileSystemWatcher,&QFileSystemWatcher::fileChanged,
             this, &MainWindow::onFileChanged);
@@ -606,6 +603,7 @@ MainWindow::MainWindow(QWidget *parent)
     updateTools();
     updateShortcuts();
     updateEditorSettings();
+    setupCloseLifecycle();
     //updateEditorBookmarks();
 }
 
@@ -5929,237 +5927,305 @@ void MainWindow::on_actionOpen_triggered()
     }
 }
 
-void MainWindow::closeEvent(QCloseEvent *event) {
-    // A rejected save must never leave the close event accepted or make the
-    // next attempt bypass document prompts because mQuitting remained set.
-    event->ignore();
-    // Save/discard dialogs run a nested event loop. Parser completion or a
-    // second close request must not bypass a still-pending document decision.
-    if (mHandlingCloseEvent)
-        return;
-    mHandlingCloseEvent = true;
-    const auto finishCloseEvent = finally([this] { mHandlingCloseEvent = false; });
-    const bool wasQuitting = mQuitting;
-    const bool wasClosingAll = mClosingAll;
-    const bool wasClosingProject = mClosingProject;
-    const bool wasCheckSyntaxInBack = mCheckSyntaxInBack;
-    bool shutdownPrepared = wasQuitting;
-    const auto restoreCloseState = [this, event, wasQuitting, wasClosingAll, wasClosingProject, wasCheckSyntaxInBack] {
-        mQuitting = wasQuitting;
-        mClosingAll = wasClosingAll;
-        mClosingProject = wasClosingProject;
-        mCheckSyntaxInBack = wasCheckSyntaxInBack;
-        event->ignore();
-    };
-    auto rollback = finally([&] {
-        if (!shutdownPrepared)
-            restoreCloseState();
+namespace {
+template<class Service, class Stop, class Resume, class Signal>
+void registerCloseService(Lifecycle::ApplicationLifecycle *lifecycle, Service *service, const QString &name,
+                          Stop stop, Resume resume, Signal signal)
+{
+    // The service owns its own admission fence. The lifecycle owns the
+    // attempt and accepts an acknowledgement only for its current request.
+    auto request = std::make_shared<Lifecycle::StopAck>();
+    Lifecycle::ServiceId id = 0;
+    const auto result = lifecycle->registerService({name,
+        [service, stop, request](Lifecycle::CloseAttemptId attempt, Lifecycle::ServiceId serviceId) {
+            *request = {attempt, serviceId, Lifecycle::StopState::Quiescent, {}, OperationResult::success()};
+            (service->*stop)();
+        },
+        [service, resume, request](Lifecycle::CloseAttemptId) {
+            *request = {};
+            (service->*resume)();
+        }}, id);
+    if (!result.succeeded()) throw BaseError(result.error);
+    QObject::connect(service, signal, lifecycle, [lifecycle, request] {
+        if (request->attempt) lifecycle->acknowledgeStopped(*request);
     });
-    try {
-        //if mQuitting is true, closeEvent is handled before, we are waiting for parsing finished.
-        //Don't save config twice ( lastopen info will get lost )
-        if (!mQuitting) {
-            mQuitting = true;
-            EditorClosePlan closePlan;
-            const auto decisions = prepareEditorClosePlan(closePlan);
-            if (!decisions.succeeded()) {
-                if (!decisions.error.isEmpty())
-                    QMessageBox::warning(this, tr("Close Error"), decisions.error);
-                return;
-            }
-            // Keep documents and the window alive until every worker has stopped.
-            const bool workersStopped = mCompilerManager->shutdown();
-            mCheckSyntaxInBack = false;
-            mCompileSuccessionTask = nullptr;
-            if (!workersStopped) {
-                QMessageBox::warning(this, tr("Shutdown Deferred"),
-                        tr("Background tasks are still stopping. Your documents remain open. Please retry closing shortly."));
-                return;
-            }
-            if (!mShouldRemoveAllSettings) {
-                if (mCPUDialog)
-                    mCPUDialog->close();
-                UISettings& settings = pSettings->ui();
-                settings.setOpenEditorsWhenReplace(ui->chkOpenFileInEditors->isChecked());
-                settings.setMainWindowState(saveState());
-                settings.setMainWindowGeometry(saveGeometry());
-                settings.setBottomPanelIndex(ui->tabMessages->currentIndex());
-                settings.setLeftPanelIndex(ui->tabExplorer->currentIndex());
-                settings.setDebugPanelIndex(ui->debugViews->currentIndex());
+}
+}
 
-                settings.setShowStatusBar(ui->actionStatus_Bar->isChecked());
-                settings.setShowToolWindowBars(ui->actionTool_Window_Bars->isChecked());
+void MainWindow::setupCloseLifecycle()
+{
+    using namespace Lifecycle;
+    CloseCallbacks callbacks;
+    callbacks.prepare = [this] { return prepareApplicationClose(); };
+    callbacks.validate = [this] { return validateApplicationClose(); };
+    callbacks.commit = [this] { return commitApplicationClose(); };
+    callbacks.abandon = [this] { mApplicationClosePlan.reset(); mClosingWorkspace.reset(); };
+    mCloseLifecycle = new ApplicationLifecycle(std::move(callbacks), this);
+    mCloseLifecycle->setStopDeadline(8000);
+    registerCloseService(mCloseLifecycle, mCompilerManager, tr("Compilation and execution"),
+        &CompilerManager::requestShutdown, &CompilerManager::resumeAdmissions, &CompilerManager::shutdownComplete);
+    registerCloseService(mCloseLifecycle, mDebugger, tr("Debugger"),
+        &Debugger::requestShutdown, &Debugger::resumeAdmissions, &Debugger::shutdownComplete);
+    registerCloseService(mCloseLifecycle, mTodoParser.get(), tr("TODO analysis"),
+        &TodoParser::requestShutdown, &TodoParser::resumeAdmissions, &TodoParser::shutdownComplete);
+    registerCloseService(mCloseLifecycle, &mCCHandler, tr("Competitive Companion"),
+        &CompetitiveCompanionHandler::requestShutdown, &CompetitiveCompanionHandler::resumeAdmissions,
+        &CompetitiveCompanionHandler::shutdownComplete);
+    ServiceId analysis = 0;
+    const auto registered = mCloseLifecycle->registerService({tr("Code analysis"),
+        [this](CloseAttemptId attempt, ServiceId service) { stopAnalysisForClose(attempt, service); },
+        [this](CloseAttemptId) { resumeAnalysisAfterClose(); }}, analysis);
+    if (!registered.succeeded()) throw BaseError(registered.error);
+    connect(mCloseLifecycle, &ApplicationLifecycle::stateChanged, this, [this](State state) {
+        mQuitting = state != State::Running;
+        if (state == State::Running)
+            updateClassBrowserForEditor(mEditorManager->getEditor());
+    });
+    connect(mCloseLifecycle, &ApplicationLifecycle::readyToClose, this,
+        [this] { QMetaObject::invokeMethod(this, [this] { close(); }, Qt::QueuedConnection); });
+    connect(mCloseLifecycle, &ApplicationLifecycle::closeAborted, this, [this](CloseAttemptId, const QString &reason) {
+        if (reason.isEmpty()) return;
+        auto *dialog = new QMessageBox(QMessageBox::Warning, tr("Close Error"), reason, QMessageBox::Ok, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->open();
+    });
+    connect(mCloseLifecycle, &ApplicationLifecycle::closeDeferred, this, [this](CloseAttemptId attempt, const QString &reason) {
+        const bool canCancel = !mCloseLifecycle->commitMayHaveApplied();
+        auto *dialog = new QMessageBox(QMessageBox::Warning, tr("Shutdown Deferred"), reason,
+            canCancel ? QMessageBox::Retry | QMessageBox::Cancel : QMessageBox::Retry, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        connect(dialog, &QMessageBox::finished, this, [this, attempt, canCancel](int choice) {
+            if (mCloseLifecycle->state() != State::Deferred || mCloseLifecycle->currentAttempt() != attempt) return;
+            if (choice == QMessageBox::Retry) mCloseLifecycle->retryClose();
+            else if (canCancel) mCloseLifecycle->cancelClose();
+        });
+        dialog->open();
+    });
+}
 
-                settings.setShowProject(ui->actionProject->isChecked());
-                settings.setShowWatch(ui->actionWatch->isChecked());
-                settings.setShowStructure(ui->actionStructure->isChecked());
-                settings.setShowFiles(ui->actionFiles->isChecked());
-                settings.setShowProblemSet(ui->actionProblem_Set->isChecked());
+void MainWindow::attachSessionRecovery(SessionRecovery &recovery)
+{
+    registerCloseService(mCloseLifecycle, &recovery, tr("Session recovery"),
+        &SessionRecovery::requestShutdown, &SessionRecovery::resumeScheduling, &SessionRecovery::shutdownComplete);
+}
 
-                settings.setShowIssues(ui->actionIssues->isChecked());
-                settings.setShowCompileLog(ui->actionTools_Output->isChecked());
-                settings.setShowDebug(ui->actionDebug_Window->isChecked());
-                settings.setShowSearch(ui->actionSearch->isChecked());
-                settings.setShowTODO(ui->actionTODO->isChecked());
-                settings.setShowBookmark(ui->actionBookmark->isChecked());
-                settings.setShowProblem(ui->actionProblem->isChecked());
-
-                settings.setMessagesTabsSize(ui->tabMessages->currentSize());
-                settings.setExplorerTabsSize(ui->tabExplorer->currentSize());
-                settings.setShrinkExplorerTabs(ui->tabExplorer->isShrinked());
-                settings.setShrinkMessagesTabs(ui->tabMessages->isShrinked());
-                settings.save();
-
-                if (pSettings->sync()!=QSettings::NoError) {
-                    QMessageBox::warning(nullptr,
-                                     tr("Save Error"),
-                                     tr("Save settings failed!"));
-                }
-
-                //save current folder ( for files view )
-                pSettings->environment().setDefaultOpenFolder(QDir::currentPath());
-                pSettings->environment().save();
-
-                try {
-                    mBookmarkModel->saveBookmarks(includeTrailingPathDelimiter(pSettings->dirs().config())
-                                     +DEV_BOOKMARK_FILE);
-                } catch (FileError& e) {
-                    QMessageBox::warning(nullptr,
-                                     tr("Save Error"),
-                                     e.reason());
-                }
-
-                try {
-                    int currentIndex=-1;
-                    if (ui->lstProblemSet->currentIndex().isValid())
-                        currentIndex = ui->lstProblemSet->currentIndex().row();
-                    QDir dir(pSettings->dirs().config());
-                    QString filename=dir.filePath(DEV_PROBLEM_SET_FILE);
-                    mOJProblemSetModel->saveToFile(filename, false, currentIndex);
-                } catch (FileError& e) {
-                    QMessageBox::warning(nullptr,
-                                     tr("Save Error"),
-                                     e.reason());
-                }
-
-                if (pSettings->debugger().autosave()) {
-                    try {
-                        mDebugger->saveForNonproject(includeTrailingPathDelimiter(pSettings->dirs().config())
-                                                       +DEV_DEBUGGER_FILE);
-                    } catch (FileError& e) {
-                        QMessageBox::warning(nullptr,
-                                         tr("Save Error"),
-                                         e.reason());
-                    }
-                } else
-                    removeFile(includeTrailingPathDelimiter(pSettings->dirs().config())
-                                  +DEV_DEBUGGER_FILE);
-            }
-
-            if (!mShouldRemoveAllSettings && pSettings->editor().autoLoadLastFiles()) {
-                if (!saveLastOpens()) { //canceled
-                    mClosingAll=false;
-                    mQuitting = false;
-                    event->ignore();
-                    return ;
-                }
-            } /*else {
-                //if don't save last open files, close project before editors, to save project opened editors;
-
-            }*/
-            // Retain parsers until shutdown has cancelled queued work. A worker
-            // not yet started is not represented by mParsingCount, and its
-            // content callback refers to the still-live EditorManager.
-            QList<PCppParser> shutdownParsers;
-            const auto rememberParser = [&shutdownParsers](const PCppParser &parser) {
-                if (parser && !shutdownParsers.contains(parser))
-                    shutdownParsers.append(parser);
-            };
-            const auto rememberEditorParsers = [this, &rememberParser] {
-                for (const auto &parser : mEditorManager->allParsers())
-                    rememberParser(parser);
-            };
-            if (mProject)
-                rememberParser(mProject->cppParser());
-            rememberEditorParsers();
-            const auto valid = closePlan.validate(*mEditorManager, EditorCloseScope::AllEditors);
-            if (!valid.succeeded()) {
-                QMessageBox::warning(this, tr("Close Error"), valid.error);
-                return;
-            }
-            if (mProject && !closeProject(false, &closePlan).succeeded())
-                return;
-            rememberEditorParsers();
-
-            mClosingAll = true;
-            for (const auto &editor : closePlan.editors()) {
-                // Project close may already have destroyed its own editors.
-                if (!editor)
-                    continue;
-                const auto unchanged = closePlan.validateEditor(editor.data());
-                if (!unchanged.succeeded()) {
-                    QMessageBox::warning(this, tr("Close Error"), unchanged.error);
-                    return;
-                }
-                const auto decision = closePlan.discards(editor.data())
-                    ? EditorCloseDecision::DiscardConfirmed : EditorCloseDecision::Ask;
-                if (!mEditorManager->closeEditor(editor.data(), false, false, decision))
-                    return;
-            }
-            mClosingAll = false;
-            if (mEditorManager->pageCount() != 0) {
-                QMessageBox::warning(this, tr("Close Error"),
-                    tr("New documents were opened while closing. They remain open."));
-                return;
-            }
-            mClassBrowserController->stop();
-            mOutlineRetirement->beginStop();
-            mOutlineStopCheckTimer.start();
-            mShutdownParsers = std::move(shutdownParsers);
-            for (const auto &parser : mShutdownParsers) {
-                connect(parser.get(), &CppParser::analysisStopped, this, [this] {
-                    if (mQuitting && !mHandlingCloseEvent) close();
-                }, Qt::QueuedConnection);
-                parser->stopScheduling();
-            }
-        //    if (!mShouldRemoveAllSettings && pSettings->editor().autoLoadLastFiles()) {
-        //        if (mProject) {
-        //            closeProject(false);
-        //        }
-        //    }
-
-            mCCHandler.stop();
-            mCompilerManager->stopAllRunners();
-            mCompilerManager->stopCompile();
-            mCompilerManager->stopCheckSyntax();
-            mCompilerManager->stopRun();
-            mDebugger->stop();
-
-            if (!mShouldRemoveAllSettings)
-                mSymbolUsageManager->save();
-
-            if (mCPUDialog!=nullptr)
-                cleanUpCPUDialog();
-
-            shutdownPrepared = true;
-            this->hide();
-        }
-        const bool analysisStopped = std::all_of(mShutdownParsers.cbegin(), mShutdownParsers.cend(),
-            [](const auto &parser) { return parser->analysisQuiesced(); });
-        if (mParsingCount > 0 || !analysisStopped || !mOutlineRetirement->state().stopped())
-            event->ignore();
-        else {
-            mOutlineStopCheckTimer.stop();
-            mShutdownParsers.clear();
-            event->accept();
-        }
-
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (mCloseLifecycle->state() == Lifecycle::State::Closed || mCloseLifecycle->takeClosePermit()) {
+        event->accept();
         return;
-    } catch (const BaseError &error) {
-        restoreCloseState();
-        qWarning() << "Closing cancelled after a recoverable save error:" << error.reason();
-        QMessageBox::critical(this, tr("Save Error"), error.reason());
     }
+    event->ignore();
+    mCloseLifecycle->requestClose(true);
+    if (mCloseLifecycle->takeClosePermit()) event->accept();
+}
+
+OperationResult MainWindow::prepareApplicationClose()
+{
+    mApplicationClosePlan = std::make_unique<EditorClosePlan>();
+    mClosingWorkspace = mProject;
+    mHadClosingWorkspace = bool(mProject);
+    return prepareEditorClosePlan(*mApplicationClosePlan);
+}
+
+OperationResult MainWindow::validateApplicationClose()
+{
+    if (!mApplicationClosePlan || mHadClosingWorkspace != bool(mProject) || mProject != mClosingWorkspace.lock())
+        return OperationResult::conflict(tr("The active project changed while closing."));
+    return mApplicationClosePlan->validate(*mEditorManager, EditorCloseScope::AllEditors);
+}
+
+void MainWindow::stopAnalysisForClose(quint64 attempt, quint64 service)
+{
+    mAnalysisCloseAttempt = attempt;
+    mAnalysisCloseService = service;
+    mClassBrowserController->setContext({});
+    if (mShutdownParsers.isEmpty()) {
+        mShutdownParsers = mEditorManager->allParsers();
+        mShutdownParsers.removeAll({});
+        if (mProject && !mShutdownParsers.contains(mProject->cppParser()))
+            mShutdownParsers.append(mProject->cppParser());
+        for (const auto &parser : std::as_const(mShutdownParsers)) {
+            mShutdownParserConnections.append(connect(parser.get(), &CppParser::analysisStopped,
+                this, &MainWindow::checkAnalysisShutdown, Qt::QueuedConnection));
+            parser->stopScheduling();
+        }
+    }
+    checkAnalysisShutdown();
+}
+
+void MainWindow::checkAnalysisShutdown()
+{
+    if (!mAnalysisCloseAttempt) return;
+    if (!std::all_of(mShutdownParsers.cbegin(), mShutdownParsers.cend(),
+            [](const auto &parser) { return parser->analysisQuiesced(); })) return;
+    // The value model is detached and no parser can produce a publication.
+    // The retirement worker may still have queued allocations to destroy.
+    if (mOutlineRetirement->state().outstanding != 0) {
+        if (!mOutlineStopCheckTimer.isActive()) mOutlineStopCheckTimer.start();
+        return;
+    }
+    mOutlineStopCheckTimer.stop();
+    mCloseLifecycle->acknowledgeStopped({mAnalysisCloseAttempt, mAnalysisCloseService,
+        Lifecycle::StopState::Quiescent, {}, OperationResult::success()});
+}
+
+void MainWindow::resumeAnalysisAfterClose()
+{
+    mAnalysisCloseAttempt = 0;
+    mOutlineStopCheckTimer.stop();
+    for (const auto &connection : std::as_const(mShutdownParserConnections)) disconnect(connection);
+    mShutdownParserConnections.clear();
+    for (const auto &parser : std::exchange(mShutdownParsers, {})) {
+        if (parser->resumeScheduling()) {
+            QMetaObject::invokeMethod(this, [this, parser] { refreshResumedParser(parser); }, Qt::QueuedConnection);
+        } else {
+            const std::weak_ptr<CppParser> weak = parser;
+            connect(parser.get(), &CppParser::analysisStopped, this, [this, weak] {
+                if (mCloseLifecycle->state() != Lifecycle::State::Running) return;
+                if (const auto parser = weak.lock(); parser && parser->resumeScheduling()) refreshResumedParser(parser);
+            }, Qt::ConnectionType(Qt::QueuedConnection | Qt::SingleShotConnection));
+        }
+    }
+}
+
+void MainWindow::refreshResumedParser(const PCppParser &parser)
+{
+    if (mCloseLifecycle->state() != Lifecycle::State::Running) return;
+    if (parser->configurationState() == CppParser::ConfigurationState::Failed) {
+        if (mProject && mProject->cppParser() == parser)
+            resetCppParser(parser, mProject->options().compilerSet);
+        else
+            resetCppParser(parser);
+    }
+    if (auto *editor = mEditorManager->getEditor(); editor && editor->parser() == parser) {
+        editor->reparseIfNeeded();
+        updateClassBrowserForEditor(editor);
+    }
+}
+
+OperationResult MainWindow::commitApplicationClose()
+{
+    mCheckSyntaxInBack = false;
+    mCompileSuccessionTask = nullptr;
+    if (!mShouldRemoveAllSettings) {
+        if (mCPUDialog)
+            mCPUDialog->close();
+        UISettings& settings = pSettings->ui();
+        settings.setOpenEditorsWhenReplace(ui->chkOpenFileInEditors->isChecked());
+        settings.setMainWindowState(saveState());
+        settings.setMainWindowGeometry(saveGeometry());
+        settings.setBottomPanelIndex(ui->tabMessages->currentIndex());
+        settings.setLeftPanelIndex(ui->tabExplorer->currentIndex());
+        settings.setDebugPanelIndex(ui->debugViews->currentIndex());
+
+        settings.setShowStatusBar(ui->actionStatus_Bar->isChecked());
+        settings.setShowToolWindowBars(ui->actionTool_Window_Bars->isChecked());
+
+        settings.setShowProject(ui->actionProject->isChecked());
+        settings.setShowWatch(ui->actionWatch->isChecked());
+        settings.setShowStructure(ui->actionStructure->isChecked());
+        settings.setShowFiles(ui->actionFiles->isChecked());
+        settings.setShowProblemSet(ui->actionProblem_Set->isChecked());
+
+        settings.setShowIssues(ui->actionIssues->isChecked());
+        settings.setShowCompileLog(ui->actionTools_Output->isChecked());
+        settings.setShowDebug(ui->actionDebug_Window->isChecked());
+        settings.setShowSearch(ui->actionSearch->isChecked());
+        settings.setShowTODO(ui->actionTODO->isChecked());
+        settings.setShowBookmark(ui->actionBookmark->isChecked());
+        settings.setShowProblem(ui->actionProblem->isChecked());
+
+        settings.setMessagesTabsSize(ui->tabMessages->currentSize());
+        settings.setExplorerTabsSize(ui->tabExplorer->currentSize());
+        settings.setShrinkExplorerTabs(ui->tabExplorer->isShrinked());
+        settings.setShrinkMessagesTabs(ui->tabMessages->isShrinked());
+        settings.save();
+
+        if (pSettings->sync()!=QSettings::NoError) {
+            QMessageBox::warning(nullptr,
+                             tr("Save Error"),
+                             tr("Save settings failed!"));
+        }
+
+        //save current folder ( for files view )
+        pSettings->environment().setDefaultOpenFolder(QDir::currentPath());
+        pSettings->environment().save();
+
+        try {
+            mBookmarkModel->saveBookmarks(includeTrailingPathDelimiter(pSettings->dirs().config())
+                             +DEV_BOOKMARK_FILE);
+        } catch (FileError& e) {
+            QMessageBox::warning(nullptr,
+                             tr("Save Error"),
+                             e.reason());
+        }
+
+        try {
+            int currentIndex=-1;
+            if (ui->lstProblemSet->currentIndex().isValid())
+                currentIndex = ui->lstProblemSet->currentIndex().row();
+            QDir dir(pSettings->dirs().config());
+            QString filename=dir.filePath(DEV_PROBLEM_SET_FILE);
+            mOJProblemSetModel->saveToFile(filename, false, currentIndex);
+        } catch (FileError& e) {
+            QMessageBox::warning(nullptr,
+                             tr("Save Error"),
+                             e.reason());
+        }
+
+        if (pSettings->debugger().autosave()) {
+            try {
+                mDebugger->saveForNonproject(includeTrailingPathDelimiter(pSettings->dirs().config())
+                                               +DEV_DEBUGGER_FILE);
+            } catch (FileError& e) {
+                QMessageBox::warning(nullptr,
+                                 tr("Save Error"),
+                                 e.reason());
+            }
+        } else
+            removeFile(includeTrailingPathDelimiter(pSettings->dirs().config())
+                          +DEV_DEBUGGER_FILE);
+    }
+
+    if (!mShouldRemoveAllSettings) {
+        mSymbolUsageManager->save();
+        if (pSettings->editor().autoLoadLastFiles() && !saveLastOpens())
+            return OperationResult::cancelled();
+    }
+    const auto valid = validateApplicationClose();
+    if (!valid.succeeded()) return valid;
+    if (mProject) {
+        const auto result = closeProject(false, mApplicationClosePlan.get());
+        // closeProject already reported the persistence error and retained
+        // the project. Abandon this attempt so the user can correct it.
+        if (result.status == OperationStatus::Failed) return OperationResult::cancelled();
+        if (!result.succeeded()) return result;
+    }
+
+    mClosingAll = true;
+    const auto finishClosing = finally([this] { mClosingAll = false; });
+    for (const auto &editor : mApplicationClosePlan->editors()) {
+        if (!editor) continue;
+        const auto unchanged = mApplicationClosePlan->validateEditor(editor.data());
+        if (!unchanged.succeeded()) return unchanged;
+        const auto decision = mApplicationClosePlan->discards(editor.data())
+            ? EditorCloseDecision::DiscardConfirmed : EditorCloseDecision::Ask;
+        if (!mEditorManager->closeEditor(editor.data(), false, false, decision))
+            return OperationResult::cancelled();
+    }
+    if (mEditorManager->pageCount() != 0)
+        return OperationResult::conflict(tr("New documents were opened while closing. They remain open."));
+
+    mClassBrowserController->stop();
+    mOutlineRetirement->beginStop();
+    mAnalysisCloseAttempt = 0;
+    mShutdownParserConnections.clear();
+    mShutdownParsers.clear();
+    mApplicationClosePlan.reset();
+    mClosingWorkspace.reset();
+    if (mCPUDialog) cleanUpCPUDialog();
+    return OperationResult::success();
 }
 
 void MainWindow::showEvent(QShowEvent *)
@@ -7005,8 +7071,7 @@ void MainWindow::onParseStarted()
 void MainWindow::onCacheResetFinished()
 {
     --mParsingCount;
-    if (mParsingCount == 0 && mQuitting && !mHandlingCloseEvent)
-        this->close();
+
 }
 
 void MainWindow::onAnalysisInputUnavailable(const QString &reason)
@@ -7036,8 +7101,7 @@ void MainWindow::onParseFinished(int total, int)
                                   .arg(total).arg(parseTime));
     }
     mParsingCount--;
-    if (mParsingCount == 0 && mQuitting && !mHandlingCloseEvent)
-        this->close();
+
 }
 
 void MainWindow::onEvalValueReady(const QString& value)

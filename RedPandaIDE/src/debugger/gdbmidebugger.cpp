@@ -77,7 +77,7 @@ void GDBMIDebuggerClient::registerInferiorStoppedCommand(const QString &command,
 
 void GDBMIDebuggerClient::stopDebug()
 {
-    mStop = true;
+    mStop.store(true, std::memory_order_release);
 }
 
 DebuggerType GDBMIDebuggerClient::clientType()
@@ -87,7 +87,10 @@ DebuggerType GDBMIDebuggerClient::clientType()
 
 void GDBMIDebuggerClient::run()
 {
-    mStop = false;
+    if (mStop.load(std::memory_order_acquire)) {
+        mStartSemaphore.release(1);
+        return;
+    }
     bool errorOccured = false;
     mInferiorRunning = false;
     mProcessExited = false;
@@ -136,7 +139,7 @@ void GDBMIDebuggerClient::run()
         if (mProcess->state()!=QProcess::Running) {
             break;
         }
-        if (mStop) {
+        if (mStop.load(std::memory_order_acquire)) {
             mProcess->readAll();
             mProcess->write("-gdb-exit\n");
             msleep(50);

@@ -86,6 +86,9 @@ public:
     void stopAllRunners();
     // GUI-thread shutdown gate: false keeps live tasks owned for a later retry.
     bool shutdown(int timeoutMilliseconds = 8000);
+    void requestShutdown();
+    void resumeAdmissions();
+    bool shutdownAcknowledged() const;
     void stopPausing();
     void stopCompile();
     void stopCheckSyntax();
@@ -103,6 +106,7 @@ public:
 
 signals:
     void signalStopAllRunners();
+    void shutdownComplete();
     void compileFinished(const QString& filename, bool isSyntaxCheck);
     void projectMakefileReady(const QString &path);
 
@@ -119,6 +123,8 @@ private slots:
 private:
     friend class CompilerRequestChecks;
     void trackWorker(QThread *worker);
+    void retireWorker(QThread *worker);
+    void requestWorkersStop();
     enum class ProjectBuildAction { Build, Rebuild, Clean, GenerateMakefile };
     void submitProjectBuild(const std::shared_ptr<Project> &project, ProjectBuildAction action);
     PCppParser getParserForFile(const QString& filename);
@@ -147,6 +153,7 @@ private:
     // Mutated only on this QObject's GUI thread. Removal uses QThread::finished,
     // not an earlier task-specific completion signal.
     QSet<QThread *> mWorkers;
+    bool mStopping = false;
     quint64 mNextCompileJobId = 0;
     QHash<QString, Compilation::CapabilityFacts> mCapabilityCache;
     OperationResult mLastCompileOutcome = OperationResult::cancelled();

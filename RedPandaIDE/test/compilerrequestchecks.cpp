@@ -22,16 +22,21 @@
 #include <QPointer>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <QSemaphore>
 #include <QThread>
 
 namespace {
 class TreeFixtureCompiler final : public Compiler {
 public:
     TreeFixtureCompiler(Compilation::FileCompileRequest::Pointer request, QString helper, QString marker,
-                        int driverDelay, int childDelay):
+                        int driverDelay, int childDelay, std::shared_ptr<QSemaphore> retirementGate = {}):
         Compiler(std::move(request)), mHelper(std::move(helper)), mMarker(std::move(marker)),
-        mDriverDelay(driverDelay), mChildDelay(childDelay) {}
+        mDriverDelay(driverDelay), mChildDelay(childDelay), mRetirementGate(std::move(retirementGate)) {}
 protected:
+    void run() override {
+        Compiler::run();
+        if (mRetirementGate) mRetirementGate->tryAcquire(1, 5000);
+    }
     bool prepareForCompile() override {
         mCompiler = mHelper;
         mArguments = {"--contained-driver", mMarker, QString::number(mDriverDelay), QString::number(mChildDelay)};
@@ -42,6 +47,7 @@ protected:
 private:
     const QString mHelper, mMarker;
     const int mDriverDelay, mChildDelay;
+    const std::shared_ptr<QSemaphore> mRetirementGate;
 };
 }
 
@@ -421,6 +427,44 @@ public:
               guardFinished && !manager->lastCompileOutcome().succeeded() && read(source) == before
               && QDir::fromNativeSeparators(manager->lastCompileOutcome().error).contains(QDir::fromNativeSeparators(source)));
         if (!guardFinished && guardedWorker) { guardedWorker->stopCompile(); return 10; }
+
+#ifdef Q_OS_WIN
+        if (QFileInfo(helper).isFile()) {
+            // The fixtures are the only modified buffers in this QA profile.
+            if (includedEditor) window.editorManager()->forceCloseEditor(includedEditor);
+            if (editor) window.editorManager()->forceCloseEditor(editor);
+            const QString closeMarker = fixture.filePath("close-tree-child.txt");
+            PAnalysisInputSnapshot closeInputs;
+            const auto closeRequest = manager->captureFileRequest(source, FileType::CppSource, ENCODING_UTF8,
+                CppCompileType::Normal, false, false, {}, nullptr, {}, closeInputs);
+            const auto retirementGate = std::make_shared<QSemaphore>();
+            auto *closingCompiler = new TreeFixtureCompiler(closeRequest, helper, closeMarker, 30000, 15000, retirementGate);
+            QPointer<Compiler> closingWorker(closingCompiler);
+            manager->mCompiler = closingCompiler;
+            manager->trackWorker(closingCompiler);
+            manager->connectCapturedCompiler(closingCompiler, false);
+            bool childStarted = false;
+            const auto started = QObject::connect(closingCompiler, &Compiler::compileOutput, &window,
+                [&](const QString &output) { bool pid = false; output.trimmed().toULongLong(&pid); childStarted |= pid; });
+            closingCompiler->start();
+            const bool startedBeforeClose = waitFor([&] { return childStarted || !manager->compiling(); }, 5000) && childStarted;
+            QObject::disconnect(started);
+            QElapsedTimer requestTime;
+            requestTime.start();
+            const bool closeAcceptedImmediately = window.close();
+            const bool responsiveCloseRequest = requestTime.elapsed() < 750;
+            const bool taskFinishedFirst = waitFor([&] { return !manager->compiling(); }, 3000);
+            check("Window close waits for the registered compiler thread while the UI remains responsive",
+                startedBeforeClose && responsiveCloseRequest && !closeAcceptedImmediately && taskFinishedFirst
+                && window.isVisible() && window.isQuitting() && closingWorker && !closingWorker->isFinished());
+            retirementGate->release();
+            const bool retired = waitFor([&] { return !window.isVisible(); }, 5000);
+            check("Window close commits after the worker acknowledgement and the child cannot publish output",
+                retired && (!closingWorker || closingWorker->isFinished()) && manager->shutdownAcknowledged()
+                && manager->lastCompileOwnership() == Compilation::ProcessOwnershipLevel::WindowsTreeQuiescent
+                && !QFile::exists(closeMarker));
+        }
+#endif
 
         QFile output(QDir(outputDirectory).filePath("compiler-request-result.json"));
         const QByteArray bytes = QJsonDocument(QJsonObject{{"failures", failures}, {"checks", checks}}).toJson();

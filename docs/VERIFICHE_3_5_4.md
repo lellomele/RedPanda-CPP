@@ -243,3 +243,24 @@ secondi. I controlli nativi sono passati in inglese (1.621) e italiano
 GNU Make, errore e ricompilazione, verifica delle opzioni acquisite e collisione
 sul Makefile. La build include il generatore per progetti SDCC. Le prove
 complete di progetto qui registrate hanno usato GCC e GNU Make.
+
+## Arresto coordinato dell’applicazione
+
+La finestra raccoglie le decisioni di salvataggio e scarto prima di chiedere
+la conferma di arresto a compilazione, esecuzione, debug, analisi del codice,
+TODO, recupero della sessione e Competitive Companion. Il controller mantiene
+aperto lo spazio di lavoro durante l’arresto dei servizi e ricontrolla il
+piano prima di applicarlo. Se il layout di progetto non può essere salvato,
+l’IDE torna operativo e mantiene aperto lo spazio di lavoro.
+
+La prova con un processo reale ritarda la fine del thread di compilazione
+dopo che il task ha comunicato l’esito. Verifica che l’interfaccia risponda,
+che la finestra attenda la conferma finale e che il processo figlio contenuto
+non possa scrivere in ritardo. Le prove native coprono anche un salvataggio
+del layout fallito, la conservazione dei buffer modificati e un tentativo di
+chiusura annidato nella richiesta di salvataggio.
+
+L’integrazione iniziale ha superato 49 suite CTest su 49 in 145,70 secondi.
+Dopo la correzione del recupero in caso di errore del layout sono passate le
+quattro suite mirate e le prove native Windows. I controlli nativi sono
+stati 1.621 in inglese e 1.970 in italiano, senza prove saltate.

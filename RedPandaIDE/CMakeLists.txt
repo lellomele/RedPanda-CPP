@@ -92,6 +92,7 @@ target_moc_classes(RedPandaIDE
     src/iconsmanager
     src/main
     src/resilientapplication
+    src/lifecycle/applicationlifecycle
     src/sessionrecovery
     src/settingsdialog/environmentrecoverywidget
     src/project

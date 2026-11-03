@@ -126,7 +126,7 @@ private:
 private slots:
     void asyncUpdate();
 private:
-    bool mStop;
+    std::atomic_bool mStop{false};
     std::shared_ptr<QProcess> mProcess;
     QMap<QString,QStringList> mFileCache;
     int mCurrentLine;

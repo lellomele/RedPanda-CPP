@@ -87,7 +87,7 @@ bool Debugger::startClient(int compilerSetIndex,
                            const QString& sourceFile)
 {
     QMutexLocker locker{&mClientMutex};
-    if (mClient!=nullptr)
+    if (mStopping || mClient || mTarget)
         return false;
     mCurrentSourceFile = sourceFile;
     PCompilerSet compilerSet = pSettings->compilerSets().getSet(compilerSetIndex);
@@ -157,6 +157,15 @@ bool Debugger::startClient(int compilerSetIndex,
             mTarget->setInputFile(pSettings->executor().inputFilename());
         mTarget->addBinDirs(binDirs);
         mTarget->addBinDir(pSettings->dirs().appDir());
+        auto *target = mTarget;
+        connect(target, &QThread::finished, this, [this, target] {
+            QMutexLocker locker(&mClientMutex);
+            if (mTarget == target) mTarget = nullptr;
+            const bool stopped = mStopping && !mClient && !mTarget;
+            locker.unlock();
+            target->deleteLater();
+            if (stopped) emit shutdownComplete();
+        });
         mTarget->start();
         mTarget->waitStart();
     }
@@ -253,11 +262,7 @@ void Debugger::cleanUp()
     QMutexLocker locker{&mClientMutex};
     if (mClient) {
         //stop gdb server (if runs)
-        if (mTarget) {
-            mTarget->stopDebug();
-            mTarget->deleteLater();
-            mTarget = nullptr;
-        }
+        if (mTarget) mTarget->stopDebug();
 
         //stop debugger
         mClient->stopDebug();
@@ -272,7 +277,24 @@ void Debugger::cleanUp()
 
         mBreakpointModel->invalidateAllBreakpointNumbers();
     }
+    const bool stopped = mStopping && !mClient && !mTarget;
+    locker.unlock();
     emit debugFinished();
+    if (stopped) emit shutdownComplete();
+}
+
+void Debugger::requestShutdown()
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = true;
+    stop();
+    if (!mClient && !mTarget) emit shutdownComplete();
+}
+
+void Debugger::resumeAdmissions()
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = false;
 }
 
 void Debugger::updateRegisterNames(const QStringList &registerNames)
@@ -1174,7 +1196,7 @@ void DebugTarget::setInputFile(const QString &inputFile)
 
 void DebugTarget::stopDebug()
 {
-    mStop = true;
+    mStop.store(true, std::memory_order_release);
 }
 
 void DebugTarget::waitStart()
@@ -1199,7 +1221,10 @@ void DebugTarget::addBinDir(const QString &binDir)
 
 void DebugTarget::run()
 {
-    mStop = false;
+    if (mStop.load(std::memory_order_acquire)) {
+        mStartSemaphore.release(1);
+        return;
+    }
     mErrorOccured = false;
 
     //find first available port
@@ -1299,7 +1324,7 @@ void DebugTarget::run()
         if (process.state()!=QProcess::Running) {
             break;
         }
-        if (mStop) {
+        if (mStop.load(std::memory_order_acquire)) {
             process.terminate();
             process.kill();
             break;
@@ -1312,4 +1337,3 @@ void DebugTarget::run()
         emit processFailed(process.error());
     }
 }
-

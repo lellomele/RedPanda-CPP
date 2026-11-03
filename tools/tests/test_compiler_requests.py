@@ -24,6 +24,8 @@ REQUIRED = {
     'A driver that exits before its child does not release the compiler registry gate',
     'The next job completes only after its child exits and the cancelled child never writes late output',
     'A generated output/source collision fails with the original source bytes preserved',
+    'Window close waits for the registered compiler thread while the UI remains responsive',
+    'Window close commits after the worker acknowledgement and the child cannot publish output',
 }
 
 def main():

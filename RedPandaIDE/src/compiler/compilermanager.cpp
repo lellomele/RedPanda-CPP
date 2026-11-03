@@ -102,18 +102,23 @@ CompilerManager::~CompilerManager()
 void CompilerManager::trackWorker(QThread *worker)
 {
     mWorkers.insert(worker);
-    connect(worker, &QThread::finished, this, [this, worker] {
-        mWorkers.remove(worker);
+    const QPointer<QThread> lifetime(worker);
+    connect(worker, &QThread::finished, this, [this, lifetime] {
+        if (lifetime) retireWorker(lifetime);
     });
-    connect(worker, &QObject::destroyed, this, [this, worker] {
-        mWorkers.remove(worker);
-    });
+    connect(worker, &QObject::destroyed, this, [this, worker] { retireWorker(worker); });
 }
 
-bool CompilerManager::shutdown(int timeoutMilliseconds)
+void CompilerManager::retireWorker(QThread *worker)
 {
-    if (QThread::currentThread() != thread())
-        return false;
+    if (!mWorkers.remove(worker) || !shutdownAcknowledged()) return;
+    QMetaObject::invokeMethod(this, [this] {
+        if (shutdownAcknowledged()) emit shutdownComplete();
+    }, Qt::QueuedConnection);
+}
+
+void CompilerManager::requestWorkersStop()
+{
     const auto workers = mWorkers;
     for (QThread *worker : workers) {
         if (auto *compiler = qobject_cast<Compiler *>(worker))
@@ -121,6 +126,34 @@ bool CompilerManager::shutdown(int timeoutMilliseconds)
         else if (auto *runner = qobject_cast<Runner *>(worker))
             runner->stop();
     }
+}
+
+void CompilerManager::requestShutdown()
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = true;
+    requestWorkersStop();
+    if (shutdownAcknowledged()) emit shutdownComplete();
+}
+
+void CompilerManager::resumeAdmissions()
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = false;
+}
+
+bool CompilerManager::shutdownAcknowledged() const
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    return mStopping && mWorkers.isEmpty();
+}
+
+bool CompilerManager::shutdown(int timeoutMilliseconds)
+{
+    if (QThread::currentThread() != thread())
+        return false;
+    const auto workers = mWorkers;
+    requestWorkersStop();
     QElapsedTimer deadline;
     deadline.start();
     for (QThread *worker : workers) {
@@ -331,6 +364,7 @@ bool CompilerManager::running() const
 void CompilerManager::compile(const QString& filename, FileType fileType, const QByteArray& encoding,
     bool rebuild, CppCompileType compileType, Compilation::CompileIdentity identity)
 {
+    if (QThread::currentThread() != thread() || mStopping) return;
     QMutexLocker locker(&mCompileMutex);
     if (mCompiler) return;
     std::unique_ptr<Compiler> candidate;
@@ -381,7 +415,8 @@ void CompilerManager::buildProjectMakefile(std::shared_ptr<Project> project)
 
 void CompilerManager::submitProjectBuild(const std::shared_ptr<Project> &project, ProjectBuildAction action)
 {
-    if (!project || QThread::currentThread() != thread() || compiling() || !projectInputsReady(project, mMainWindow, true))
+    if (QThread::currentThread() != thread() || mStopping) return;
+    if (!project || compiling() || !projectInputsReady(project, mMainWindow, true))
         return;
     auto set = pSettings->compilerSets().getSet(project->options().compilerSet);
     if (!set) set = pSettings->compilerSets().defaultSet();
@@ -461,6 +496,7 @@ void CompilerManager::submitProjectBuild(const std::shared_ptr<Project> &project
 void CompilerManager::checkSyntax(const QString &filename, const QByteArray& encoding, const QString &content,
     std::shared_ptr<Project> project, Compilation::CompileIdentity identity)
 {
+    if (QThread::currentThread() != thread() || mStopping) return;
     // Stdin syntax checks use the captured source and project option values,
     // not project-unit disk bindings or saved-file preconditions.
     QMutexLocker locker(&mBackgroundSyntaxCheckMutex);
@@ -499,6 +535,7 @@ void CompilerManager::run(
         const QString &workDir,
         const QStringList& binDirs)
 {
+    if (QThread::currentThread() != thread() || mStopping) return;
     QMutexLocker locker(&mRunnerMutex);
     if (mRunner!=nullptr && !mRunner->pausing()) {
         return;
@@ -631,6 +668,7 @@ void CompilerManager::runProblem(const QString &filename, const QString &argumen
 void CompilerManager::doRunProblem(const QString &filename, const QString &arguments, const QString &workDir, const QVector<POJProblemCase>& problemCases,
                                    const POJProblem& problem)
 {
+    if (QThread::currentThread() != thread() || mStopping) return;
     if (mRunner!=nullptr) {
         return;
     }
@@ -778,6 +816,7 @@ void CompilerManager::onSyntaxCheckFinished(const QString& filename)
     mLastSyntaxCheckOutcome = mBackgroundSyntaxChecker->taskOutcome();
     mLastSyntaxCheckOwnership = mBackgroundSyntaxChecker->processOwnershipLevel();
     mBackgroundSyntaxChecker=nullptr;
+    locker.unlock();
     emit compileFinished(filename, true);
 }
 
@@ -833,4 +872,3 @@ CompileError::CompileError(const QString &reason):BaseError(reason)
 {
 
 }
-

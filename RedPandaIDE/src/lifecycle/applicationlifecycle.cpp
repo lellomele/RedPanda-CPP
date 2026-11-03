@@ -93,7 +93,7 @@ void ApplicationLifecycle::setState(State state)
     emit stateChanged(state);
 }
 
-OperationResult ApplicationLifecycle::requestClose()
+OperationResult ApplicationLifecycle::requestClose(bool commitIfQuiescent)
 {
     if (!onOwnerThread()) return wrongThread();
     if (mAborting) return OperationResult::conflict(tr("The previous close attempt is still being abandoned."));
@@ -131,6 +131,7 @@ OperationResult ApplicationLifecycle::requestClose()
     mPrepared = true;
     mAttemptServices = mRegistry;
     beginStopping();
+    if (commitIfQuiescent) advance(mAttempt);
     return OperationResult::success();
 }
 

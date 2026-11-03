@@ -227,3 +227,23 @@ skips. They include the real GCC and GNU Make multi-unit build, failure and
 rebuild, a captured-options check and a generated-Makefile collision check.
 The SDCC project writer was compiled in this configuration. The recorded
 end-to-end project checks used GCC and GNU Make.
+
+## Coordinated application shutdown
+
+The window collects save and discard decisions before requesting stop
+acknowledgements from compilation, execution, debugging, code analysis, TODO
+analysis, session recovery and Competitive Companion. The controller retains
+the workspace while those services finish. It checks the close plan again
+before committing. If a project layout cannot be saved, the IDE returns to
+normal operation with the workspace open.
+
+The live process test delays compiler thread retirement after the task has
+reported its outcome. It verifies that the UI remains responsive, the window
+waits for the final acknowledgement and the contained child cannot write late
+output. Native tests also cover a failed layout save, retained dirty buffers
+and a nested close request during the save prompt.
+
+The initial integration passed 49 of 49 CTest groups in 145.70 seconds.
+Following the layout-error recovery correction, all four targeted groups and
+the native Windows runs passed. The native build passed 1,621 checks in
+English and 1,970 in Italian, with no skips.

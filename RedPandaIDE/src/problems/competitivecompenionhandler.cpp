@@ -17,6 +17,7 @@
 #include "competitivecompenionhandler.h"
 
 #include <QJsonArray>
+#include <QPointer>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTcpServer>
@@ -34,6 +35,7 @@ CompetitiveCompanionHandler::CompetitiveCompanionHandler(QObject *parent):
 
 void CompetitiveCompanionHandler::start()
 {
+    if (mStopping || mThread) return;
     if (!pSettings->executor().enableProblemSet())
         return;
     if (!pSettings->executor().enableCompetitiveCompanion())
@@ -57,22 +59,64 @@ void CompetitiveCompanionHandler::stop()
         return;
     auto *thread = mThread;
     mThread = nullptr;
-    thread->waitStop();
+    mAwaitingStop = false;
+    thread->stop();
     // The semaphore acknowledges server shutdown, not the end of QThread::run().
     thread->wait();
     delete thread;
 }
 
+void CompetitiveCompanionHandler::requestShutdown()
+{
+    mStopping = true;
+    if (!mThread) {
+        emit shutdownComplete();
+        return;
+    }
+    auto *thread = mThread;
+    mRestartAfterStop = true;
+    if (!mAwaitingStop) {
+        mAwaitingStop = true;
+        const QPointer<CompetitiveCompanionThread> lifetime(thread);
+        connect(thread, &QThread::finished, this, [this, lifetime] {
+            if (lifetime) finishShutdown(lifetime);
+        });
+    }
+    thread->stop();
+    if (thread->isFinished()) finishShutdown(thread);
+}
+
+void CompetitiveCompanionHandler::resumeAdmissions()
+{
+    mStopping = false;
+    if (mRestartAfterStop && !mThread) {
+        mRestartAfterStop = false;
+        start();
+    }
+}
+
+void CompetitiveCompanionHandler::finishShutdown(CompetitiveCompanionThread *thread)
+{
+    if (mThread != thread) return;
+    mThread = nullptr;
+    mAwaitingStop = false;
+    thread->deleteLater();
+    if (mStopping) emit shutdownComplete();
+    else resumeAdmissions();
+}
+
 void CompetitiveCompanionHandler::onNewProblemReceived(int num, int total, POJProblem newProblem)
 {
-    emit newProblemReceived(num, total, newProblem);
+    if (!mStopping) emit newProblemReceived(num, total, newProblem);
 }
 
 void CompetitiveCompanionThread::onNewProblemConnection(QTcpSocket* clientConnection)
 {
     QByteArray content;
     int unreadCount = 0;
-    while (clientConnection->state() == QTcpSocket::ConnectedState) {
+    constexpr qsizetype maximumRequestBytes = 16 * 1024 * 1024;
+    clientConnection->setReadBufferSize(64 * 1024);
+    while (!mStop.load(std::memory_order_acquire) && clientConnection->state() == QTcpSocket::ConnectedState) {
         clientConnection->waitForReadyRead(100);
         QByteArray readed = clientConnection->readAll();
         if (readed.isEmpty()) {
@@ -82,7 +126,15 @@ void CompetitiveCompanionThread::onNewProblemConnection(QTcpSocket* clientConnec
         } else {
             unreadCount = 0;
         }
+        if (readed.size() > maximumRequestBytes - content.size()) {
+            clientConnection->abort();
+            return;
+        }
         content += readed;
+    }
+    if (mStop.load(std::memory_order_acquire) || clientConnection->bytesAvailable() > maximumRequestBytes - content.size()) {
+        clientConnection->abort();
+        return;
     }
     content += clientConnection->readAll();
     clientConnection->write("HTTP/1.1 200 OK\n");

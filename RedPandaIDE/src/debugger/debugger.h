@@ -29,6 +29,7 @@
 #include <QSemaphore>
 #include <QSet>
 #include <QThread>
+#include <atomic>
 #include <QTimer>
 #include <memory>
 #include "debuggermodels.h"
@@ -138,6 +139,8 @@ public:
     std::shared_ptr<BacktraceModel> backtraceModel();
     std::shared_ptr<BreakpointModel> breakpointModel();
     bool executing();
+    void requestShutdown();
+    void resumeAdmissions();
 
     int leftPageIndexBackup() const;
     void setLeftPageIndexBackup(int leftPageIndexBackup);
@@ -165,6 +168,7 @@ signals:
     void memoryExamineReady(const QStringList& s);
     void localsReady(const QStringList& s);
     void debugFinished();
+    void shutdownComplete();
 public slots:
     void stop();
     void refreshAll();
@@ -199,6 +203,7 @@ private:
     std::shared_ptr<MemoryModel> mMemoryModel;
     DebuggerClient *mClient;
     DebugTarget *mTarget;
+    bool mStopping = false;
     bool mForceUTF8;
     bool mDebugInfosUsingUTF8;
     bool mUseDebugServer;
@@ -232,7 +237,7 @@ private:
     QStringList mArguments;
     QString mGDBServer;
     int mPort;
-    bool mStop;
+    std::atomic_bool mStop;
     QSemaphore mStartSemaphore;
     bool mErrorOccured;
     QString mInputFile;

@@ -19,6 +19,8 @@
 #include "editor.h"
 #include "editormanager.h"
 #include "utils/file.h"
+#include "qt_utils/charsetinfo.h"
+#include <QDir>
 
 #include <QRegularExpression>
 
@@ -28,123 +30,114 @@ Q_GLOBAL_STATIC_WITH_ARGS(
     (QString("\\b(todo|fixme)\\b"), QRegularExpression::CaseInsensitiveOption)
 )
 
-TodoParser::TodoParser(QObject *parent) : QObject(parent),
-    mMutex()
+TodoParser::TodoParser(QObject *parent) : QObject(parent)
 {
-    mThread = nullptr;
 }
 
-void TodoParser::parseFile(const QString &filename,bool isForProject)
+TodoParser::~TodoParser()
 {
-    QMutexLocker locker(&mMutex);
-    if (pMainWindow->isQuitting())
-        return;
-    if (pMainWindow->isClosingAll())
-        return;
-    if (isForProject && pMainWindow->closingProject())
-        return;
     if (mThread) {
-        return;
+        mThread->stop();
+        mThread->wait();
     }
-    mThread = new TodoThread(filename);
-    connect(mThread,&QThread::finished,
-            [this] {
-        QMutexLocker locker(&mMutex);
-        if (mThread) {
-            mThread->deleteLater();
-            mThread = nullptr;
-        }
-    });
-    if (!isForProject) {
-        connect(mThread, &TodoThread::parseStarted,
-            pMainWindow, &MainWindow::onTodoParseStarted);
-    }
-    connect(mThread, &TodoThread::parsingFile,
-            pMainWindow, &MainWindow::onTodoParsingFile);
-    connect(mThread, &TodoThread::todoFound,
-            pMainWindow, &MainWindow::onTodoFound);
-    connect(mThread, &TodoThread::parseFinished,
-            pMainWindow, &MainWindow::onTodoParseFinished);
-    mThread->start();
+}
+
+void TodoParser::parseFile(const QString &filename, bool isForProject)
+{
+    if (isForProject && pMainWindow->closingProject()) return;
+    start({filename}, !isForProject);
 }
 
 void TodoParser::parseFiles(const QStringList &files)
 {
-    QMutexLocker locker(&mMutex);
-    if (pMainWindow->isQuitting())
+    start(files, true);
+}
+
+void TodoParser::start(QStringList files, bool clearAll)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    if (mStopping || mThread || !pMainWindow || pMainWindow->isQuitting() || pMainWindow->isClosingAll())
         return;
-    if (pMainWindow->isClosingAll())
-        return;
-    if (mThread) {
-        return;
+    const auto capture = pMainWindow->editorManager()->inputSnapshotProvider()();
+    if (!capture.succeeded()) return;
+    AnalysisInput::SourceReadRequest request;
+    request.documents = capture.snapshot;
+    request.policy.workingDirectory = QDir::currentPath();
+    if (pCharsetInfoManager) {
+        const auto add = [&](const QByteArray &encoding) {
+            if (!encoding.isEmpty() && !request.policy.encodings.contains(encoding) &&
+                    request.policy.encodings.size() < 16)
+                request.policy.encodings.append(encoding);
+        };
+        add(pCharsetInfoManager->getDefaultSystemEncoding());
+        for (const auto &entry : pCharsetInfoManager->findCharsetByLocale(pCharsetInfoManager->localeName()))
+            add(entry->name);
     }
-    mThread = new TodoThread(files);
-    connect(mThread,&QThread::finished,
-            [this] {
-        QMutexLocker locker(&mMutex);
-        if (mThread) {
-            mThread->deleteLater();
-            mThread = nullptr;
-        }
+    auto *task = new TodoThread(std::move(files), std::move(request), this);
+    mThread = task;
+    if (clearAll)
+        connect(task, &TodoThread::parseStarted, this, [this, task] {
+            if (!mStopping && mThread == task) pMainWindow->onTodoParseStarted();
+        });
+    connect(task, &TodoThread::parsingFile, this, [this, task](const QString &file) {
+        if (!mStopping && mThread == task) pMainWindow->onTodoParsingFile(file);
     });
-    connect(mThread, &TodoThread::parseStarted,
-            pMainWindow, &MainWindow::onTodoParseStarted);
-    connect(mThread, &TodoThread::parsingFile,
-            pMainWindow, &MainWindow::onTodoParsingFile);
-    connect(mThread, &TodoThread::todoFound,
-            pMainWindow, &MainWindow::onTodoFound);
-    connect(mThread, &TodoThread::parseFinished,
-            pMainWindow, &MainWindow::onTodoParseFinished);
-    mThread->start();
+    connect(task, &TodoThread::todoFound, this, [this, task](const QString &file, int line, int column, const QString &text) {
+        if (!mStopping && mThread == task) pMainWindow->onTodoFound(file, line, column, text);
+    });
+    connect(task, &TodoThread::parseFinished, this, [this, task] {
+        if (!mStopping && mThread == task) pMainWindow->onTodoParseFinished();
+    });
+    connect(task, &QThread::finished, this, [this, task] {
+        if (mThread == task) mThread = nullptr;
+        task->deleteLater();
+        if (mStopping) emit shutdownComplete();
+    });
+    task->start();
 }
 
 bool TodoParser::parsing() const
 {
-    QMutexLocker locker(&mMutex);
-    return (mThread!=nullptr);
+    Q_ASSERT(QThread::currentThread() == thread());
+    return mThread != nullptr;
 }
 
-TodoThread::TodoThread(const QString &filename, QObject *parent): QThread(parent)
+void TodoParser::requestShutdown()
 {
-    mFilename = filename;
-    mParseFiles = false;
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = true;
+    if (mThread) mThread->stop();
+    else emit shutdownComplete();
 }
 
-TodoThread::TodoThread(const QStringList &files, QObject *parent): QThread(parent)
+void TodoParser::resumeAdmissions()
 {
-    mFiles = files;
-    mParseFiles = true;
+    Q_ASSERT(QThread::currentThread() == thread());
+    mStopping = false;
 }
 
-void TodoThread::parseFile()
+TodoThread::TodoThread(QStringList files, AnalysisInput::SourceReadRequest request, QObject *parent)
+    : QThread(parent), mFiles(std::move(files)), mRequest(std::move(request))
 {
-    emit parseStarted();
-    doParseFile(mFilename);
-    emit parseFinished();
 }
 
-void TodoThread::parseFiles()
+void TodoThread::stop()
 {
-    emit parseStarted();
-    foreach(const QString& filename,mFiles) {
-        doParseFile(filename);
-    }
-    emit parseFinished();
+    mCancelled->store(true, std::memory_order_release);
 }
 
-void TodoThread::doParseFile(const QString &filename)
+void TodoThread::parseSource(const QString &filename, AnalysisInput::SourceReadSession &reader)
 {
-    emit parsingFile(filename);
-    FileType fileType = getFileType(filename);
+    const FileType fileType = getFileType(filename);
     QSynedit::PSyntaxer syntaxer = SyntaxerManager::getSyntaxer(fileType);
     if (!syntaxer || syntaxer->language() == QSynedit::ProgrammingLanguage::Textfile)
         return;
-    QStringList lines;
-    if (!pMainWindow->editorManager()->getContentFromOpenedEditor(filename,lines)) {
-        lines = readFileToLines(filename);
-    }
+    const auto source = reader.readDocumentRoot(filename);
+    if (!source.ready()) return;
+    emit parsingFile(filename);
+    const QStringList &lines = source.source->lines;
     syntaxer->resetState();
-    for (int i =0;i<lines.count();i++) {
+    for (int i = 0; i < lines.count() && !mCancelled->load(std::memory_order_acquire); ++i) {
         syntaxer->setLine(i, lines[i], 0);
         while (!syntaxer->eol()) {
             QSynedit::PTokenAttribute attr;
@@ -170,11 +163,13 @@ void TodoThread::doParseFile(const QString &filename)
 
 void TodoThread::run()
 {
-    if (mParseFiles) {
-        parseFiles();
-    } else {
-        parseFile();
+    AnalysisInput::SourceReadSession reader(mRequest.documents, mRequest.policy, mCancelled);
+    emit parseStarted();
+    for (const auto &file : mFiles) {
+        if (mCancelled->load(std::memory_order_acquire)) break;
+        parseSource(file, reader);
     }
+    emit parseFinished();
 }
 
 TodoModel::TodoModel(QObject *parent) : QAbstractListModel(parent)

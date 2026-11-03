@@ -63,12 +63,19 @@ public:
     CompetitiveCompanionHandler &operator =(const CompetitiveCompanionHandler&) = delete;
     void start();
     void stop();
+    void requestShutdown();
+    void resumeAdmissions();
 signals:
+    void shutdownComplete();
     void newProblemReceived(int num, int total, POJProblem newProblem);
 private slots:
     void onNewProblemReceived(int num, int total, POJProblem newProblem);
 private:
+    void finishShutdown(CompetitiveCompanionThread *thread);
     CompetitiveCompanionThread *mThread;
+    bool mStopping = false;
+    bool mAwaitingStop = false;
+    bool mRestartAfterStop = false;
 };
 
 

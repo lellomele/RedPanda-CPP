@@ -26,6 +26,7 @@ SessionRecovery::SessionRecovery(MainWindow *window) : QObject(window), mWindow(
             for (const auto &path : mConsumed) QFile::remove(path);
             mConsumed.clear();
         } else reportFailure(error);
+        if (mStopping) emit shutdownComplete();
     });
     mElapsed.start(); mTimer.setInterval(1000);
     connect(&mTimer, &QTimer::timeout, this, [this] {
@@ -37,6 +38,17 @@ SessionRecovery::SessionRecovery(MainWindow *window) : QObject(window), mWindow(
 SessionRecovery::~SessionRecovery() { stopScheduling(); mWriter.waitForFinished(); }
 bool SessionRecovery::isWriting() const { return mWritePending || mWriter.isRunning(); }
 void SessionRecovery::stopScheduling() { mStopping = true; mTimer.stop(); }
+void SessionRecovery::requestShutdown()
+{
+    stopScheduling();
+    if (!isWriting()) emit shutdownComplete();
+}
+void SessionRecovery::resumeScheduling()
+{
+    mStopping = false;
+    if (!mPath.isEmpty()) mTimer.start();
+}
+
 void SessionRecovery::reportFailure(const QString &error) {
     if (error == mLastError) return;
     mLastError = error;

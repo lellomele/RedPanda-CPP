@@ -19,7 +19,7 @@
 
 #include <QObject>
 #include <QThread>
-#include <QMutex>
+#include "analysis/sourceinput.h"
 #include <QAbstractListModel>
 #include "syntaxermanager.h"
 #include "qsynedit/constants.h"
@@ -66,21 +66,18 @@ class TodoThread: public QThread
 {
     Q_OBJECT
 public:
-    explicit TodoThread(const QString& filename, QObject* parent = nullptr);
-    explicit TodoThread(const QStringList& files, QObject* parent = nullptr);
+    TodoThread(QStringList files, AnalysisInput::SourceReadRequest request, QObject *parent);
+    void stop();
 signals:
     void parseStarted();
     void parsingFile(const QString& fileName);
     void todoFound(const QString& filename, int lineNo, int ch, const QString& line);
     void parseFinished();
 private:
-    void parseFile();
-    void parseFiles();
-    void doParseFile(const QString& filename);
-private:
-    QString mFilename;
-    QStringList mFiles;
-    bool mParseFiles;
+    void parseSource(const QString &filename, AnalysisInput::SourceReadSession &reader);
+    const QStringList mFiles;
+    const AnalysisInput::SourceReadRequest mRequest;
+    const std::shared_ptr<std::atomic_bool> mCancelled = std::make_shared<std::atomic_bool>(false);
 
     // QThread interface
 protected:
@@ -94,13 +91,18 @@ class TodoParser : public QObject
     Q_OBJECT
 public:
     explicit TodoParser(QObject *parent = nullptr);
+    ~TodoParser() override;
     void parseFile(const QString& filename,bool isForProject);
     void parseFiles(const QStringList& files);
     bool parsing() const;
-
+    void requestShutdown();
+    void resumeAdmissions();
+signals:
+    void shutdownComplete();
 private:
-    TodoThread* mThread;
-    mutable QRecursiveMutex mMutex;
+    void start(QStringList files, bool clearAll);
+    TodoThread *mThread = nullptr;
+    bool mStopping = false;
 };
 
 using PTodoParser = std::shared_ptr<TodoParser>;

@@ -463,6 +463,7 @@ int main(int argc, char *argv[])
         MainWindow mainWindow;
         pMainWindow = &mainWindow;
         SessionRecovery recovery(&mainWindow);
+        mainWindow.attachSessionRecovery(recovery);
         QObject::connect(&app, &ResilientApplication::recoverableError, &mainWindow, [&mainWindow, &recovery](const QString &reason) {
             recovery.checkpoint();
             auto *message = new QMessageBox(QMessageBox::Warning, QObject::tr("Operation could not be completed"),

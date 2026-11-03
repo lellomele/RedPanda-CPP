@@ -1871,6 +1871,9 @@ int runUiChecks(MainWindow &window, SessionRecovery &recovery, const QString &ou
             stage = 1;
             QCloseEvent rejectedClose;
             QApplication::sendEvent(&window, &rejectedClose);
+            QElapsedTimer closeOutcome;
+            closeOutcome.start();
+            while (window.isQuitting() && closeOutcome.elapsed() < 8000) waitForUi(10);
             check("Failed main-window close reports the layout error", layoutErrors == 1);
             check("Failed main-window close rejects the close event", !rejectedClose.isAccepted());
             check("Failed main-window close restores all shutdown flags",

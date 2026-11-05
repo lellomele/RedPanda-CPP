@@ -1,0 +1,253 @@
+{
+  "sourceCommit": "f9f97a7995b4f4ef0b394352b4636f75080a248a",
+  "testBuildVersion": "3.6.0.3895-alpha1",
+  "qtVersion": "6.11.2",
+  "testPackage": {
+    "version": "3.6.0.3895-alpha1",
+    "coreSHA256": "921c597f66ed84ed8c7bf1bc75b2fcec0c23bf63161d7e38d13579edef43a31a",
+    "setupSHA256": "097e27458ed742029e76a13348a13db104251c4beed5ca3bcd441ca75ed24267",
+    "productionInstallerScriptSHA256": "da0fee1aae5e7f0e71a4b271ebad560830b4775efbb27562883c61dd4f91ac22",
+    "productionInstallerCatalogSHA256": "10568934bf46e529b04c745f8794ce00d8958d1845ce627d12491d48f59ca5cf",
+    "testOnlyRuntime": "Existing dynamic Qt 6.11.2 runtime supplied by a hidden wrapper section; upstream installer source included unchanged."
+  },
+  "languages": [
+    {
+      "language": "en",
+      "passed": 18,
+      "checks": [
+        {
+          "name": "Installer explicitly offers language selection",
+          "passed": true
+        },
+        {
+          "name": "English is the preselected installer language",
+          "passed": true
+        },
+        {
+          "name": "Installer retains English and Simplified Chinese and adds Italian",
+          "passed": true
+        },
+        {
+          "name": "Chosen language is selected",
+          "passed": true
+        },
+        {
+          "name": "Installer pages follow selected language",
+          "passed": true
+        },
+        {
+          "name": "Installation uses the isolated test directory",
+          "passed": true
+        },
+        {
+          "name": "Finish page offers IDE startup",
+          "passed": true
+        },
+        {
+          "name": "Installer exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Core was installed",
+          "passed": true
+        },
+        {
+          "name": "Installed core matches the reviewed test build",
+          "passed": true
+        },
+        {
+          "name": "Package contains exact selected language seed",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch uses Edit menu",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Switch package language for precedence test",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained uses Edit menu",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller removes installer language seed",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "language": "it_IT",
+      "passed": 17,
+      "checks": [
+        {
+          "name": "Installer explicitly offers language selection",
+          "passed": true
+        },
+        {
+          "name": "English is the preselected installer language",
+          "passed": true
+        },
+        {
+          "name": "Installer retains English and Simplified Chinese and adds Italian",
+          "passed": true
+        },
+        {
+          "name": "Chosen language is selected",
+          "passed": true
+        },
+        {
+          "name": "Installer pages follow selected language",
+          "passed": true
+        },
+        {
+          "name": "Installation uses the isolated test directory",
+          "passed": true
+        },
+        {
+          "name": "Installer exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Core was installed",
+          "passed": true
+        },
+        {
+          "name": "Installed core matches the reviewed test build",
+          "passed": true
+        },
+        {
+          "name": "Package contains exact selected language seed",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch uses Modifica menu",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Switch package language for precedence test",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained uses Modifica menu",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller removes installer language seed",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "language": "zh_CN",
+      "passed": 18,
+      "checks": [
+        {
+          "name": "Installer explicitly offers language selection",
+          "passed": true
+        },
+        {
+          "name": "English is the preselected installer language",
+          "passed": true
+        },
+        {
+          "name": "Installer retains English and Simplified Chinese and adds Italian",
+          "passed": true
+        },
+        {
+          "name": "Chosen language is selected",
+          "passed": true
+        },
+        {
+          "name": "Installer pages follow selected language",
+          "passed": true
+        },
+        {
+          "name": "Installation uses the isolated test directory",
+          "passed": true
+        },
+        {
+          "name": "Finish page offers IDE startup",
+          "passed": true
+        },
+        {
+          "name": "Installer exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Core was installed",
+          "passed": true
+        },
+        {
+          "name": "Installed core matches the reviewed test build",
+          "passed": true
+        },
+        {
+          "name": "Package contains exact selected language seed",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch uses 编辑 menu",
+          "passed": true
+        },
+        {
+          "name": "04-first-launch closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Switch package language for precedence test",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained uses 编辑 menu",
+          "passed": true
+        },
+        {
+          "name": "05-existing-preference-retained closes cleanly",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller exits successfully",
+          "passed": true
+        },
+        {
+          "name": "Uninstaller removes installer language seed",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "sourceSHA256": {
+    "RedPandaIDE/src/main.cpp": "d3f57279c1efd504864a82f1face28248972232e7b17b3056450ca7667eff20a",
+    "RedPandaIDE/src/settings/environmentsettings.cpp": "e37b0ce6f3112c758e9c3799bb4b84ae8b9df3c1af440ce7e8ece30e48f912f5",
+    "RedPandaIDE/src/settings/environmentsettings.h": "8580d169f7bdffc566381666f390934bb69ce61db7261438ebf980a55650b932",
+    "platform/windows/installer-scripts/lang.nsh": "10568934bf46e529b04c745f8794ce00d8958d1845ce627d12491d48f59ca5cf",
+    "platform/windows/installer-scripts/redpanda.nsi": "da0fee1aae5e7f0e71a4b271ebad560830b4775efbb27562883c61dd4f91ac22"
+  },
+  "scope": "Language selection, wizard language, IDE menus, saved-language priority and seed removal. Production installer source included verbatim; dynamic Qt runtime added by a test-only hidden NSIS section."
+}

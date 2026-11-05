@@ -32,7 +32,7 @@ I pacchetti Windows x64 sono disponibili in tre formati:
 
 Avvia **`RedPandaIDE.exe` nella cartella principale**. L'IDE interno è `app/RedPandaIDE-core.exe`: conserva l'intera cartella `app`. Qt e le dipendenze necessarie all'avvio sono inclusi. Configura separatamente **GCC/Clang** e **GDB/LLDB** per compilare e fare debug dei tuoi programmi.
 
-**Compilatore da scaricare separatamente:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.2.0posix-23.1.3-14.0.0-ucrt-r3) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.7z). Comprende GDB e Make.
+**Compilatore da scaricare separatamente:** [WinLibs x64 UCRT, GCC 16.2.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.2.0posix-23.1.3-14.0.0-ucrt-r3) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.7z). Comprende GDB e Make.
 
 > [!TIP]
 > **Configura WinLibs in pochi passaggi**

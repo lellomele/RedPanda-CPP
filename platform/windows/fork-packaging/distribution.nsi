@@ -17,6 +17,7 @@ SetOverwrite on
 !define MUI_ICON "${APP_ICON}"
 !define MUI_UNICON "${APP_ICON}"
 !define MUI_ABORTWARNING
+!define MUI_LANGDLL_ALWAYSSHOW
 !define MUI_CUSTOMFUNCTION_ABORT CleanupIncomplete
 !define MUI_FINISHPAGE_RUN "$INSTDIR\RedPandaIDE.exe"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
@@ -42,21 +43,30 @@ Var Installed
  !insertmacro MUI_UNPAGE_INSTFILES
 !endif
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "Italian"
 LangString MainName ${LANG_ENGLISH} "Red Panda C++"
+LangString MainName ${LANG_SIMPCHINESE} "Red Panda C++"
 LangString MainName ${LANG_ITALIAN} "Red Panda C++"
 LangString DesktopName ${LANG_ENGLISH} "Desktop shortcut"
+LangString DesktopName ${LANG_SIMPCHINESE} "桌面快捷方式"
 LangString DesktopName ${LANG_ITALIAN} "Collegamento sul desktop"
 LangString NonEmpty ${LANG_ENGLISH} "Choose an empty folder. To update an installed copy, uninstall it first: personal settings are preserved."
+LangString NonEmpty ${LANG_SIMPCHINESE} "请选择一个空文件夹。更新已安装的副本之前，请先卸载旧版本：个人设置将被保留。"
 LangString NonEmpty ${LANG_ITALIAN} "Scegli una cartella vuota. Per aggiornare una copia installata, disinstallala prima: le preferenze personali vengono conservate."
 LangString AlreadyInstalled ${LANG_ENGLISH} "This fork is already installed. Uninstall it before installing a new version."
+LangString AlreadyInstalled ${LANG_SIMPCHINESE} "此分支版本已安装。请先卸载，然后再安装新版本。"
 LangString AlreadyInstalled ${LANG_ITALIAN} "Questo fork è già installato. Disinstallalo prima di installare una nuova versione."
 LangString CopyFailed ${LANG_ENGLISH} "The package could not be written completely. No existing installation has been overwritten. Choose a writable folder and retry."
+LangString CopyFailed ${LANG_SIMPCHINESE} "无法完整写入安装包。现有安装未被覆盖。请选择一个可写的文件夹，然后重试。"
 LangString CopyFailed ${LANG_ITALIAN} "Non è stato possibile scrivere l’intero pacchetto. Nessuna installazione esistente è stata sovrascritta. Scegli una cartella scrivibile e riprova."
-VIProductVersion "3.5.3.3824"
+!ifndef APP_VERSION_NUMERIC
+ !searchparse "${APP_VERSION}" "" APP_VERSION_NUMERIC "-rmele"
+!endif
+VIProductVersion "${APP_VERSION_NUMERIC}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "Red Panda C++"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Red Panda C++ Windows distribution"
-VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "3.5.3.3824"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${APP_VERSION_NUMERIC}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductVersion" "${APP_VERSION}"
 VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright © 2026 Ing. prof. Raffaele Mele (lellomele@gmail.com); upstream © 2021-2026 Roy Qu"
 
@@ -79,6 +89,10 @@ Function .onInit
   Abort
  ${EndIf}
  SetShellVarContext current
+ StrCpy $LANGUAGE ${LANG_ENGLISH}
+ IfSilent languageSelected
+ !insertmacro MUI_LANGDLL_DISPLAY
+ languageSelected:
  !ifndef PORTABLE_PACKAGE
  ${If} $TestMode == 0
   ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "InstallLocation"
@@ -100,6 +114,7 @@ FunctionEnd
 Function CleanupIncomplete
  ${If} $OwnTarget == 1
  ${AndIf} $Installed == 0
+  Delete "$INSTDIR\app\install-language.ini"
   !include "${DELETE_MANIFEST}"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
@@ -122,6 +137,20 @@ Section "$(MainName)" Main
  ClearErrors
  SetOutPath "$INSTDIR"
  File /r "${PAYLOAD}\*"
+ ${If} ${Errors}
+  Call CleanupIncomplete
+  MessageBox MB_ICONSTOP "$(CopyFailed)"
+  SetErrorLevel 1
+  Abort
+ ${EndIf}
+ ClearErrors
+ ${If} $LANGUAGE == ${LANG_ITALIAN}
+  WriteINIStr "$INSTDIR\app\install-language.ini" "Environment" "language" "it_IT"
+ ${ElseIf} $LANGUAGE == ${LANG_SIMPCHINESE}
+  WriteINIStr "$INSTDIR\app\install-language.ini" "Environment" "language" "zh_CN"
+ ${Else}
+  WriteINIStr "$INSTDIR\app\install-language.ini" "Environment" "language" "en"
+ ${EndIf}
  ${If} ${Errors}
   Call CleanupIncomplete
   MessageBox MB_ICONSTOP "$(CopyFailed)"
@@ -176,6 +205,7 @@ Function un.onInit
 FunctionEnd
 
 Section "Uninstall"
+ Delete "$INSTDIR\app\install-language.ini"
  !include "${DELETE_MANIFEST}"
  Delete "$INSTDIR\uninstall.exe"
  RMDir "$INSTDIR"

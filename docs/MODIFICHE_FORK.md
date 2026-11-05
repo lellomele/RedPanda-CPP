@@ -200,3 +200,7 @@ aperto lo spazio di lavoro per riprovare.
 
 Il [registro delle verifiche 3.5.4](VERIFICHE_3_5_4.md) comprende le regressioni
 Windows e le misure dell’IDE a 3.000, 30.000 e 100.000 righe.
+
+## Lingua di installazione nella 3.5.4.3835
+
+Setup Windows ed estrattore portabile mantengono inglese e cinese semplificato e aggiungono l’italiano come terza scelta. Una funzione condivisa collega la scelta iniziale al caricamento anticipato delle traduzioni e alle impostazioni dell’ambiente, mantenendo la precedenza della lingua già salvata dall’utente. La lingua iniziale resta in un file separato del pacchetto, così il primo avvio conserva la ricerca dei compilatori e la scelta del tema. L’inglese è il valore predefinito per installazione e primo avvio; scelte esplicite e preferenze già salvate hanno la precedenza. I metadati dell’installer seguono ora la versione della release.

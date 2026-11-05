@@ -12,15 +12,15 @@ Based on [RedPanda C++ by Roy Qu and contributors](https://github.com/royqh1979/
 
 ## Install
 
-**[Stable release 3.5.4.3834](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.4.3834-rmele.1)** — Windows 10/11 x64.
+**[Stable release 3.5.4.3835](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.4.3835-rmele.1)** — Windows 10/11 x64.
 
 | Package | Download |
 | --- | --- |
-| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.exe) |
-| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Sources.zip) |
-| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/SHA256SUMS.txt) |
+| Windows x64 installer | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Portable-x64.exe) |
+| Source code | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Sources.zip) |
+| SHA-256 checksums | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/SHA256SUMS.txt) |
 
 Windows x64 packages are available in three formats:
 
@@ -28,9 +28,11 @@ Windows x64 packages are available in three formats:
 - **Portable ZIP:** extract the entire folder to a writable location.
 - **Portable self-extracting EXE:** extracts the same portable layout without registering an installed application.
 
+**Installation language:** Setup and the portable EXE offer English, Simplified Chinese and Italian. The selection sets the IDE language for a new profile; existing language preferences are retained. English is the default for the installer and a new IDE profile, including the portable ZIP.
+
 Start **`RedPandaIDE.exe` in the main folder**. The internal IDE is `app/RedPandaIDE-core.exe`; keep the complete `app` folder. Qt and its runtime dependencies are included. Configure **GCC/Clang** and **GDB/LLDB** separately to build and debug your programs.
 
-**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.1.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.1.0posix-14.0.0-ucrt-r4) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-ucrt-r4/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64ucrt-14.0.0-r4.7z). Includes GDB and Make.
+**Separate compiler download:** [WinLibs x64 UCRT, GCC 16.2.0, POSIX/SEH](https://github.com/brechtsanders/winlibs_mingw/releases/tag/16.2.0posix-23.1.3-14.0.0-ucrt-r3) — [ZIP](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.zip) · [7z](https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-ucrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64ucrt-14.0.0-r3.7z). Includes GDB and Make.
 
 > [!TIP]
 > **Set up WinLibs in a few steps**

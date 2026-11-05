@@ -87,3 +87,7 @@ The harness uses a fresh bounded profile for each size and checks real
 completion and Structure results before recording time and process memory.
 The [qualification record](QUALIFICATION_3_5_4.md) describes the workload and
 reported statistics.
+
+## Installer language regression
+
+`platform/windows/fork-packaging/test-installer-language.ps1` exercises the real installer and first IDE launch. Run it only in a disposable Windows Sandbox as `WDAGUtilityAccount`. Map the script and the Setup package read-only to `C:\Input` (name the package `Setup.exe`), and an empty writable results directory to `C:\Results`. Invoke `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Input\test-installer-language.ps1 -Language it_IT -ConfirmSandbox`. Repeat in fresh sessions with `en` and `zh_CN`. It verifies all three choices, wizard and IDE language, saved-preference priority and removal of the package language hint during uninstallation; JSON results and screenshots are saved to the mapped results folder.

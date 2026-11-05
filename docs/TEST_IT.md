@@ -87,3 +87,7 @@ La prova usa un profilo isolato con limiti per ogni dimensione e verifica i
 risultati di completamento e Struttura prima di registrare tempi e memoria
 del processo. Il [registro delle verifiche](VERIFICHE_3_5_4.md) descrive
 sorgenti e statistiche.
+
+## Regressione della lingua dell’installer
+
+`platform/windows/fork-packaging/test-installer-language.ps1` verifica l’installer reale e il primo avvio dell’IDE. Eseguirlo solo in una Windows Sandbox temporanea come `WDAGUtilityAccount`. Mappare script e Setup in sola lettura su `C:\Input` (rinominando il pacchetto `Setup.exe`) e una cartella vuota scrivibile su `C:\Results`. Avviare `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Input\test-installer-language.ps1 -Language it_IT -ConfirmSandbox`. Ripetere in sessioni nuove con `en` e `zh_CN`. Controlla le tre scelte, la lingua della procedura e dell’IDE, la precedenza delle preferenze salvate e la rimozione del valore iniziale alla disinstallazione; risultati JSON e schermate finiscono nella cartella dei risultati.

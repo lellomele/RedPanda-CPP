@@ -351,7 +351,7 @@ int main(int argc, char *argv[])
     {
         QSettings languageSetting(settingFilename,QSettings::IniFormat);
         languageSetting.beginGroup(SETTING_ENVIRONMENT);
-        language = languageSetting.value("language",QLocale::system().name()).toString();
+        language = languageSetting.value("language", EnvironmentSettings::defaultLanguage()).toString();
 
         app.setProperty("interfaceLanguage", QStringLiteral("en"));
         if (trans.load("RedPandaIDE_"+language,":/i18n/")) {

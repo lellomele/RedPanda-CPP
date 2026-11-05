@@ -195,3 +195,7 @@ write failure keeps the workspace open for a new attempt.
 
 The [3.5.4 qualification record](QUALIFICATION_3_5_4.md) includes the Windows
 regression checks and the IDE benchmark at 3,000, 30,000 and 100,000 lines.
+
+## 3.5.4.3835 installer language
+
+The Windows Setup and portable extractor retain English and Simplified Chinese and add Italian as a third choice. A shared default-language resolver connects installation selection to early translator setup and environment settings, while a saved user language keeps priority. Installation uses a separate package-local language hint so first-run compiler discovery and theme selection still run normally. English is the installation and first-launch default; explicit choices and existing preferences take priority. Installer file metadata now follows the release version.

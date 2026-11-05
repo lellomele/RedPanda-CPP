@@ -15,7 +15,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "environmentsettings.h"
-#include <QLocale>
 #include <QDir>
 #include "../utils/font.h"
 #include "../utils/os.h"
@@ -25,6 +24,7 @@
 #include "dirsettings.h"
 #include <QMessageBox>
 #include <QCoreApplication>
+#include <QSettings>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -37,6 +37,19 @@ EnvironmentSettings::EnvironmentSettings(SettingsPersistor *persistor, DirSettin
     Q_ASSERT(dirSettings!=nullptr);
 }
 
+QString EnvironmentSettings::defaultLanguage()
+{
+#ifdef Q_OS_WIN
+    // An installer choice seeds a new profile. Existing preferences take priority.
+    QSettings installerLanguage(QCoreApplication::applicationDirPath()
+                               + "/install-language.ini", QSettings::IniFormat);
+    const QString selectedLanguage = installerLanguage.value("Environment/language").toString();
+    if (selectedLanguage == "en" || selectedLanguage == "zh_CN" || selectedLanguage == "it_IT")
+        return selectedLanguage;
+#endif
+    return QStringLiteral("en");
+}
+
 void EnvironmentSettings::doLoad()
 {
     //Appearance
@@ -46,7 +59,7 @@ void EnvironmentSettings::doLoad()
     mInterfaceFont = stringValue("interface_font", defaultUiFont());
     mInterfaceFontSize = intValue("interface_font_size",11);
     mIconZoomFactor = doubleValue("icon_zoom_factor",1.0);
-    mLanguage = stringValue("language", QLocale::system().name());
+    mLanguage = stringValue("language", defaultLanguage());
     mIconSet = stringValue("icon_set","contrast");
     mUseCustomIconSet = boolValue("use_custom_icon_set", false);
     mComboboxWheel = boolValue("enable_combobox_wheel", false);

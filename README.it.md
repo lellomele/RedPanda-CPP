@@ -12,21 +12,23 @@ Basato su [RedPanda C++ di Roy Qu e contributori](https://github.com/royqh1979/R
 
 ## Installazione
 
-**[Release 3.5.4.3834 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.4.3834-rmele.1)** — Windows 10/11 x64.
+**[Release 3.5.4.3835 stabile](https://github.com/lellomele/RedPanda-CPP/releases/tag/v3.5.4.3835-rmele.1)** — Windows 10/11 x64.
 
 | Pacchetto | Download |
 | --- | --- |
-| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Setup-x64.exe) |
-| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.zip) |
-| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Portable-x64.exe) |
-| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/RedPandaCPP-3.5.4.3834-rmele-Sources.zip) |
-| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3834-rmele.1/SHA256SUMS.txt) |
+| Installer Windows x64 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Setup-x64.exe) |
+| Portable ZIP | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Portable-x64.zip) |
+| Portable EXE | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Portable-x64.exe) |
+| Sorgenti | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/RedPandaCPP-3.5.4.3835-rmele-Sources.zip) |
+| Impronte SHA-256 | [Download](https://github.com/lellomele/RedPanda-CPP/releases/download/v3.5.4.3835-rmele.1/SHA256SUMS.txt) |
 
 I pacchetti Windows x64 sono disponibili in tre formati:
 
 - **Setup EXE:** installa per l'utente corrente e aggiunge una voce al menu Start; il collegamento sul desktop è opzionale.
 - **ZIP portabile:** estrarre tutta la cartella in un percorso scrivibile.
 - **EXE portabile autoestraente:** estrae la stessa struttura senza registrare un'applicazione installata.
+
+**Lingua di installazione:** Setup ed EXE portabile offrono inglese, cinese semplificato e italiano. La scelta imposta la lingua dell’IDE per un nuovo profilo; le preferenze di lingua già salvate vengono mantenute. L’inglese è la scelta predefinita dell’installer e dei nuovi profili dell’IDE, anche nello ZIP portabile.
 
 Avvia **`RedPandaIDE.exe` nella cartella principale**. L'IDE interno è `app/RedPandaIDE-core.exe`: conserva l'intera cartella `app`. Qt e le dipendenze necessarie all'avvio sono inclusi. Configura separatamente **GCC/Clang** e **GDB/LLDB** per compilare e fare debug dei tuoi programmi.
 
